@@ -1,0 +1,30 @@
+# ═══════════════════════════════════════════════════════════════
+#  Prometheus Configuration
+# ═══════════════════════════════════════════════════════════════
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "alert_rules.yml"
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "agent-api"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+        labels:
+          service: "anomaly-response-agent"
+
+  - job_name: "redis"
+    static_configs:
+      - targets: ["redis:6379"]
+
+  - job_name: "kafka"
+    static_configs:
+      - targets: ["kafka:9101"]

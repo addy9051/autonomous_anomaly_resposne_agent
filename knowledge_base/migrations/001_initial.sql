@@ -1,0 +1,135 @@
+-- ═══════════════════════════════════════════════════════════════
+--  pgvector Schema Migration — Knowledge Base
+--  Creates tables for runbook embeddings and incident history
+-- ═══════════════════════════════════════════════════════════════
+
+-- Enable vector extension
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Enable full-text search
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- ─── Runbook Documents ──────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS documents (
+    id              SERIAL PRIMARY KEY,
+    doc_id          TEXT UNIQUE NOT NULL,
+    title           TEXT NOT NULL,
+    source          TEXT NOT NULL DEFAULT 'manual',        -- confluence, notion, manual
+    content         TEXT NOT NULL,
+    chunk_index     INTEGER NOT NULL DEFAULT 0,
+    total_chunks    INTEGER NOT NULL DEFAULT 1,
+    embedding       vector(768),                          -- text-embedding-004 = 768 dims
+    metadata        JSONB DEFAULT '{}',
+    service_tags    TEXT[] DEFAULT '{}',
+    severity_relevance TEXT[] DEFAULT '{}',
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- HNSW index for approximate nearest neighbor search
+CREATE INDEX IF NOT EXISTS idx_documents_embedding
+    ON documents USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 200);
+
+-- B-tree indexes for metadata filtering
+CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source);
+CREATE INDEX IF NOT EXISTS idx_documents_service_tags ON documents USING GIN(service_tags);
+CREATE INDEX IF NOT EXISTS idx_documents_severity ON documents USING GIN(severity_relevance);
+
+-- Full-text search index
+CREATE INDEX IF NOT EXISTS idx_documents_content_trgm
+    ON documents USING GIN(content gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_documents_title_trgm
+    ON documents USING GIN(title gin_trgm_ops);
+
+
+-- ─── Incident History ───────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS incidents (
+    id                      SERIAL PRIMARY KEY,
+    incident_id             TEXT UNIQUE NOT NULL,
+    status                  TEXT NOT NULL DEFAULT 'detected',
+    created_at              TIMESTAMPTZ DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ DEFAULT NOW(),
+    resolved_at             TIMESTAMPTZ,
+
+    -- Anomaly event data
+    anomaly_event           JSONB,
+    severity                TEXT,
+    anomaly_type            TEXT,
+    affected_services       TEXT[],
+
+    -- Diagnosis data
+    diagnosis_result        JSONB,
+    root_cause              TEXT,
+    root_cause_category     TEXT,
+    confidence              FLOAT,
+
+    -- Action data
+    action_results          JSONB DEFAULT '[]',
+    actions_taken           TEXT[],
+
+    -- Resolution metadata
+    time_to_detect_seconds  FLOAT,
+    time_to_mitigate_seconds FLOAT,
+    auto_resolved           BOOLEAN DEFAULT FALSE,
+    false_positive          BOOLEAN DEFAULT FALSE,
+    human_overrode          BOOLEAN DEFAULT FALSE,
+    human_feedback          TEXT,
+
+    -- Cost tracking
+    total_llm_tokens_used   INTEGER DEFAULT 0,
+    total_llm_cost_usd      FLOAT DEFAULT 0.0,
+
+    -- RL training data
+    reward                  FLOAT,
+    state_features          FLOAT[],
+    action_label            TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+CREATE INDEX IF NOT EXISTS idx_incidents_created ON incidents(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
+CREATE INDEX IF NOT EXISTS idx_incidents_root_cause ON incidents(root_cause_category);
+CREATE INDEX IF NOT EXISTS idx_incidents_auto_resolved ON incidents(auto_resolved);
+
+
+-- ─── Agent Audit Log ────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS agent_audit_log (
+    id              SERIAL PRIMARY KEY,
+    timestamp       TIMESTAMPTZ DEFAULT NOW(),
+    agent_name      TEXT NOT NULL,
+    incident_id     TEXT,
+    action_type     TEXT NOT NULL,
+    action_details  JSONB DEFAULT '{}',
+    reasoning       TEXT,
+    confidence      FLOAT,
+    llm_model       TEXT,
+    tokens_used     INTEGER DEFAULT 0,
+    cost_usd        FLOAT DEFAULT 0.0,
+    execution_ms    FLOAT DEFAULT 0.0,
+    status          TEXT DEFAULT 'success'
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_agent ON agent_audit_log(agent_name);
+CREATE INDEX IF NOT EXISTS idx_audit_incident ON agent_audit_log(incident_id);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON agent_audit_log(timestamp DESC);
+
+
+-- ─── Feedback / RL Training Data ────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS rl_training_data (
+    id              SERIAL PRIMARY KEY,
+    incident_id     TEXT NOT NULL REFERENCES incidents(incident_id),
+    state_features  FLOAT[] NOT NULL,
+    action          TEXT NOT NULL,
+    reward          FLOAT NOT NULL,
+    policy_version  TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rl_created ON rl_training_data(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rl_policy ON rl_training_data(policy_version);

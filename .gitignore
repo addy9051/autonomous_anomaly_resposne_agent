@@ -1,0 +1,44 @@
+# ─── Environment ──────────────────────────────────────────────
+.env
+*.json
+!package.json
+!tsconfig.json
+!**/n8n_workflows/*.json
+!**/grafana/**/*.json
+
+# ─── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+venv/
+.venv/
+
+# ─── IDE ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── Docker ───────────────────────────────────────────────────
+docker-data/
+
+# ─── Credentials ─────────────────────────────────────────────
+*.pem
+*.key
+service-account*.json
+
+# ─── OS ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Testing ─────────────────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
