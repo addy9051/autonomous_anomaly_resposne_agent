@@ -44,11 +44,22 @@ async def test_slack():
         try:
             # Check if we can get info about the channel
             conv_info = await client.conversations_info(channel=settings.integrations.slack_alert_channel)
-            print(f"✅ Successfully found channel: {conv_info['channel']['name']}")
+            channel_name = conv_info['channel']['name']
+            
+            # Check if bot is the owner or member
+            is_member = conv_info['channel'].get('is_member', False)
+            if not is_member:
+                print(f"⚠️ Warning: Channel '{channel_name}' found, but bot is NOT a member.")
+                print(f"   ACTION REQUIRED: Invite the bot to the channel first.")
+                print(f"   Type `/invite @{auth_test['user']}` in channel #{channel_name}")
+            else:
+                print(f"✅ Successfully found channel: #{channel_name} (Member: Yes)")
+
         except SlackApiError as e:
             if e.response["error"] == "channel_not_found":
                 print(f"❌ Error: Channel {settings.integrations.slack_alert_channel} not found.")
                 print("   Note: Ensure the Bot user has been invited to this channel.")
+                print(f"   HINT: Type `/invite @{auth_test['user']}` in the channel.")
             else:
                 print(f"❌ Slack API Error: {e.response['error']}")
             return

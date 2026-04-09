@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
+from langfuse.decorators import langfuse_context
 
 from shared.config import get_settings
 
@@ -38,6 +39,11 @@ def get_chat_model(
         An instance of a LangChain BaseChatModel.
     """
     settings = get_settings()
+
+    # Silently disable Langfuse if turned off in config
+    if not settings.observability.langfuse_enabled:
+        langfuse_context.configure(enabled=False)
+
     model_lower = model_name.lower()
 
     # 1. Anthropic (Claude)

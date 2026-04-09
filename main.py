@@ -235,10 +235,14 @@ class AgentOrchestrator:
 
 
 async def main() -> None:
-    """Run the orchestrator in demo mode."""
+    """Main entry point."""
+    # 1. Load settings early to sync environment (Final Hardening)
+    from shared.config import get_settings
+    get_settings()
+    
     import argparse
 
-    parser = argparse.ArgumentParser(description="Anomaly Response Agent System")
+    parser = argparse.ArgumentParser(description="Autonomous Anomaly Response Orchestrator")
     parser.add_argument("--mode", choices=["stream", "batch", "demo"], default="demo")
     parser.add_argument("--duration", type=float, default=30.0, help="Streaming duration in seconds")
     parser.add_argument("--eps", type=float, default=2.0, help="Events per second")

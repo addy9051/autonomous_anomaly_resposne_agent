@@ -71,7 +71,7 @@ class MonitoringAgent:
 
             # Only initialize Langfuse if credentials are provided
             handler = None
-            if self.settings.observability.langfuse_public_key:
+            if self.settings.observability.langfuse_public_key and self.settings.observability.langfuse_enabled:
                 try:
                     handler = CallbackHandler(
                         public_key=self.settings.observability.langfuse_public_key,

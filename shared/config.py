@@ -7,10 +7,12 @@ All agent configuration is validated at startup.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from langfuse.decorators import langfuse_context
+from pydantic import BaseModel, Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -99,8 +101,14 @@ class IntegrationConfig(BaseSettings):
     # Slack (Supports both #channel-names and C012345678 IDs)
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
-    slack_alert_channel: str = "#incident-alerts"
-    slack_approval_channel: str = "#sre-approvals"
+    slack_alert_channel: str = Field(
+        default="", 
+        validation_alias=AliasChoices("SLACK_ALERT_CHANNEL_ID", "SLACK_ALERT_CHANNEL")
+    )
+    slack_approval_channel: str = Field(
+        default="",
+        validation_alias=AliasChoices("SLACK_APPROVAL_CHANNEL_ID", "SLACK_APPROVAL_CHANNEL")
+    )
 
     # PagerDuty
     pagerduty_api_key: str = ""
@@ -133,7 +141,11 @@ class ObservabilityConfig(BaseSettings):
 
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
-    langfuse_host: str = "http://localhost:3001"
+    langfuse_host: str = Field(
+        default="http://localhost:3000",
+        validation_alias=AliasChoices("LANGFUSE_BASE_URL", "LANGFUSE_HOST")
+    )
+    langfuse_enabled: bool = True  # Toggle for silencing noise in Lite Mode
 
 
 class AppConfig(BaseSettings):
@@ -157,7 +169,22 @@ class Settings(BaseModel):
 
 
 
-@lru_cache(maxsize=1)
+@lru_cache()
 def get_settings() -> Settings:
-    """Get cached application settings. Call once at startup."""
-    return Settings()
+    """Returns a cached instance of the settings."""
+    settings = Settings()
+    
+    # Final hardening: Explicitly sync Langfuse keys to os.environ
+    # This prevents race conditions where decorators initialize before settings are loaded
+    if settings.observability.langfuse_public_key:
+        os.environ["LANGFUSE_PUBLIC_KEY"] = settings.observability.langfuse_public_key
+    if settings.observability.langfuse_secret_key:
+        os.environ["LANGFUSE_SECRET_KEY"] = settings.observability.langfuse_secret_key
+    if settings.observability.langfuse_host:
+        os.environ["LANGFUSE_HOST"] = settings.observability.langfuse_host
+        
+    # SILENCE: Ensure global context respects the enabled toggle
+    if not settings.observability.langfuse_enabled:
+        langfuse_context.configure(enabled=False)
+        
+    return settings

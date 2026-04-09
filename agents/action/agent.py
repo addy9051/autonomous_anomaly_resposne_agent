@@ -97,7 +97,7 @@ class ActionAgent:
 
             # Only initialize Langfuse if credentials are provided
             handler = None
-            if self.settings.observability.langfuse_public_key:
+            if self.settings.observability.langfuse_public_key and self.settings.observability.langfuse_enabled:
                 try:
                     handler = CallbackHandler(
                         public_key=self.settings.observability.langfuse_public_key,
@@ -307,7 +307,16 @@ Format as:
                 logger.debug("slack_notified", incident_id=diagnosis.incident_id)
             
             except SlackApiError as e:
-                logger.error("slack_api_error", error=e.response["error"], incident_id=diagnosis.incident_id)
+                error_type = e.response["error"]
+                if error_type == "channel_not_found":
+                    logger.error(
+                        "slack_api_error_channel_not_found", 
+                        error=error_type, 
+                        incident_id=diagnosis.incident_id,
+                        tip=f"HINT: Have you invited the bot to channel '{channel}'? Type /invite @YourBotName in that channel."
+                    )
+                else:
+                    logger.error("slack_api_error", error=error_type, incident_id=diagnosis.incident_id)
             except Exception as e:
                 logger.error("slack_unexpected_error", error=str(e), incident_id=diagnosis.incident_id)
         else:

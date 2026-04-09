@@ -17,7 +17,6 @@ from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse.callback import CallbackHandler
-from langfuse.decorators import langfuse_context, observe
 
 from shared.llm import get_chat_model
 from langgraph.graph import END, StateGraph
@@ -98,7 +97,6 @@ async def gather_context(state: DiagnosisState) -> dict:
     }
 
 
-@observe(name="rag_runbook_retrieval")
 async def rag_runbook_lookup(state: DiagnosisState) -> dict:
     """
     Node 2: Search the runbook knowledge base via RAG.
@@ -108,24 +106,9 @@ async def rag_runbook_lookup(state: DiagnosisState) -> dict:
     anomaly_type = anomaly.get("anomaly_type", "unknown")
     affected_services = anomaly.get("affected_services", [])
 
-    langfuse_context.update_current_observation(
-        input={"anomaly_type": anomaly_type, "affected_services": affected_services},
-        metadata={
-            "corpus": "runbooks_v2",
-            "retrieval_strategy": "hybrid_rrf",
-            "embedding_model": "synthetic"
-        }
-    )
-
     # In development, use synthetic runbook matches
     # In production, this would call the knowledge_base/retrieval/search.py API
     synthetic_runbooks = _get_synthetic_runbooks(anomaly_type, affected_services)
-    langfuse_context.update_current_observation(
-        output={
-            "doc_ids": [r.get("runbook_id") for r in synthetic_runbooks],
-            "scores": [r.get("similarity_score") for r in synthetic_runbooks]
-        }
-    )
 
     logger.info(
         "runbook_lookup_complete",
@@ -284,7 +267,7 @@ class DiagnosisAgent:
 
                 settings = get_settings()
                 handler = None
-                if settings.observability.langfuse_public_key:
+                if settings.observability.langfuse_public_key and settings.observability.langfuse_enabled:
                     try:
                         handler = CallbackHandler(
                             public_key=settings.observability.langfuse_public_key,
