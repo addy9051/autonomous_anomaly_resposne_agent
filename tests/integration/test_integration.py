@@ -28,7 +28,7 @@ async def test_end_to_end_mocked_incident_flow() -> None:
 
     # 2. Patch the graph invocation and action execution
     with patch("agents.diagnosis.graph.build_diagnosis_graph") as mock_build, \
-         patch("agents.action.agent.ChatOpenAI") as mock_action_llm, \
+         patch("agents.action.agent.get_chat_model") as mock_action_llm, \
          patch("agents.action.agent.trigger_workflow") as mock_trigger_workflow:
 
         # Mock theCompiled Graph
