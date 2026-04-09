@@ -9,7 +9,6 @@ packages = [
     { include = "data_pipeline" },
     { include = "knowledge_base" },
     { include = "shared" },
-    { include = "observability" },
 ]
 
 [tool.poetry.dependencies]
