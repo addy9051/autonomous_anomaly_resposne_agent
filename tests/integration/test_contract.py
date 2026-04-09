@@ -12,7 +12,7 @@ async def test_n8n_webhook_contract() -> None:
     Runs conditionally if N8n is active in local dependencies.
     """
     settings = get_settings()
-    n8n_url = settings.n8n.webhook_url
+    n8n_url = settings.integrations.n8n_base_url
 
     if "localhost" not in n8n_url:
         pytest.skip("Not skipping live envs, only localhost expected for dev contract test")
@@ -34,7 +34,9 @@ async def test_vertex_llm_contract() -> None:
     Contract test interacting with OpenAI / LLM backbone briefly.
     """
     settings = get_settings()
-    if not settings.llm.openai_api_key or settings.llm.openai_api_key.startswith("sk-mock"):
+    if not settings.llm.openai_api_key or \
+       settings.llm.openai_api_key.startswith("sk-mock") or \
+       "your-openai-api-key" in settings.llm.openai_api_key:
         pytest.skip("No real OpenAI key provided.")
 
     from langchain_core.messages import HumanMessage
