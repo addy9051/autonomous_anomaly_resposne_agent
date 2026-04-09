@@ -17,11 +17,10 @@ from datetime import datetime
 from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse.callback import CallbackHandler
 
-from shared.llm import get_chat_model
-
 from agents.action.tiers import classify_action
 from agents.action.workflows import trigger_workflow
 from shared.config import get_settings
+from shared.llm import get_chat_model
 from shared.schemas import (
     ActionResult,
     ActionTier,
@@ -278,8 +277,8 @@ Format as:
 
         # Attempt real Slack notification
         if self.settings.integrations.slack_bot_token:
-            from slack_sdk.web.async_client import AsyncWebClient
             from slack_sdk.errors import SlackApiError
+            from slack_sdk.web.async_client import AsyncWebClient
 
             client = AsyncWebClient(token=self.settings.integrations.slack_bot_token)
             channel = self.settings.integrations.slack_alert_channel
@@ -288,7 +287,7 @@ Format as:
                 # Add severity icon to summary
                 icon = "🔴" if diagnosis.confidence > 0.8 else "🟡"
                 header = f"{icon} *Anomaly Detected: {diagnosis.incident_id[:8]}*"
-                
+
                 blocks = [
                     {
                         "type": "section",
@@ -305,15 +304,18 @@ Format as:
 
                 await client.chat_postMessage(channel=channel, blocks=blocks, text=summary)
                 logger.debug("slack_notified", incident_id=diagnosis.incident_id)
-            
+
             except SlackApiError as e:
                 error_type = e.response["error"]
                 if error_type == "channel_not_found":
                     logger.error(
-                        "slack_api_error_channel_not_found", 
-                        error=error_type, 
+                        "slack_api_error_channel_not_found",
+                        error=error_type,
                         incident_id=diagnosis.incident_id,
-                        tip=f"HINT: Have you invited the bot to channel '{channel}'? Type /invite @YourBotName in that channel."
+                        tip=(
+                            f"HINT: Have you invited the bot to channel '{channel}'? "
+                            "Type /invite @YourBotName in that channel."
+                        )
                     )
                 else:
                     logger.error("slack_api_error", error=error_type, incident_id=diagnosis.incident_id)

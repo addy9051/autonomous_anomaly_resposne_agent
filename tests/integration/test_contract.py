@@ -40,6 +40,7 @@ async def test_vertex_llm_contract() -> None:
         pytest.skip("No real OpenAI key provided.")
 
     from langchain_core.messages import HumanMessage
+
     from shared.llm import get_chat_model
 
     llm = get_chat_model(model_name="gpt-4o-mini", max_tokens=10)

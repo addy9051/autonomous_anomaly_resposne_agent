@@ -17,8 +17,6 @@ from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse.callback import CallbackHandler
-
-from shared.llm import get_chat_model
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
@@ -28,6 +26,7 @@ from agents.diagnosis.prompts import (
     SYNTHESIS_PROMPT,
 )
 from shared.config import get_settings
+from shared.llm import get_chat_model
 from shared.schemas import (
     ActionTier,
     AnomalyEvent,

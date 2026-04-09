@@ -24,7 +24,7 @@ def get_chat_model(
     model_name: str,
     temperature: float = 0.1,
     max_tokens: int | None = None,
-    **kwargs: Any,
+    **kwargs: Any,  # noqa: ANN401
 ) -> BaseChatModel:
     """
     Factory function to get a LangChain chat model based on the model name.

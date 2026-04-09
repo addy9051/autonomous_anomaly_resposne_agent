@@ -239,7 +239,7 @@ async def main() -> None:
     # 1. Load settings early to sync environment (Final Hardening)
     from shared.config import get_settings
     get_settings()
-    
+
     import argparse
 
     parser = argparse.ArgumentParser(description="Autonomous Anomaly Response Orchestrator")

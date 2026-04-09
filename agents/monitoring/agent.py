@@ -14,11 +14,10 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse.callback import CallbackHandler
 
-from shared.llm import get_chat_model
-
 from agents.monitoring.prompts import MONITORING_HUMAN_PROMPT, MONITORING_SYSTEM_PROMPT
 from agents.monitoring.tools.monitoring_tools import ALL_MONITORING_TOOLS
 from shared.config import get_settings
+from shared.llm import get_chat_model
 from shared.schemas import AnomalyEvent, AnomalyType, MetricsSnapshot, Severity, TelemetryEvent
 from shared.utils import LLMCostTracker, Timer, get_logger, get_tracer
 
@@ -203,11 +202,11 @@ class MonitoringAgent:
 
             # Lenient parsing for AnomalyType
             anomaly_type_str = str(data.get("anomaly_type", "latency_spike")).lower()
-            
+
             # Handle delimited strings like "latency_spike|error_rate"
             if "|" in anomaly_type_str:
                 anomaly_type_str = anomaly_type_str.split("|")[0].strip()
-            
+
             # Handle "none" or empty strings
             if anomaly_type_str in ["none", "", "null"]:
                 anomaly_type_str = "latency_spike"

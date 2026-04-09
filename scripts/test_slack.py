@@ -12,45 +12,48 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from slack_sdk.web.async_client import AsyncWebClient
-from slack_sdk.errors import SlackApiError
 import asyncio
+
+from slack_sdk.errors import SlackApiError
+from slack_sdk.web.async_client import AsyncWebClient
+
 from shared.config import get_settings
 from shared.utils import setup_logging
 
-async def test_slack():
+
+async def test_slack() -> None:
     setup_logging()
     settings = get_settings()
-    
+
     print("\n--- Slack Configuration Check ---")
     print(f"Token (first 10 chars): {settings.integrations.slack_bot_token[:10]}...")
     print(f"Alert Channel ID: {settings.integrations.slack_alert_channel}")
-    
+
     if not settings.integrations.slack_bot_token:
         print("❌ Error: SLACK_BOT_TOKEN is missing in .env")
         return
 
     client = AsyncWebClient(token=settings.integrations.slack_bot_token)
-    
+
     try:
         # 1. Test Auth
         print("📡 Testing authentication...")
         auth_test = await client.auth_test()
         print(f"✅ Authenticated as: {auth_test['user']} (ID: {auth_test['user_id']})")
         print(f"   Team: {auth_test['team']} (ID: {auth_test['team_id']})")
-        
+
         # 2. Test Connection to Alert Channel
         print(f"📡 Testing access to channel {settings.integrations.slack_alert_channel}...")
         try:
             # Check if we can get info about the channel
             conv_info = await client.conversations_info(channel=settings.integrations.slack_alert_channel)
             channel_name = conv_info['channel']['name']
-            
+
             # Check if bot is the owner or member
             is_member = conv_info['channel'].get('is_member', False)
             if not is_member:
                 print(f"⚠️ Warning: Channel '{channel_name}' found, but bot is NOT a member.")
-                print(f"   ACTION REQUIRED: Invite the bot to the channel first.")
+                print("   ACTION REQUIRED: Invite the bot to the channel first.")
                 print(f"   Type `/invite @{auth_test['user']}` in channel #{channel_name}")
             else:
                 print(f"✅ Successfully found channel: #{channel_name} (Member: Yes)")

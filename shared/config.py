@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from langfuse.decorators import langfuse_context
-from pydantic import BaseModel, Field, AliasChoices
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -102,7 +102,7 @@ class IntegrationConfig(BaseSettings):
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
     slack_alert_channel: str = Field(
-        default="", 
+        default="",
         validation_alias=AliasChoices("SLACK_ALERT_CHANNEL_ID", "SLACK_ALERT_CHANNEL")
     )
     slack_approval_channel: str = Field(
@@ -169,11 +169,11 @@ class Settings(BaseModel):
 
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Returns a cached instance of the settings."""
     settings = Settings()
-    
+
     # Final hardening: Explicitly sync Langfuse keys to os.environ
     # This prevents race conditions where decorators initialize before settings are loaded
     if settings.observability.langfuse_public_key:
@@ -182,9 +182,9 @@ def get_settings() -> Settings:
         os.environ["LANGFUSE_SECRET_KEY"] = settings.observability.langfuse_secret_key
     if settings.observability.langfuse_host:
         os.environ["LANGFUSE_HOST"] = settings.observability.langfuse_host
-        
+
     # SILENCE: Ensure global context respects the enabled toggle
     if not settings.observability.langfuse_enabled:
         langfuse_context.configure(enabled=False)
-        
+
     return settings
