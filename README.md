@@ -62,7 +62,7 @@ copy .env.example .env
 docker compose up -d
 ```
 
-This starts: Kafka, Redis, PostgreSQL/pgvector, N8n, Prometheus, Grafana, Loki, Tempo, OTel Collector.
+This starts: Kafka, Redis, PostgreSQL/pgvector, N8n, Prometheus, Grafana, Loki, Tempo, OTel Collector, Langfuse, and Arize Phoenix.
 
 ### 4. Run Demo
 
@@ -116,6 +116,7 @@ poetry run pytest tests/ -v
 |---------|-----------|-----------|---------|
 | **OpenAI** | ✅ Minimum 1 LLM | $5 free credit | GPT-4o for reasoning |
 | **LangSmith** | Recommended | ✅ 5K traces/mo | LLM observability |
+| **Langfuse** | Optional | ✅ Self-Hosted | LLM Tracing & Observability |
 | **Slack** | Optional | ✅ | Notifications & approvals |
 | **PagerDuty** | Optional | 14-day trial | Incident data source |
 | **Google Cloud** | Optional | $300 credit | Vertex AI, GKE (production) |
@@ -164,6 +165,8 @@ poetry run mypy agents/ shared/ --ignore-missing-imports
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | **Grafana** | http://localhost:3000 | admin / agent_admin_2024 |
+| **Langfuse** | http://localhost:3001 | — |
+| **Arize Phoenix** | http://localhost:6006 | — |
 | **Prometheus** | http://localhost:9090 | — |
 | **N8n** | http://localhost:5678 | admin / agent_admin_2024 |
 
