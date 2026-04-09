@@ -52,9 +52,9 @@ jobs:
         run: gcloud auth configure-docker us-central1-docker.pkg.dev
         
       - name: Build Docker image
-        run: docker build -t us-central1-docker.pkg.dev/my-project/anomaly-agents/agent-api:${{ github.sha }} .
+        run: docker build -t us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:${{ github.sha }} .
         
       - name: Push to Artifact Registry
-        run: docker push us-central1-docker.pkg.dev/my-project/anomaly-agents/agent-api:${{ github.sha }}
+        run: docker push us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:${{ github.sha }}
 
   # Note: A deployment job using Helm or ArgoCD would follow here for Stage/Prod
