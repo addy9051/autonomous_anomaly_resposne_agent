@@ -34,6 +34,18 @@
 
 ---
 
+## 🧠 Architectural Evolution (Lean & Scalable MVP)
+
+Based on the original design specifications, several strategic architectural pivots were made to heavily optimize for cost-reduction, maintainability, and data-privacy while preserving the entire cognitive agentic loop:
+
+1. **Self-Hosted Privacy vs SaaS**: Instead of routing sensitive telemetry out to Datadog LLM Observability, this system leverages self-hosted **Langfuse** and **Arize Phoenix** (via `.docker-compose.yml`). This guarantees zero PII escapes the network perimeter—a crucial compliance feature for FinTech.
+2. **Local-First RAG**: High-cost Vertex AI Matching Engine instances were bypassed. The Knowledge Base uses **pgvector** running directly alongside the agents, removing the cloud vector database overhead while providing identical cosine-similarity performance.
+3. **API-First Stream Processing**: Heavy distributed stream processors (Apache Flink clusters) and feature stores (Feast) were stripped out in favor of handling Kafka streams via lightweight Python orchestration. This enables deployment to serverless containers without massive JVM overheads.
+4. **Action Engine Abstraction**: To avoid third-party subscription traps, the N8n Action execution engine is gracefully mocked via Python dry-runs. The 3-tier classification logic remains fully intact, meaning N8n webhooks can be cleanly connected if budget allows, without altering the Action Agent prompt schema.
+5. **Consolidated Serverless Footprint**: Instead of fragmented deployments across GKE and Cloud Run, the system consolidates onto **GKE Autopilot**, benefiting from reliable Kubernetes native networking and secrets management while still automatically scaling resources (and costs) to zero when idle.
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
