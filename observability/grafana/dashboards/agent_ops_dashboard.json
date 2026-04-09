@@ -1,0 +1,76 @@
+{
+  "__inputs": [],
+  "__elements": {},
+  "__requires": [],
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "MTTA (Mean Time To Acknowledge)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "rate(agent_triage_latency_sum[5m]) / rate(agent_triage_latency_count[5m])"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 }
+    },
+    {
+      "title": "False Positive Rate",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(agent_action_false_positive_total[1h])) / sum(rate(agent_action_total[1h])) * 100"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 }
+    },
+    {
+      "title": "LLM Token Budget",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (agent_type) (rate(llm_tokens_total[5m]))"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "tags": ["agent-ops", "service-reliability"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Autonomous Agent Operations",
+  "uid": "agent-ops-01",
+  "version": 1
+}

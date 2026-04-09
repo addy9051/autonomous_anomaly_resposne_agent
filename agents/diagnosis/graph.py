@@ -301,7 +301,7 @@ class DiagnosisAgent:
                 )
 
                 result = await self.graph.ainvoke(initial_state, config={"callbacks": [handler]})
-                diagnosis_dict = result.get("diagnosis_result", {})
+                diagnosis_dict = result.get("diagnosis_result") or {}
 
                 # Build DiagnosisResult
                 diagnosis = DiagnosisResult(

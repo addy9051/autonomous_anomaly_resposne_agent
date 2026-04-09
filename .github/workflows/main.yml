@@ -1,0 +1,60 @@
+name: Agent System CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+          poetry install
+
+      - name: Lint with ruff
+        run: poetry run ruff check .
+
+      - name: Run Unit & Integration Tests
+        run: poetry run pytest tests/unit tests/integration -v
+        
+      - name: Run Evals (Dry-Run / Golden Set)
+        run: poetry run pytest tests/evals -v
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+          
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev
+        
+      - name: Build Docker image
+        run: docker build -t us-central1-docker.pkg.dev/my-project/anomaly-agents/agent-api:${{ github.sha }} .
+        
+      - name: Push to Artifact Registry
+        run: docker push us-central1-docker.pkg.dev/my-project/anomaly-agents/agent-api:${{ github.sha }}
+
+  # Note: A deployment job using Helm or ArgoCD would follow here for Stage/Prod

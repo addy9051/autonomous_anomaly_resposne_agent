@@ -148,6 +148,62 @@ resource "google_project_iam_member" "agent_roles" {
   member  = "serviceAccount:${google_service_account.agent_runtime.email}"
 }
 
+# ─── Cloud Armor WAF Policies ────────────────────────────────
+
+resource "google_compute_security_policy" "agent_waf" {
+  name        = "agent-waf-${var.environment}"
+  description = "WAF policy securing external-facing Agent API gateways"
+
+  rule {
+    action   = "allow"
+    priority = "2147483647"
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ip_ranges = ["*"]
+      }
+    }
+    description = "Default allow rule"
+  }
+
+  rule {
+    action   = "deny(403)"
+    priority = "1000"
+    match {
+      expr {
+        expression = "evaluatePreconfiguredExpr('sqli-v33-stable')"
+      }
+    }
+    description = "Block SQL injection attacks"
+  }
+}
+
+# ─── VPC Service Controls ────────────────────────────────────
+
+resource "google_access_context_manager_access_policy" "access_policy" {
+  parent = "organizations/123456789012" # Required parent for VPC SC
+  title  = "agent-access-policy-${var.environment}"
+}
+
+resource "google_access_context_manager_service_perimeter" "agent_perimeter" {
+  parent         = "accessPolicies/${google_access_context_manager_access_policy.access_policy.name}"
+  name           = "accessPolicies/${google_access_context_manager_access_policy.access_policy.name}/servicePerimeters/agent_perimeter"
+  title          = "Agent Production Perimeter"
+  perimeter_type = "PERIMETER_TYPE_REGULAR"
+
+  status {
+    restricted_services = [
+      "spanner.googleapis.com",
+      "aiplatform.googleapis.com",
+      "pubsub.googleapis.com"
+    ]
+    
+    resources = [
+      "projects/${var.project_id}"
+    ]
+  }
+}
+
 # ─── Outputs ─────────────────────────────────────────────────
 
 output "gke_cluster_name" {
