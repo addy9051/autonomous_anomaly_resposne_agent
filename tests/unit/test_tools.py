@@ -23,7 +23,7 @@ class TestPrometheusQueryTool:
     """Tests for Prometheus query tool."""
 
     @pytest.mark.asyncio
-    async def test_returns_valid_json(self):
+    async def test_returns_valid_json(self) -> None:
         result = await prometheus_query.ainvoke(
             {"query": "http_request_duration_seconds", "time_range": "5m"}
         )
@@ -33,14 +33,14 @@ class TestPrometheusQueryTool:
         assert "value" in data[0]
 
     @pytest.mark.asyncio
-    async def test_latency_query(self):
+    async def test_latency_query(self) -> None:
         result = await prometheus_query.ainvoke({"query": "latency_p99"})
         data = json.loads(result)
         assert len(data) > 0
         assert data[0]["value"] > 0
 
     @pytest.mark.asyncio
-    async def test_error_query(self):
+    async def test_error_query(self) -> None:
         result = await prometheus_query.ainvoke({"query": "error_rate"})
         data = json.loads(result)
         assert len(data) > 0
@@ -50,7 +50,7 @@ class TestKafkaLagInspector:
     """Tests for Kafka lag inspector tool."""
 
     @pytest.mark.asyncio
-    async def test_returns_lag_info(self):
+    async def test_returns_lag_info(self) -> None:
         result = await kafka_lag_inspector.ainvoke({
             "consumer_group": "test-group",
             "topic": "test-topic"
@@ -62,7 +62,7 @@ class TestKafkaLagInspector:
         assert data["consumer_group"] == "test-group"
 
     @pytest.mark.asyncio
-    async def test_partitions_have_lag(self):
+    async def test_partitions_have_lag(self) -> None:
         result = await kafka_lag_inspector.ainvoke({})
         data = json.loads(result)
         for partition in data["partitions"]:
@@ -75,7 +75,7 @@ class TestFraudSignalFetch:
     """Tests for fraud signal fetch tool."""
 
     @pytest.mark.asyncio
-    async def test_returns_fraud_stats(self):
+    async def test_returns_fraud_stats(self) -> None:
         result = await fraud_signal_fetch.ainvoke({
             "service": "payment-gateway",
             "window_minutes": 5
@@ -87,7 +87,7 @@ class TestFraudSignalFetch:
         assert data["total_transactions"] > 0
 
     @pytest.mark.asyncio
-    async def test_fraud_scores_valid_range(self):
+    async def test_fraud_scores_valid_range(self) -> None:
         result = await fraud_signal_fetch.ainvoke({})
         data = json.loads(result)
         scores = data["fraud_scores"]
@@ -99,7 +99,7 @@ class TestBaselineCompare:
     """Tests for baseline compare tool."""
 
     @pytest.mark.asyncio
-    async def test_normal_value(self):
+    async def test_normal_value(self) -> None:
         result = await baseline_compare.ainvoke({
             "metric_name": "p99_latency_ms",
             "current_value": 260.0,  # Close to normal
@@ -110,7 +110,7 @@ class TestBaselineCompare:
         assert abs(data["z_score"]) < 2  # Should be normal
 
     @pytest.mark.asyncio
-    async def test_anomalous_value(self):
+    async def test_anomalous_value(self) -> None:
         result = await baseline_compare.ainvoke({
             "metric_name": "p99_latency_ms",
             "current_value": 1500.0,  # Way above baseline
@@ -120,7 +120,7 @@ class TestBaselineCompare:
         assert data["z_score"] > 2
 
     @pytest.mark.asyncio
-    async def test_severity_classification(self):
+    async def test_severity_classification(self) -> None:
         result = await baseline_compare.ainvoke({
             "metric_name": "error_rate",
             "current_value": 0.15,  # Very high error rate
@@ -133,7 +133,7 @@ class TestAnomalyClassifier:
     """Tests for Isolation Forest anomaly classifier."""
 
     @pytest.mark.asyncio
-    async def test_normal_vector(self):
+    async def test_normal_vector(self) -> None:
         # Normal metrics vector
         result = await anomaly_classifier.ainvoke({
             "metrics_vector": [250.0, 0.02, 45.0, 60.0, 500.0, 0.038]
@@ -144,7 +144,7 @@ class TestAnomalyClassifier:
         assert 0 <= data["confidence"] <= 1
 
     @pytest.mark.asyncio
-    async def test_anomalous_vector(self):
+    async def test_anomalous_vector(self) -> None:
         # Extreme anomalous metrics — verify classifier runs and returns valid schema
         result = await anomaly_classifier.ainvoke({
             "metrics_vector": [5000.0, 0.50, 99.0, 98.0, 50000.0, 0.80]
@@ -156,7 +156,7 @@ class TestAnomalyClassifier:
         assert "isolation_score" in data
 
     @pytest.mark.asyncio
-    async def test_different_vector_lengths(self):
+    async def test_different_vector_lengths(self) -> None:
         # Should handle variable length input
         for length in [3, 6, 10]:
             result = await anomaly_classifier.ainvoke({

@@ -12,11 +12,9 @@ Processes runbook documents through:
 from __future__ import annotations
 
 import hashlib
-import uuid
 from typing import Any
 
 import asyncpg
-import numpy as np
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -85,7 +83,7 @@ class RunbookIngestionPipeline:
         chunk_ids = []
         conn = await asyncpg.connect(self.settings.data.postgres_dsn)
         try:
-            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=False)):
                 doc_id = self._generate_doc_id(title, i)
                 chunk_ids.append(doc_id)
 
@@ -278,7 +276,8 @@ WHERE NOT granted;
 5. Alert fraud risk team for pattern analysis
 
 ## Escalation
-If confirmed fraud signal drift, immediately notify Fraud Risk Team and increase manual review rate to 100% for flagged transactions.
+If confirmed fraud signal drift, immediately notify Fraud Risk Team and increase manual review rate
+to 100% for flagged transactions.
 """,
             },
             {

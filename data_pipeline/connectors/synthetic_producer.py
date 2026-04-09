@@ -14,16 +14,16 @@ Event types generated:
 from __future__ import annotations
 
 import asyncio
-import json
-import random
 import uuid
-from datetime import datetime, timedelta
-from typing import Any, AsyncGenerator
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from shared.schemas import TelemetryEvent
 from shared.utils import get_logger
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 logger = get_logger("synthetic_producer")
 

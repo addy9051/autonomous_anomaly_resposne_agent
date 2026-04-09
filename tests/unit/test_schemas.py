@@ -11,13 +11,11 @@ Tests all inter-agent API contracts for:
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
 import pytest
 
 from shared.schemas import (
-    ActionResult,
     ActionTier,
     AnomalyEvent,
     AnomalyType,
@@ -27,9 +25,7 @@ from shared.schemas import (
     MetricsSnapshot,
     RecommendedAction,
     RootCauseCategory,
-    RunbookReference,
     Severity,
-    SubAgentReport,
     TelemetryEvent,
 )
 
@@ -37,7 +33,7 @@ from shared.schemas import (
 class TestAnomalyEvent:
     """Tests for AnomalyEvent schema."""
 
-    def test_create_valid_event(self):
+    def test_create_valid_event(self) -> None:
         event = AnomalyEvent(
             severity=Severity.HIGH,
             affected_services=["payment-gateway"],
@@ -52,7 +48,7 @@ class TestAnomalyEvent:
         assert event.timestamp  # Auto-generated
         assert len(event.affected_services) == 1
 
-    def test_confidence_bounds(self):
+    def test_confidence_bounds(self) -> None:
         # Valid boundary values
         AnomalyEvent(
             severity=Severity.LOW,
@@ -72,7 +68,7 @@ class TestAnomalyEvent:
         )
 
         # Invalid: out of bounds
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             AnomalyEvent(
                 severity=Severity.LOW,
                 affected_services=["test"],
@@ -82,7 +78,7 @@ class TestAnomalyEvent:
                 confidence=1.5,
             )
 
-    def test_serialization_roundtrip(self):
+    def test_serialization_roundtrip(self) -> None:
         event = AnomalyEvent(
             severity=Severity.CRITICAL,
             affected_services=["payment-gateway", "fraud-api"],
@@ -101,7 +97,7 @@ class TestAnomalyEvent:
 class TestDiagnosisResult:
     """Tests for DiagnosisResult schema."""
 
-    def test_create_valid_diagnosis(self):
+    def test_create_valid_diagnosis(self) -> None:
         diagnosis = DiagnosisResult(
             event_id="test-event-123",
             root_cause="Database connection pool exhaustion due to slow queries",
@@ -125,7 +121,7 @@ class TestDiagnosisResult:
         assert len(diagnosis.recommended_actions) == 2
         assert not diagnosis.is_novel_incident
 
-    def test_novel_incident_flag(self):
+    def test_novel_incident_flag(self) -> None:
         diagnosis = DiagnosisResult(
             event_id="test-event-456",
             root_cause="Unknown pattern",
@@ -141,14 +137,14 @@ class TestDiagnosisResult:
 class TestIncidentRecord:
     """Tests for IncidentRecord lifecycle."""
 
-    def test_create_default_incident(self):
+    def test_create_default_incident(self) -> None:
         incident = IncidentRecord()
         assert incident.status == IncidentStatus.DETECTED
         assert incident.auto_resolved is False
         assert incident.false_positive is False
         assert incident.total_llm_tokens_used == 0
 
-    def test_full_lifecycle(self):
+    def test_full_lifecycle(self) -> None:
         incident = IncidentRecord()
 
         # Detect
@@ -170,7 +166,7 @@ class TestIncidentRecord:
 class TestTelemetryEvent:
     """Tests for TelemetryEvent schema."""
 
-    def test_create_transaction_event(self):
+    def test_create_transaction_event(self) -> None:
         event = TelemetryEvent(
             source="payment_gateway",
             service_name="payment-gateway",
@@ -185,7 +181,7 @@ class TestTelemetryEvent:
         assert event.source == "payment_gateway"
         assert event.payload["amount"] == 99.99
 
-    def test_create_metric_event(self):
+    def test_create_metric_event(self) -> None:
         event = TelemetryEvent(
             source="infra_metrics",
             service_name="fraud-api",
@@ -202,7 +198,7 @@ class TestTelemetryEvent:
 class TestActionTier:
     """Tests for ActionTier enum."""
 
-    def test_tier_values(self):
+    def test_tier_values(self) -> None:
         assert ActionTier.TIER_1_AUTO.value == 1
         assert ActionTier.TIER_2_APPROVE.value == 2
         assert ActionTier.TIER_3_HUMAN.value == 3

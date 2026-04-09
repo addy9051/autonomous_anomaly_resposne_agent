@@ -11,8 +11,12 @@ contextual bandit model. Reward is shaped by:
 
 from __future__ import annotations
 
-from shared.schemas import IncidentRecord
+from typing import TYPE_CHECKING
+
 from shared.utils import get_logger
+
+if TYPE_CHECKING:
+    from shared.schemas import IncidentRecord
 
 logger = get_logger("reward_function")
 

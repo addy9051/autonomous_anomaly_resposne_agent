@@ -9,8 +9,6 @@ Coordinates 3 specialist sub-agents for parallel investigation:
 
 from __future__ import annotations
 
-from typing import Any
-
 from crewai import Agent, Crew, Process, Task
 
 from agents.diagnosis.prompts import (
@@ -19,7 +17,7 @@ from agents.diagnosis.prompts import (
     NETWORK_SUBAGENT_PROMPT,
 )
 from shared.config import get_settings
-from shared.schemas import SubAgentReport, Severity
+from shared.schemas import Severity, SubAgentReport
 from shared.utils import get_logger
 
 logger = get_logger("diagnosis_crew")

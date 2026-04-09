@@ -17,27 +17,26 @@ from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langfuse.callback import CallbackHandler
+from langfuse.decorators import langfuse_context, observe
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
-from langfuse.callback import CallbackHandler
-from langfuse.decorators import observe, langfuse_context
 
 from agents.diagnosis.prompts import (
     CONTEXT_GATHER_PROMPT,
     DIAGNOSIS_SYSTEM_PROMPT,
-    RAG_LOOKUP_PROMPT,
     SYNTHESIS_PROMPT,
 )
 from shared.config import get_settings
 from shared.schemas import (
+    ActionTier,
     AnomalyEvent,
     DiagnosisResult,
     RecommendedAction,
     RootCauseCategory,
     RunbookReference,
-    SubAgentReport,
-    ActionTier,
     Severity,
+    SubAgentReport,
 )
 from shared.utils import LLMCostTracker, Timer, get_logger, get_tracer
 
@@ -121,7 +120,6 @@ async def rag_runbook_lookup(state: DiagnosisState) -> dict:
     # In development, use synthetic runbook matches
     # In production, this would call the knowledge_base/retrieval/search.py API
     synthetic_runbooks = _get_synthetic_runbooks(anomaly_type, affected_services)
-    
     langfuse_context.update_current_observation(
         output={
             "doc_ids": [r.get("runbook_id") for r in synthetic_runbooks],

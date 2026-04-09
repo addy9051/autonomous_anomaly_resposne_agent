@@ -13,13 +13,12 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langfuse.callback import CallbackHandler
 
-from agents.action.tiers import classify_action, get_tier_description
+from agents.action.tiers import classify_action
 from agents.action.workflows import trigger_workflow
 from shared.config import get_settings
 from shared.schemas import (

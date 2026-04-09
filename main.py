@@ -65,7 +65,7 @@ class AgentOrchestrator:
         total_timer = Timer()
         with total_timer:
             # ── Step 1: Feature Extraction ──
-            features = self.feature_aggregator.add_event(event)
+            self.feature_aggregator.add_event(event)
 
             # ── Step 2: Monitoring Agent — Anomaly Detection ──
             cost_tracker = LLMCostTracker(incident_id="pending")
@@ -98,7 +98,7 @@ class AgentOrchestrator:
 
             # ── Step 3: Diagnosis Agent — Root Cause Analysis ──
             incident.status = IncidentStatus.DIAGNOSING
-            start_diag = datetime.utcnow()
+            datetime.utcnow()
 
             diagnosis = await self.diagnosis_agent.diagnose(anomaly, cost_tracker)
             incident.diagnosis_result = diagnosis
@@ -116,7 +116,7 @@ class AgentOrchestrator:
 
             # ── Step 4: Action Agent — Execute Remediation ──
             incident.status = IncidentStatus.ACTION_PENDING
-            action_results = await self.action_agent.execute(
+            await self.action_agent.execute(
                 diagnosis, incident, cost_tracker, dry_run=dry_run
             )
 
@@ -234,7 +234,7 @@ class AgentOrchestrator:
 # ─── CLI Entry Point ────────────────────────────────────────────
 
 
-async def main():
+async def main() -> None:
     """Run the orchestrator in demo mode."""
     import argparse
 

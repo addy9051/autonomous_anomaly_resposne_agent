@@ -10,23 +10,22 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ─── Enums ────────────────────────────────────────────────────────
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
 
 
-class AnomalyType(str, Enum):
+class AnomalyType(StrEnum):
     LATENCY_SPIKE = "latency_spike"
     ERROR_RATE = "error_rate"
     DATA_QUALITY = "data_quality"
@@ -35,7 +34,7 @@ class AnomalyType(str, Enum):
     RESOURCE_SATURATION = "resource_saturation"
 
 
-class RootCauseCategory(str, Enum):
+class RootCauseCategory(StrEnum):
     NETWORK = "network"
     DATABASE = "database"
     APPLICATION = "application"
@@ -51,7 +50,7 @@ class ActionTier(int, Enum):
     TIER_3_HUMAN = 3
 
 
-class IncidentStatus(str, Enum):
+class IncidentStatus(StrEnum):
     DETECTED = "detected"
     DIAGNOSING = "diagnosing"
     ACTION_PENDING = "action_pending"

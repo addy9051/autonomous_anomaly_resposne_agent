@@ -18,7 +18,7 @@ from langfuse.callback import CallbackHandler
 from agents.monitoring.prompts import MONITORING_HUMAN_PROMPT, MONITORING_SYSTEM_PROMPT
 from agents.monitoring.tools.monitoring_tools import ALL_MONITORING_TOOLS
 from shared.config import get_settings
-from shared.schemas import AnomalyEvent, MetricsSnapshot, Severity, AnomalyType, TelemetryEvent
+from shared.schemas import AnomalyEvent, AnomalyType, MetricsSnapshot, Severity, TelemetryEvent
 from shared.utils import LLMCostTracker, Timer, get_logger, get_tracer
 
 logger = get_logger("monitoring_agent")
@@ -175,7 +175,7 @@ class MonitoringAgent:
         logger.warning("max_iterations_reached", event_id=event.event_id)
         return None
 
-    def _get_tool(self, name: str):
+    def _get_tool(self, name: str) -> Any | None:  # noqa: ANN401
         """Look up a tool by name."""
         for tool in ALL_MONITORING_TOOLS:
             if tool.name == name:

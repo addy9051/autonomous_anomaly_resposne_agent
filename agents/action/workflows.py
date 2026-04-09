@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from shared.config import get_settings
-from shared.utils import get_logger, retry_tool_call
+from shared.utils import get_logger
 
 logger = get_logger("n8n_workflows")
 

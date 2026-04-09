@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from shared.schemas import TelemetryEvent
 from shared.utils import get_logger
+
+if TYPE_CHECKING:
+    from shared.schemas import TelemetryEvent
 
 logger = get_logger("anomaly_features")
 

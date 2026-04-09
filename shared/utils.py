@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable  # noqa: TC003
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -28,7 +29,6 @@ from sqlalchemy.orm import sessionmaker
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from shared.config import get_settings
-
 
 # ─── Structured Logging ──────────────────────────────────────────
 
@@ -104,7 +104,7 @@ async def get_redis_client() -> aioredis.Redis:
 # ─── PostgreSQL Client ──────────────────────────────────────────
 
 
-def get_async_engine():
+def get_async_engine() -> Any:  # noqa: ANN401
     """Create SQLAlchemy async engine for PostgreSQL."""
     settings = get_settings()
     return create_async_engine(
@@ -115,7 +115,7 @@ def get_async_engine():
     )
 
 
-def get_async_session_factory():
+def get_async_session_factory() -> Any:  # noqa: ANN401
     """Create an async session factory."""
     engine = get_async_engine()
     return sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -176,7 +176,7 @@ class LLMCostTracker:
 # ─── Retry Decorator for Tool Calls ─────────────────────────────
 
 
-def retry_tool_call(max_attempts: int = 3):
+def retry_tool_call(max_attempts: int = 3) -> Callable[..., Any]:
     """Retry decorator for external tool calls with exponential backoff."""
     return retry(
         stop=stop_after_attempt(max_attempts),
@@ -194,9 +194,9 @@ class Timer:
     def __init__(self) -> None:
         self.elapsed_ms: float = 0.0
 
-    def __enter__(self) -> "Timer":
+    def __enter__(self) -> Timer:
         self._start = time.perf_counter()
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(self, *args: object) -> None:
         self.elapsed_ms = (time.perf_counter() - self._start) * 1000

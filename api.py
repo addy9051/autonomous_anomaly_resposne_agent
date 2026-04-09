@@ -22,7 +22,7 @@ from agents.action.tiers import ACTION_TIERS, get_tier_description
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from main import AgentOrchestrator
 from shared.config import get_settings
-from shared.schemas import IncidentRecord, TelemetryEvent
+from shared.schemas import TelemetryEvent
 from shared.utils import setup_logging
 
 # ─── Global State ────────────────────────────────────────────────
@@ -32,7 +32,7 @@ producer = SyntheticTelemetryProducer()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
     """Application lifespan: startup and shutdown."""
     global orchestrator
     setup_logging()
@@ -94,7 +94,7 @@ class HealthResponse(BaseModel):
 
 
 @app.get("/", tags=["Health"])
-async def root():
+async def root() -> dict[str, str]:
     """Root endpoint."""
     return {
         "service": "Anomaly Response Agent System",
@@ -104,7 +104,7 @@ async def root():
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
-async def health_check():
+async def health_check() -> HealthResponse:
     """Health check endpoint."""
     return HealthResponse(
         status="healthy",
@@ -121,7 +121,7 @@ async def health_check():
 
 
 @app.post("/api/v1/events/process", tags=["Events"])
-async def process_event(request: ProcessEventRequest):
+async def process_event(request: ProcessEventRequest) -> dict[str, Any]:
     """Submit a single telemetry event for processing."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -144,7 +144,7 @@ async def process_event(request: ProcessEventRequest):
 
 
 @app.post("/api/v1/demo/run", tags=["Demo"])
-async def run_demo(request: RunDemoRequest):
+async def run_demo(request: RunDemoRequest) -> dict[str, Any]:
     """Run a demo with synthetic telemetry events."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -164,7 +164,7 @@ async def run_demo(request: RunDemoRequest):
 
 
 @app.post("/api/v1/stream/start", tags=["Streaming"])
-async def start_stream(request: StreamRequest):
+async def start_stream(request: StreamRequest) -> dict[str, Any]:
     """Start streaming synthetic telemetry."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -184,7 +184,7 @@ async def start_stream(request: StreamRequest):
 
 
 @app.get("/api/v1/incidents", tags=["Incidents"])
-async def list_incidents(limit: int = 50, status: str | None = None):
+async def list_incidents(limit: int = 50, status: str | None = None) -> dict[str, Any]:
     """List recent incidents."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -201,7 +201,7 @@ async def list_incidents(limit: int = 50, status: str | None = None):
 
 
 @app.get("/api/v1/incidents/{incident_id}", tags=["Incidents"])
-async def get_incident(incident_id: str):
+async def get_incident(incident_id: str) -> dict[str, Any]:
     """Get a specific incident by ID."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -219,7 +219,7 @@ async def get_incident(incident_id: str):
 
 
 @app.get("/api/v1/status", tags=["Monitoring"])
-async def get_status():
+async def get_status() -> dict[str, Any]:
     """Get current system status and agent metrics."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -228,7 +228,7 @@ async def get_status():
 
 
 @app.get("/api/v1/feedback/policy", tags=["Feedback"])
-async def get_feedback_policy():
+async def get_feedback_policy() -> dict[str, Any]:
     """Get current RL policy status and action statistics."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -237,7 +237,7 @@ async def get_feedback_policy():
 
 
 @app.get("/api/v1/actions/tiers", tags=["Actions"])
-async def get_action_tiers():
+async def get_action_tiers() -> dict[str, Any]:
     """Get action tier classification reference."""
     return {
         tier_name: {

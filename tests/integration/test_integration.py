@@ -1,21 +1,15 @@
-import pytest
-import asyncio
-from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from shared.schemas import (
-    AnomalyEvent, 
-    Severity, 
-    RootCauseCategory, 
-    ActionTier, 
-    IncidentRecord, 
-    IncidentStatus
-)
-from agents.diagnosis.graph import DiagnosisAgent
+import pytest
+
 from agents.action.agent import ActionAgent
+from agents.diagnosis.graph import DiagnosisAgent
+from shared.schemas import AnomalyEvent, IncidentRecord, IncidentStatus, RootCauseCategory, Severity
+
 
 @pytest.mark.asyncio
-async def test_end_to_end_mocked_incident_flow():
+async def test_end_to_end_mocked_incident_flow() -> None:
     """
     Simulates a full end-to-end integration test.
     Mocks the graph output to ensure predictable state transitions.
@@ -50,15 +44,16 @@ async def test_end_to_end_mocked_incident_flow():
             }
         })
         mock_build.return_value = mock_graph
-        
+
         # Mock the Action LLM response (for summary)
         mock_action_instance = MagicMock()
-        mock_action_instance.ainvoke = AsyncMock(return_value=MagicMock(content="Root Cause: Test summary\nActions Taken: Scaled\nStatus: Resolved"))
+        mock_action_instance.ainvoke = AsyncMock(
+            return_value=MagicMock(content="Root Cause: Test summary\nActions Taken: Scaled\nStatus: Resolved")
+        )
         mock_action_llm.return_value = mock_action_instance
-        
         # Mock trigger_workflow
         mock_trigger_workflow.return_value = {"status": "success", "execution_id": "999"}
-        
+
         # 3. Execute Diagnosis Agent
         diagnosis_agent = DiagnosisAgent()
         diagnosis_result = await diagnosis_agent.diagnose(event)
@@ -68,18 +63,18 @@ async def test_end_to_end_mocked_incident_flow():
 
         # 4. Execute Action Agent
         action_agent = ActionAgent()
-        
+
         incident = IncidentRecord(
             incident_id=diagnosis_result.incident_id,
             event_id=event.event_id,
             status=IncidentStatus.DETECTED,
             created_at=datetime.utcnow()
         )
-        
+
         action_results = await action_agent.execute(diagnosis_result, incident)
 
         assert incident.status == IncidentStatus.RESOLVED
-        assert incident.auto_resolved == True
+        assert incident.auto_resolved
         assert action_results[0].action_taken == "scale_replicas"
-        
+
         mock_trigger_workflow.assert_called_once()

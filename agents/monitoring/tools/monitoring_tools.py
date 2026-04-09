@@ -20,7 +20,7 @@ from langchain_core.tools import tool
 from sklearn.ensemble import IsolationForest
 
 from shared.config import get_settings
-from shared.utils import get_logger, retry_tool_call
+from shared.utils import get_logger
 
 logger = get_logger(__name__)
 

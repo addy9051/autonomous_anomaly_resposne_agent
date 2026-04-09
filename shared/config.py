@@ -49,7 +49,7 @@ class DataConfig(BaseSettings):
     postgres_port: int = 5432
     postgres_db: str = "agent_kb"
     postgres_user: str = "postgres"
-    postgres_password: str = "agent_secret_2024"
+    postgres_password: str = "agent_secret_2024"  # noqa: S105
 
     # Supabase (alternative to local PG)
     supabase_url: str = ""
@@ -142,7 +142,7 @@ class AppConfig(BaseSettings):
 
     app_env: str = "development"
     log_level: str = "INFO"
-    api_host: str = "0.0.0.0"
+    api_host: str = "0.0.0.0"  # noqa: S104
     api_port: int = 8000
 
 

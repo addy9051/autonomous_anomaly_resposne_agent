@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Any
 
 import asyncpg
-import numpy as np
 from langchain_openai import OpenAIEmbeddings
 
 from shared.config import get_settings

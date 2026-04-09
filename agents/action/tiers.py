@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from shared.schemas import ActionTier
 
-
 # ─── Tier Definitions ────────────────────────────────────────────
 
 ACTION_TIERS: dict[str, ActionTier] = {

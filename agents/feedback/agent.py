@@ -8,19 +8,20 @@ Supports A/B testing of policy candidates before full rollout.
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from langfuse import Langfuse
 from sklearn.linear_model import SGDClassifier
 from sklearn.preprocessing import StandardScaler
 
-from agents.feedback.reward import compute_batch_rewards, compute_reward
+from agents.feedback.reward import compute_reward
 from shared.config import get_settings
-from langfuse import Langfuse
-from shared.schemas import IncidentRecord
 from shared.utils import get_logger, get_tracer
+
+if TYPE_CHECKING:
+    from shared.schemas import IncidentRecord
 
 logger = get_logger("feedback_agent")
 tracer = get_tracer()
@@ -78,7 +79,7 @@ class FeedbackLoopAgent:
             reward = compute_reward(incident)
 
             # Extract features and action
-            from agents.feedback.reward import _extract_state_features, _extract_action_label
+            from agents.feedback.reward import _extract_action_label, _extract_state_features
             features = _extract_state_features(incident)
             action = _extract_action_label(incident)
 
@@ -153,10 +154,10 @@ class FeedbackLoopAgent:
 
         # Exploit: use trained model
         try:
-            X = np.array(features).reshape(1, -1)
-            X_scaled = self.scaler.transform(X)
-            action = self.model.predict(X_scaled)[0]
-            probs = self.model.predict_proba(X_scaled)[0]
+            x_input = np.array(features).reshape(1, -1)
+            x_scaled = self.scaler.transform(x_input)
+            action = self.model.predict(x_scaled)[0]
+            probs = self.model.predict_proba(x_scaled)[0]
             confidence = float(max(probs))
 
             return {
@@ -196,12 +197,12 @@ class FeedbackLoopAgent:
             return {"status": "insufficient_positive_examples"}
 
         # Prepare training data
-        X = np.array([exp["features"] for exp in training_data])
-        y = [exp["action"] for exp in training_data]
+        x_train = np.array([exp["features"] for exp in training_data])
+        y_train = [exp["action"] for exp in training_data]
 
         # Fit scaler and model
-        X_scaled = self.scaler.fit_transform(X)
-        self.model.partial_fit(X_scaled, y, classes=list(set(y)))
+        x_scaled = self.scaler.fit_transform(x_train)
+        self.model.partial_fit(x_scaled, y_train, classes=list(set(y_train)))
         self.is_fitted = True
 
         # Update policy version
@@ -216,7 +217,7 @@ class FeedbackLoopAgent:
             "training_examples": len(training_data),
             "total_buffer": len(self.experience_buffer),
             "mean_reward": float(np.mean([exp["reward"] for exp in training_data])),
-            "unique_actions": len(set(y)),
+            "unique_actions": len(set(y_train)),
         }
 
         self.policy_history.append(metrics)
