@@ -1,0 +1,16 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/anomaly-agents-dev/agent-api:$SHORT_SHA'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/anomaly-agents-dev/agent-api:latest'
+      - '-f'
+      - 'infra/docker/Dockerfile'
+      - '.'
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/anomaly-agents-dev/agent-api:latest'
+
+timeout: '1200s'

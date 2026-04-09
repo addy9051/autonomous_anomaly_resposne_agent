@@ -1,0 +1,43 @@
+# ═══════════════════════════════════════════════════════════════
+#  .dockerignore — Agent System
+# ═══════════════════════════════════════════════════════════════
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-arg.txt
+
+# Poetry
+.poetry/
+.pytest_cache/
+.mypy_cache/
+
+# Local data & logs
+logs/
+data/
+*.db
+*.sqlite
+.env
+
+# Infrastructure & Tools
+infra/terraform/.terraform/
+infra/terraform/terraform.tfstate*
+bin/
+tools/
+terraform.exe*
+helm.exe*
+
+# IDEs
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore

@@ -16,24 +16,23 @@ spec:
     spec:
       containers:
         - name: {{ .Chart.Name }}
-          image: "us-central1-docker.pkg.dev/my-project/anomaly-agents/agent-api:latest"
-          imagePullPolicy: Always
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: 8000
               protocol: TCP
           env:
             - name: APP_ENV
-              value: "production"
+              value: {{ .Values.env.APP_ENV | quote }}
+            - name: GOOGLE_PROJECT_ID
+              value: {{ .Values.env.GOOGLE_PROJECT_ID | quote }}
+            - name: MESSAGE_BUS_TYPE
+              value: {{ .Values.env.MESSAGE_BUS_TYPE | quote }}
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: agent-secrets
+                  name: {{ .Values.secretName }}
                   key: openai-key
           resources:
-            requests:
-              cpu: "1"
-              memory: "2Gi"
-            limits:
-              cpu: "2"
-              memory: "4Gi"
+            {{- toYaml .Values.resources | nindent 12 }}

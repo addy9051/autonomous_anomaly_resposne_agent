@@ -1,0 +1,36 @@
+# ═══════════════════════════════════════════════════════════════
+#  Helm Values — Anomaly Response Agent (Production/GKE)
+# ═══════════════════════════════════════════════════════════════
+
+replicaCount: 2
+
+image:
+  repository: us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api
+  pullPolicy: Always
+  # tag: "latest" (overridden during CI/CD or install)
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: "1"
+    memory: "2Gi"
+  limits:
+    cpu: "2"
+    memory: "4Gi"
+
+env:
+  APP_ENV: "production"
+  LOG_LEVEL: "info"
+  # Message Bus Config (Pivoting to Cloud Pub/Sub)
+  MESSAGE_BUS_TYPE: "pubsub"
+  GOOGLE_PROJECT_ID: "amex-autonomouse-expense-ai"
+  
+# Secrets should be managed via K8s secrets or External Secrets Operator
+secretName: "agent-secrets"
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
