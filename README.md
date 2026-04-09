@@ -183,6 +183,30 @@ poetry run mypy agents/ shared/ --ignore-missing-imports
 
 ---
 
+## 🚢 CI/CD & Deployment
+
+This project utilizes highly automated GitHub Actions for Continuous Integration and Continuous Deployment (CI/CD) to Google Cloud Platform. 
+
+- **Infrastructure as Code**: Core GCP resources (GKE Autopilot, Pub/Sub, Artifact Registry) are rigidly managed via Terraform in `infra/terraform`.
+- **Automated Testing**: On every commit, GitHub Actions runs `ruff` to enforce python styling and `pytest` for unit testing and mocked integration validations.
+- **Continuous Deployment (CD)**:
+  1. The pipeline authenticates securely using a CI/CD Google Service Account.
+  2. A streamlined Docker image is built remotely and pushed to **Google Artifact Registry**.
+  3. The Kubernetes manifest (`infra/k8s/deployment.yaml`) is dynamically updated with the precise Git commit SHA tag.
+  4. The manifest is immediately applied to the **GKE Autopilot** cluster.
+  5. The pipeline monitors `kubectl rollout status` to guarantee zero-downtime Pod deployment.
+
+To control the Kubernetes deployment manually:
+```bash
+# Apply standard infrastructure
+kubectl apply -f infra/k8s/deployment.yaml
+
+# Manage scaling instantly (Autopilot drops resources to 0 when idle)
+kubectl scale deployment anomaly-agent --replicas=1
+```
+
+---
+
 ## 🔒 Security & Authentication
 
 This system follows the principle of least privilege and uses modern authentication standards to avoid hardcoded secrets.
