@@ -1,0 +1,1617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agentic AI — Service Reliability Architecture</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&family=Inter:wght@300;400;500&display=swap');
+
+  :root {
+    --bg:       #0a0c10;
+    --bg2:      #0f1117;
+    --bg3:      #14181f;
+    --bg4:      #1a1f28;
+    --border:   rgba(255,255,255,0.07);
+    --border2:  rgba(255,255,255,0.12);
+    --text:     #e2e4e9;
+    --muted:    #8a8f99;
+    --dim:      #555a63;
+    --blue:     #3d8ef0;
+    --blue2:    #1a5fb8;
+    --cyan:     #22d9c8;
+    --green:    #22c55e;
+    --amber:    #f59e0b;
+    --red:      #ef4444;
+    --purple:   #a78bfa;
+    --pink:     #f472b6;
+    --teal:     #14b8a6;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    line-height: 1.7;
+    min-height: 100vh;
+  }
+
+  /* ─── HEADER ─────────────────────────────────────────────── */
+  .doc-header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border2);
+    padding: 48px 60px 40px;
+    position: relative;
+    overflow: hidden;
+  }
+  .doc-header::before {
+    content: '';
+    position: absolute;
+    top: -80px; right: -80px;
+    width: 360px; height: 360px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(61,142,240,0.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .doc-header::after {
+    content: '';
+    position: absolute;
+    bottom: -60px; left: 40%;
+    width: 280px; height: 280px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(34,217,200,0.07) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .badge-row { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 3px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .badge-blue   { background: rgba(61,142,240,0.15); color: #7eb8ff; border: 1px solid rgba(61,142,240,0.3); }
+  .badge-cyan   { background: rgba(34,217,200,0.12); color: #6deee5; border: 1px solid rgba(34,217,200,0.25); }
+  .badge-amber  { background: rgba(245,158,11,0.12);  color: #fcc94a; border: 1px solid rgba(245,158,11,0.25); }
+  .badge-green  { background: rgba(34,197,94,0.12);   color: #6ee7a0; border: 1px solid rgba(34,197,94,0.25); }
+  .badge-purple { background: rgba(167,139,250,0.12); color: #c4b0ff; border: 1px solid rgba(167,139,250,0.25); }
+  .badge-red    { background: rgba(239,68,68,0.12);   color: #ff9090; border: 1px solid rgba(239,68,68,0.25); }
+
+  h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: 34px; font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    color: #fff;
+    margin-bottom: 12px;
+  }
+  h1 span { color: var(--cyan); }
+
+  .subtitle {
+    font-size: 15px; color: var(--muted);
+    max-width: 640px; line-height: 1.6;
+    margin-bottom: 28px;
+  }
+
+  .meta-row {
+    display: flex; gap: 32px; flex-wrap: wrap;
+  }
+  .meta-item { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--dim); }
+  .meta-item strong { color: var(--muted); display: block; margin-bottom: 2px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+
+  /* ─── NAV ─────────────────────────────────────────────────── */
+  .phase-nav {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 0 60px;
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .phase-nav::-webkit-scrollbar { display: none; }
+  .nav-item {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; font-weight: 500;
+    padding: 14px 18px;
+    color: var(--dim);
+    cursor: pointer;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    text-decoration: none;
+    display: block;
+    letter-spacing: 0.04em;
+  }
+  .nav-item:hover { color: var(--text); }
+  .nav-item.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+
+  /* ─── LAYOUT ─────────────────────────────────────────────── */
+  .content { padding: 0 60px 80px; max-width: 1200px; }
+
+  /* ─── PHASE SECTION ──────────────────────────────────────── */
+  .phase {
+    padding: 52px 0 48px;
+    border-bottom: 1px solid var(--border);
+  }
+  .phase:last-child { border-bottom: none; }
+
+  .phase-header {
+    display: flex; align-items: flex-start; gap: 20px;
+    margin-bottom: 32px;
+  }
+  .phase-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; font-weight: 500;
+    color: var(--bg);
+    background: var(--cyan);
+    padding: 4px 8px;
+    border-radius: 3px;
+    margin-top: 4px;
+    white-space: nowrap;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+  .phase-num.amber  { background: var(--amber); }
+  .phase-num.blue   { background: var(--blue);  }
+  .phase-num.green  { background: var(--green); }
+  .phase-num.purple { background: var(--purple); color: #1a0a3d; }
+  .phase-num.red    { background: var(--red);   }
+  .phase-num.pink   { background: var(--pink);  color: #3d0020; }
+  .phase-num.teal   { background: var(--teal);  }
+
+  .phase-title-block {}
+  h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px; font-weight: 700;
+    color: #fff;
+    margin-bottom: 6px;
+    letter-spacing: -0.01em;
+  }
+  .phase-desc { color: var(--muted); font-size: 13.5px; max-width: 680px; }
+
+  /* ─── SECTION TITLE ──────────────────────────────────────── */
+  h3 {
+    font-family: 'Syne', sans-serif;
+    font-size: 14px; font-weight: 600;
+    color: #c8ccd6;
+    margin: 28px 0 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+  h4 {
+    font-family: 'Inter', sans-serif;
+    font-size: 13px; font-weight: 500;
+    color: var(--text);
+    margin: 16px 0 6px;
+  }
+
+  /* ─── GRID LAYOUTS ───────────────────────────────────────── */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+
+  /* ─── CARDS ──────────────────────────────────────────────── */
+  .card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+  }
+  .card-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .dot-cyan   { background: var(--cyan);   }
+  .dot-blue   { background: var(--blue);   }
+  .dot-amber  { background: var(--amber);  }
+  .dot-green  { background: var(--green);  }
+  .dot-purple { background: var(--purple); }
+  .dot-red    { background: var(--red);    }
+  .dot-pink   { background: var(--pink);   }
+  .dot-teal   { background: var(--teal);   }
+
+  .card p { font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+  /* ─── AGENT CARD ─────────────────────────────────────────── */
+  .agent-card {
+    background: var(--bg3);
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .agent-header {
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .agent-icon {
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .agent-name { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700; color: #fff; }
+  .agent-role { font-size: 11px; color: var(--dim); font-family: 'JetBrains Mono', monospace; }
+  .agent-body { padding: 16px 20px; }
+  .agent-body p { font-size: 12.5px; color: var(--muted); line-height: 1.65; margin-bottom: 12px; }
+
+  /* ─── LIST ITEMS ─────────────────────────────────────────── */
+  .item-list { list-style: none; }
+  .item-list li {
+    font-size: 13px; color: var(--muted);
+    padding: 5px 0;
+    padding-left: 16px;
+    position: relative;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    line-height: 1.55;
+  }
+  .item-list li:last-child { border-bottom: none; }
+  .item-list li::before {
+    content: '›';
+    position: absolute; left: 0;
+    color: var(--dim); font-size: 13px;
+  }
+  .item-list li strong { color: var(--text); font-weight: 500; }
+
+  /* ─── CODE BLOCK ─────────────────────────────────────────── */
+  .code-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--blue);
+    border-radius: 6px;
+    padding: 14px 18px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: #9ab3d1;
+    line-height: 1.8;
+    overflow-x: auto;
+    margin: 10px 0;
+  }
+  .code-block .kw  { color: #c792ea; }
+  .code-block .fn  { color: #82aaff; }
+  .code-block .str { color: #c3e88d; }
+  .code-block .cmt { color: #546e7a; font-style: italic; }
+  .code-block .num { color: var(--cyan); }
+
+  /* ─── ARCH DIAGRAM ───────────────────────────────────────── */
+  .arch-diagram {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px;
+    margin: 20px 0;
+    overflow-x: auto;
+  }
+
+  /* ─── FLOW PIPELINE ──────────────────────────────────────── */
+  .pipeline {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    overflow-x: auto;
+    padding: 16px 0;
+  }
+  .pipe-step {
+    flex: 1;
+    min-width: 120px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 12px;
+    text-align: center;
+    position: relative;
+  }
+  .pipe-step + .pipe-step::before {
+    content: '→';
+    position: absolute;
+    left: -14px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--dim); font-size: 13px;
+    background: var(--bg); padding: 0 2px;
+    z-index: 1;
+  }
+  .pipe-step-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; font-weight: 500;
+    color: var(--dim);
+    margin-bottom: 6px;
+  }
+  .pipe-step-name {
+    font-family: 'Inter', sans-serif;
+    font-size: 12px; font-weight: 500;
+    color: var(--text);
+    line-height: 1.4;
+  }
+  .pipe-step-tool {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; color: var(--cyan);
+    margin-top: 4px;
+  }
+
+  /* ─── TABLE ──────────────────────────────────────────────── */
+  .data-table { width: 100%; border-collapse: collapse; }
+  .data-table th {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--dim);
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border2);
+    background: var(--bg);
+  }
+  .data-table td {
+    padding: 10px 14px;
+    font-size: 12.5px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover td { background: rgba(255,255,255,0.015); }
+  .td-name { color: var(--text); font-weight: 500; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+  .td-tech { color: var(--cyan); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+  /* ─── TIMELINE ───────────────────────────────────────────── */
+  .timeline { position: relative; padding-left: 28px; }
+  .timeline::before {
+    content: '';
+    position: absolute; left: 6px; top: 8px; bottom: 8px;
+    width: 1px; background: var(--border2);
+  }
+  .tl-item {
+    position: relative;
+    margin-bottom: 24px;
+  }
+  .tl-item::before {
+    content: '';
+    position: absolute;
+    left: -25px; top: 5px;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--bg4);
+    border: 1.5px solid var(--cyan);
+  }
+  .tl-title { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
+  .tl-body  { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+
+  /* ─── STACK PILLS ────────────────────────────────────────── */
+  .stack-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px; font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 3px;
+    letter-spacing: 0.04em;
+  }
+  .pill-cyan   { background: rgba(34,217,200,0.1);  color: var(--cyan);   border: 1px solid rgba(34,217,200,0.2); }
+  .pill-blue   { background: rgba(61,142,240,0.1);   color: #7eb8ff;       border: 1px solid rgba(61,142,240,0.2); }
+  .pill-amber  { background: rgba(245,158,11,0.1);   color: #fcc94a;       border: 1px solid rgba(245,158,11,0.2); }
+  .pill-green  { background: rgba(34,197,94,0.1);    color: #6ee7a0;       border: 1px solid rgba(34,197,94,0.2); }
+  .pill-purple { background: rgba(167,139,250,0.1);  color: #c4b0ff;       border: 1px solid rgba(167,139,250,0.2); }
+  .pill-red    { background: rgba(239,68,68,0.1);    color: #ff9090;       border: 1px solid rgba(239,68,68,0.2); }
+  .pill-gray   { background: rgba(255,255,255,0.05); color: var(--muted);  border: 1px solid var(--border2); }
+
+  /* ─── CALLOUT ────────────────────────────────────────────── */
+  .callout {
+    border-left: 3px solid;
+    border-radius: 0 6px 6px 0;
+    padding: 12px 16px;
+    margin: 14px 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .callout-blue  { border-color: var(--blue);  background: rgba(61,142,240,0.06);  color: #8bbef5; }
+  .callout-amber { border-color: var(--amber); background: rgba(245,158,11,0.07); color: #f0c46e; }
+  .callout-green { border-color: var(--green); background: rgba(34,197,94,0.06);  color: #7dd9a3; }
+  .callout-red   { border-color: var(--red);   background: rgba(239,68,68,0.06);  color: #f09090; }
+  .callout strong { font-weight: 600; }
+
+  /* ─── DIVIDER ────────────────────────────────────────────── */
+  .divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+  /* ─── MATRIX ─────────────────────────────────────────────── */
+  .matrix {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .matrix-cell {
+    background: var(--bg3);
+    padding: 16px 18px;
+  }
+  .matrix-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--dim);
+    margin-bottom: 6px;
+  }
+  .matrix-val { font-size: 13px; color: var(--muted); line-height: 1.55; }
+
+  /* ─── STATUS CHIPS ───────────────────────────────────────── */
+  .status { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+  .status::before { content: ''; width: 5px; height: 5px; border-radius: 50%; }
+  .status-ok     { color: var(--green);  }  .status-ok::before  { background: var(--green);  }
+  .status-warn   { color: var(--amber);  }  .status-warn::before{ background: var(--amber);  }
+  .status-err    { color: var(--red);    }  .status-err::before { background: var(--red);    }
+  .status-info   { color: var(--blue);   }  .status-info::before{ background: var(--blue);   }
+
+  /* ─── UTILITY ────────────────────────────────────────────── */
+  .mt8  { margin-top: 8px; }
+  .mt16 { margin-top: 16px; }
+  .mt24 { margin-top: 24px; }
+  .mb8  { margin-bottom: 8px; }
+
+  /* ─── LLM OBS: TOOL COMPARISON CARDS ────────────────────── */
+  .tool-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .tool-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .tool-card.winner { border: 1.5px solid rgba(34,217,200,0.45); background: linear-gradient(160deg,rgba(34,217,200,0.04) 0%,var(--bg3) 55%); }
+  .tool-card.secondary { border: 1px solid rgba(61,142,240,0.3); }
+  .tool-header { padding: 16px 20px 13px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  .tool-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  .tool-name { font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700; color: #fff; }
+  .tool-sub { font-size: 11px; color: var(--dim); font-family: 'JetBrains Mono', monospace; margin-top: 1px; }
+  .tool-badge { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; font-weight: 500; padding: 3px 8px; border-radius: 3px; white-space: nowrap; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.06em; }
+  .tb-winner { background: rgba(34,217,200,0.12); color: var(--cyan); border: 1px solid rgba(34,217,200,0.25); }
+  .tb-second { background: rgba(61,142,240,0.12); color: #7eb8ff; border: 1px solid rgba(61,142,240,0.25); }
+  .tb-third  { background: rgba(255,255,255,0.05); color: var(--muted); border: 1px solid var(--border2); }
+  .tool-body { padding: 16px 20px; }
+  .tool-body p { font-size: 12.5px; color: var(--muted); line-height: 1.65; margin-bottom: 10px; }
+
+  /* ─── SCORE BARS ─────────────────────────────────────────── */
+  .score-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .score-row:last-child { border-bottom: none; }
+  .score-label { font-size: 11.5px; color: var(--muted); flex: 1; }
+  .score-bar-wrap { width: 80px; height: 5px; background: var(--bg4); border-radius: 3px; overflow: hidden; flex-shrink: 0; }
+  .score-bar { height: 100%; border-radius: 3px; }
+  .score-val { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text); min-width: 22px; text-align: right; }
+
+  /* ─── SIGNAL FLOW LAYERS ─────────────────────────────────── */
+  .obs-flow { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 24px 28px; margin: 16px 0; }
+  .obs-layer-box { background: var(--bg3); border: 1px solid var(--border); border-radius: 7px; padding: 12px 16px; margin: 6px 0; display: flex; align-items: flex-start; gap: 12px; }
+  .obs-layer-icon { font-size: 16px; margin-top: 2px; flex-shrink: 0; }
+  .obs-layer-name { font-size: 12.5px; font-weight: 500; color: var(--text); margin-bottom: 3px; }
+  .obs-layer-desc { font-size: 11.5px; color: var(--muted); line-height: 1.55; }
+
+  /* ─── ALERT CHIPS ────────────────────────────────────────── */
+  .alert-chip { background: var(--bg4); border: 1px solid var(--border); border-radius: 6px; padding: 9px 12px; margin: 5px 0; display: flex; align-items: flex-start; gap: 9px; }
+  .sev { font-family: 'JetBrains Mono', monospace; font-size: 9.5px; padding: 2px 6px; border-radius: 2px; flex-shrink: 0; margin-top: 1px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .sev-p0 { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }
+  .sev-p1 { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid rgba(245,158,11,0.2); }
+  .sev-p2 { background: rgba(61,142,240,0.15); color: #7eb8ff; border: 1px solid rgba(61,142,240,0.2); }
+  .alert-text { font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .alert-text strong { color: var(--text); font-weight: 500; }
+
+  /* ─── OBS METRIC STAT ────────────────────────────────────── */
+  .obs-stat { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .obs-stat-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); margin-bottom: 6px; }
+  .obs-stat-val { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 500; color: #fff; margin-bottom: 3px; }
+  .obs-stat-sub { font-size: 11.5px; color: var(--muted); }
+
+  @media (max-width: 900px) {
+    .tool-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 900px) {
+    .doc-header, .content { padding-left: 20px; padding-right: 20px; }
+    .phase-nav { padding: 0 20px; }
+    .grid2, .grid3, .grid4 { grid-template-columns: 1fr; }
+    h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════ HEADER ══ -->
+<header class="doc-header">
+  <div class="badge-row">
+    <span class="badge badge-cyan">Architecture Doc</span>
+    <span class="badge badge-blue">Multi-Agent System</span>
+    <span class="badge badge-amber">End-to-End Design</span>
+    <span class="badge badge-green">v1.0</span>
+  </div>
+  <h1>24/7 Service Reliability &amp;<br><span>Anomaly-Response Agent System</span></h1>
+  <p class="subtitle">End-to-end architecture covering research, data pipelines, HLD/LLD, agent development, testing, deployment and post-production operations for a multi-agent AI system monitoring payment transaction flows at scale.</p>
+  <div class="meta-row">
+    <div class="meta-item"><strong>Domain</strong>FinTech / Payments</div>
+    <div class="meta-item"><strong>Pattern</strong>Multi-Agent (LangChain + LangGraph + CrewAI)</div>
+    <div class="meta-item"><strong>Cloud</strong>GCP / AWS / Azure</div>
+    <div class="meta-item"><strong>SLA Target</strong>&lt; 1s Approval Time · 99.99% Uptime</div>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════ NAV ══ -->
+<nav class="phase-nav">
+  <a href="#p0" class="nav-item">00 Research</a>
+  <a href="#p1" class="nav-item">01 Data Arch</a>
+  <a href="#p2" class="nav-item">02 HLD</a>
+  <a href="#p3" class="nav-item">03 LLD</a>
+  <a href="#p4" class="nav-item">04 Development</a>
+  <a href="#p5" class="nav-item">05 Testing</a>
+  <a href="#p6" class="nav-item">06 Production</a>
+  <a href="#p7" class="nav-item">07 Post-Prod</a>
+  <a href="#p8" class="nav-item">08 LLM Observability</a>
+</nav>
+
+<!-- ══════════════════════════════════════ CONTENT ══ -->
+<main class="content">
+
+<!-- ─── PHASE 0: RESEARCH & PLANNING ──────────────────────── -->
+<section class="phase" id="p0">
+  <div class="phase-header">
+    <div class="phase-num">PHASE 00</div>
+    <div class="phase-title-block">
+      <h2>Research &amp; Planning</h2>
+      <p class="phase-desc">Domain analysis, stakeholder mapping, problem scoping, risk assessment, technology evaluation, and success metrics definition before any code is written.</p>
+    </div>
+  </div>
+
+  <h3>Domain &amp; Pain Point Analysis</h3>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Core Pain Points</div>
+      <ul class="item-list">
+        <li><strong>Sub-second SLA breach:</strong> Payment approvals must complete in &lt;1s — any latency spike causes cascading failures and customer churn</li>
+        <li><strong>24/7 alert fatigue:</strong> Human on-call engineers face thousands of low-signal alerts; mean-time-to-acknowledge (MTTA) is 12–20 min</li>
+        <li><strong>Fraud signal drift:</strong> Fraud patterns evolve faster than rule-based systems are retrained — stale models miss emerging attack vectors</li>
+        <li><strong>Data quality degradation:</strong> Upstream schema changes, null injections, and volume spikes silently corrupt downstream analytics</li>
+        <li><strong>Manual runbook execution:</strong> Diagnosis and remediation steps are documented but require human interpretation and action</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-amber"></span>Stakeholder Map</div>
+      <ul class="item-list">
+        <li><strong>SRE/Platform Team:</strong> Primary consumers — need accurate triage, automated remediations, and reduced pager fatigue</li>
+        <li><strong>Payments Engineering:</strong> Owns transaction gateway — needs anomaly attribution and schema change awareness</li>
+        <li><strong>Fraud Risk Team:</strong> Requires real-time fraud signal enrichment and adaptive model updates</li>
+        <li><strong>Customer Operations:</strong> Benefits from automated CS queue deflection when incidents are detected early</li>
+        <li><strong>Security &amp; Compliance:</strong> Must audit all autonomous actions; requires explainability and full audit trails</li>
+        <li><strong>Executive/Finance:</strong> Cares about uptime SLAs, cost of incidents, and MTTR reduction ROI</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Technology Evaluation Matrix</h3>
+  <div class="arch-diagram">
+    <table class="data-table">
+      <thead><tr><th>Dimension</th><th>Candidates</th><th>Decision</th><th>Rationale</th></tr></thead>
+      <tbody>
+        <tr><td class="td-name">Agent Orchestration</td><td class="td-tech">LangGraph · CrewAI · Autogen · Semantic Kernel</td><td class="td-tech">LangGraph + CrewAI</td><td>LangGraph for stateful DAG workflows; CrewAI for role specialisation</td></tr>
+        <tr><td class="td-name">LLM Backbone</td><td class="td-tech">GPT-4o · Gemini 1.5 Pro · Claude 3.5 · Llama 3</td><td class="td-tech">Multi-model (task-routed)</td><td>Reasoning tasks → Gemini/GPT-4o; high-freq classification → Haiku/Llama</td></tr>
+        <tr><td class="td-name">Vector Store</td><td class="td-tech">Chroma · Supabase pgvector · Pinecone · Weaviate</td><td class="td-tech">Supabase pgvector (dev) → Vertex Matching Engine (prod)</td><td>Dev simplicity with prod-grade scale path via Vertex AI</td></tr>
+        <tr><td class="td-name">Automation Runtime</td><td class="td-tech">N8n · Temporal · Prefect · Airflow</td><td class="td-tech">N8n (integrations) + Temporal (durable workflows)</td><td>N8n for DevOps webhooks; Temporal for guaranteed execution guarantees</td></tr>
+        <tr><td class="td-name">Streaming Infra</td><td class="td-tech">Kafka · Pulsar · Kinesis · PubSub</td><td class="td-tech">Kafka (on-prem) / PubSub (GCP)</td><td>Kafka for high-throughput telemetry; PubSub for cloud-native agent comms</td></tr>
+        <tr><td class="td-name">RL / Feedback</td><td class="td-tech">Vertex AI RL · Azure Personalizer · Ray RLlib</td><td class="td-tech">Vertex AI RL (primary)</td><td>Native GCP integration; managed infrastructure; supports contextual bandits</td></tr>
+        <tr><td class="td-name">LLM Observability</td><td class="td-tech">Langfuse · Arize Phoenix · Datadog LLM Obs · LangSmith · Helicone</td><td class="td-tech">Langfuse (primary) + Arize Phoenix (RAG evals) + Datadog (unified SRE)</td><td>Langfuse: self-hostable, deep LangGraph trace nesting, prompt versioning, audit-grade retention. Phoenix: best RAG retrieval quality + hallucination scoring. Datadog: unified infra+LLM view for SRE. See Phase 08 for full decision matrix.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Success Metrics &amp; SLOs</h3>
+  <div class="grid4">
+    <div class="card"><div class="card-title"><span class="dot dot-green"></span>MTTA</div><p>Mean-time-to-acknowledge reduced from 15 min → &lt;90 seconds via autonomous triage</p></div>
+    <div class="card"><div class="card-title"><span class="dot dot-blue"></span>MTTR</div><p>Mean-time-to-remediate reduced from 45 min → &lt;8 min for known-pattern incidents</p></div>
+    <div class="card"><div class="card-title"><span class="dot dot-amber"></span>False Positive Rate</div><p>&lt;5% false-positive triage actions; validated via confusion matrix on historical incidents</p></div>
+    <div class="card"><div class="card-title"><span class="dot dot-purple"></span>Data Quality Score</div><p>Anomaly detection recall ≥ 95% on transaction schema violations; latency &lt;200ms per record</p></div>
+  </div>
+
+  <h3>Risk Register</h3>
+  <div class="grid3 mt16">
+    <div class="card"><div class="card-title" style="color: var(--red)"><span class="dot dot-red"></span>Autonomous Action Risk</div><p>Agent triggers incorrect scale-up or restarts production services. Mitigation: mandatory human-in-the-loop gate for destructive actions; dry-run mode with shadow execution.</p></div>
+    <div class="card"><div class="card-title" style="color: var(--amber)"><span class="dot dot-amber"></span>LLM Hallucination</div><p>Diagnosis agent fabricates runbook steps not grounded in the vector store. Mitigation: RAG grounding validation, confidence thresholds, and structured output schemas (Pydantic).</p></div>
+    <div class="card"><div class="card-title" style="color: var(--cyan)"><span class="dot dot-cyan"></span>Data Drift in RL Loop</div><p>Feedback loop reinforces suboptimal actions if reward signal is noisy. Mitigation: reward shaping with SRE oversight; A/B test new policies before full rollout.</p></div>
+  </div>
+</section>
+
+
+<!-- ─── PHASE 1: DATA ARCHITECTURE ────────────────────────── -->
+<section class="phase" id="p1">
+  <div class="phase-header">
+    <div class="phase-num amber">PHASE 01</div>
+    <div class="phase-title-block">
+      <h2>Data Architecture</h2>
+      <p class="phase-desc">Full data lifecycle from source identification through extraction, collection, ingestion, transformation, and storage — the foundation all agents depend on.</p>
+    </div>
+  </div>
+
+  <h3>Data Source Catalogue</h3>
+  <div class="arch-diagram">
+    <table class="data-table">
+      <thead><tr><th>Source</th><th>Type</th><th>Frequency</th><th>Volume</th><th>Schema</th><th>Ingestion Method</th></tr></thead>
+      <tbody>
+        <tr><td class="td-name">Payment Gateway Logs</td><td class="td-tech">Structured JSON</td><td>Real-time</td><td>~50K TPS peak</td><td>txn_id, amount, status, latency_ms, merchant_id, risk_score</td><td>Kafka topic → Flink consumer</td></tr>
+        <tr><td class="td-name">Fraud Detection Model Output</td><td class="td-tech">Semi-structured</td><td>Per-transaction</td><td>~50K/s</td><td>txn_id, fraud_prob, model_version, feature_vec</td><td>Kafka → Avro schema registry</td></tr>
+        <tr><td class="td-name">Infrastructure Metrics</td><td class="td-tech">Time Series</td><td>15s scrape</td><td>10K metrics/node</td><td>pod_name, cpu, mem, latency_p99, error_rate</td><td>Prometheus → Remote Write → Thanos</td></tr>
+        <tr><td class="td-name">Application APM Traces</td><td class="td-tech">Distributed Traces</td><td>Continuous</td><td>~1M spans/min</td><td>trace_id, span_id, service, duration, status</td><td>OpenTelemetry → Tempo</td></tr>
+        <tr><td class="td-name">CS Queue Events</td><td class="td-tech">Event Stream</td><td>Real-time</td><td>~500/min peak</td><td>ticket_id, category, sentiment, created_at</td><td>Webhook → PubSub → BQ</td></tr>
+        <tr><td class="td-name">Runbooks &amp; Postmortems</td><td class="td-tech">Unstructured Text</td><td>Batch (on change)</td><td>~2K documents</td><td>title, steps, tags, severity</td><td>Confluence API → chunked embeddings → Supabase pgvector</td></tr>
+        <tr><td class="td-name">Historical Incident Data</td><td class="td-tech">Structured JSON</td><td>Nightly batch</td><td>~100K records</td><td>incident_id, root_cause, ttd, ttm, actions_taken</td><td>PagerDuty API → GCS → BigQuery</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Data Extraction Strategy</h3>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Real-time Extraction (Streaming)</div>
+      <ul class="item-list">
+        <li><strong>Kafka Connect</strong> with JDBC source connectors for transactional DBs; change-data-capture (CDC) via Debezium for PostgreSQL WAL streaming</li>
+        <li><strong>OpenTelemetry SDK</strong> auto-instrumented on all payment services; spans exported to OTLP collector sidecar</li>
+        <li><strong>Prometheus remote_write</strong> to Thanos Receive for long-term metric retention; recording rules pre-aggregate high-cardinality series</li>
+        <li><strong>Webhook receivers</strong> for PagerDuty, Slack, and CS platforms — event normalization via a schema-registry-backed Avro serializer</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-amber"></span>Batch Extraction (Knowledge Base)</div>
+      <ul class="item-list">
+        <li><strong>Confluence / Notion API</strong> polled nightly; changed pages re-chunked (512 tokens, 64 overlap) and re-embedded via text-embedding-004</li>
+        <li><strong>PagerDuty Incidents API</strong> backfills 2 years of incident history for RL reward model training</li>
+        <li><strong>JIRA / ServiceNow</strong> ticket corpus extracted for CS pattern clustering — used to pre-warm diagnosis agent context</li>
+        <li><strong>GitHub Actions / Jenkins</strong> deployment event feed; correlated with incident timelines for change-failure-rate analysis</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Ingestion &amp; Transformation Pipeline</h3>
+  <div class="pipeline">
+    <div class="pipe-step"><div class="pipe-step-num">01</div><div class="pipe-step-name">Source Systems</div><div class="pipe-step-tool">Kafka · OTel · Prom</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">02</div><div class="pipe-step-name">Schema Registry</div><div class="pipe-step-tool">Confluent / Avro</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">03</div><div class="pipe-step-name">Stream Processing</div><div class="pipe-step-tool">Apache Flink</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">04</div><div class="pipe-step-name">Feature Store</div><div class="pipe-step-tool">Feast · Redis</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">05</div><div class="pipe-step-name">Hot Storage</div><div class="pipe-step-tool">Redis · ClickHouse</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">06</div><div class="pipe-step-name">Cold Storage</div><div class="pipe-step-tool">GCS · BigQuery</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">07</div><div class="pipe-step-name">Vector Store</div><div class="pipe-step-tool">pgvector · Vertex ME</div></div>
+  </div>
+
+  <div class="grid2 mt16">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-blue"></span>Flink Transformation Jobs</div>
+      <ul class="item-list">
+        <li><strong>Anomaly Feature Extraction:</strong> Rolling 5-min windows on txn latency (p50/p95/p99), error-rate, volume; z-score normalization against 7-day baseline</li>
+        <li><strong>Event Correlation:</strong> Join payment gateway events + APM traces on trace_id within a 5-second watermark window to reconstruct end-to-end transaction paths</li>
+        <li><strong>Alert Deduplication:</strong> Tumbling 30-second windows deduplicate identical alert payloads; keeps first occurrence, counts suppressed duplicates</li>
+        <li><strong>Fraud Signal Enrichment:</strong> Enrich each transaction with merchant-level baseline, rolling BIN-level fraud rate, and velocity checks using Redis lookups</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-purple"></span>Data Quality Gates</div>
+      <ul class="item-list">
+        <li><strong>Great Expectations:</strong> Checkpoint suites on every batch load to BigQuery — null checks, domain value constraints, referential integrity</li>
+        <li><strong>Schema Evolution Policy:</strong> Backward-compatible schema changes auto-approved; breaking changes trigger agent notification and quarantine of affected data partition</li>
+        <li><strong>SLA Monitoring:</strong> dbt tests on BigQuery models check row-count freshness; staleness &gt;15min pages the data platform on-call</li>
+        <li><strong>Embedding Drift Detection:</strong> Cosine-similarity distribution of new embeddings vs. 30-day baseline; drift &gt;0.15 triggers runbook re-embedding job</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+
+<!-- ─── PHASE 2: HLD ───────────────────────────────────────── -->
+<section class="phase" id="p2">
+  <div class="phase-header">
+    <div class="phase-num blue">PHASE 02</div>
+    <div class="phase-title-block">
+      <h2>High-Level Design (HLD)</h2>
+      <p class="phase-desc">System-level architecture: agent topology, component interaction model, infrastructure blueprint, and cross-cutting concerns.</p>
+    </div>
+  </div>
+
+  <h3>System Architecture Overview</h3>
+  <div class="arch-diagram">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); line-height: 2;">
+      <div style="display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: center;">
+
+        <!-- LEFT: Data Tier -->
+        <div>
+          <div style="background: rgba(34,217,200,0.05); border: 1px dashed rgba(34,217,200,0.25); border-radius: 8px; padding: 14px; margin-bottom: 12px;">
+            <div style="color: var(--cyan); font-size: 10px; margin-bottom: 8px; letter-spacing: 0.1em;">DATA TIER</div>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="background: var(--bg4); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); font-size: 11px;">📡 Payment Gateway Logs (Kafka)</div>
+              <div style="background: var(--bg4); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); font-size: 11px;">📊 Infrastructure Metrics (Prometheus)</div>
+              <div style="background: var(--bg4); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); font-size: 11px;">🔍 APM Traces (OpenTelemetry)</div>
+              <div style="background: var(--bg4); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); font-size: 11px;">🤖 Fraud Model Signals (Kafka)</div>
+              <div style="background: var(--bg4); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); font-size: 11px;">🎫 CS Queue Events (PubSub)</div>
+            </div>
+          </div>
+          <div style="background: rgba(167,139,250,0.05); border: 1px dashed rgba(167,139,250,0.25); border-radius: 8px; padding: 14px;">
+            <div style="color: var(--purple); font-size: 10px; margin-bottom: 8px; letter-spacing: 0.1em;">KNOWLEDGE TIER</div>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="background: var(--bg4); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); font-size: 11px;">📚 Runbooks → pgvector (Supabase)</div>
+              <div style="background: var(--bg4); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); font-size: 11px;">📝 Postmortems → Vertex ME</div>
+              <div style="background: var(--bg4); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); font-size: 11px;">🗃️ Incident History → BigQuery</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MIDDLE: Arrow -->
+        <div style="text-align: center; color: var(--cyan); font-size: 20px;">⇒</div>
+
+        <!-- RIGHT: Agent Tier -->
+        <div>
+          <div style="background: rgba(61,142,240,0.05); border: 1px dashed rgba(61,142,240,0.3); border-radius: 8px; padding: 14px;">
+            <div style="color: var(--blue); font-size: 10px; margin-bottom: 12px; letter-spacing: 0.1em;">AGENT TIER (LangGraph Orchestrated)</div>
+
+            <div style="background: rgba(34,217,200,0.08); border: 1px solid rgba(34,217,200,0.2); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px;">
+              <div style="color: var(--cyan); font-size: 11px; font-weight: 600;">🔭 Monitoring Agent</div>
+              <div style="color: var(--muted); font-size: 10px; margin-top: 3px;">LangChain · Autogen · Prometheus Tools</div>
+            </div>
+            <div style="text-align: center; color: var(--dim); font-size: 11px; margin: 4px 0;">↓ anomaly detected</div>
+            <div style="background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px;">
+              <div style="color: var(--amber); font-size: 11px; font-weight: 600;">🔬 Diagnosis Agent</div>
+              <div style="color: var(--muted); font-size: 10px; margin-top: 3px;">LangGraph · CrewAI · RAG · Sub-agents (net/db/app)</div>
+            </div>
+            <div style="text-align: center; color: var(--dim); font-size: 11px; margin: 4px 0;">↓ root cause determined</div>
+            <div style="background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px;">
+              <div style="color: var(--green); font-size: 11px; font-weight: 600;">⚙️ Action Agent</div>
+              <div style="color: var(--muted); font-size: 10px; margin-top: 3px;">N8n Workflows · Incident APIs · Slack/Teams</div>
+            </div>
+            <div style="text-align: center; color: var(--dim); font-size: 11px; margin: 4px 0;">↓ outcome observed</div>
+            <div style="background: rgba(167,139,250,0.08); border: 1px solid rgba(167,139,250,0.2); border-radius: 6px; padding: 10px 12px;">
+              <div style="color: var(--purple); font-size: 11px; font-weight: 600;">🔄 Feedback Loop Agent</div>
+              <div style="color: var(--muted); font-size: 10px; margin-top: 3px;">Vertex AI RL · Azure Personalizer · Policy Update</div>
+            </div>
+          </div>
+
+          <div style="margin-top: 12px; display: flex; gap: 8px;">
+            <div style="flex: 1; background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.2); border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="color: var(--red); font-size: 10px; font-weight: 600;">🛡️ Human-in-Loop Gate</div>
+              <div style="color: var(--muted); font-size: 10px; margin-top: 2px;">Destructive actions require SRE approval</div>
+            </div>
+            <div style="flex: 1; background: rgba(61,142,240,0.06); border: 1px solid rgba(61,142,240,0.2); border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="color: var(--blue); font-size: 10px; font-weight: 600;">📋 Audit &amp; Explainability</div>
+              <div style="color: var(--muted); font-size: 10px; margin-top: 2px;">Every agent action logged with reasoning chain</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Cross-Cutting Concerns</h3>
+  <div class="grid3">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-red"></span>Security &amp; Access Control</div>
+      <ul class="item-list">
+        <li>All agents run with least-privilege service accounts (GCP IAM / AWS IAM roles)</li>
+        <li>Secrets managed via HashiCorp Vault; rotated every 24h</li>
+        <li>Agent-to-agent comms over mTLS; API gateway with JWT validation</li>
+        <li>PII masking in all LLM prompts — txn amounts, card numbers, customer IDs tokenised before sending to LLM APIs</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Observability Stack</div>
+      <ul class="item-list">
+        <li>OpenTelemetry for end-to-end agent trace propagation (trace every LLM call with span metadata)</li>
+        <li>Grafana dashboards: agent decision latency, tool call success rates, false-positive rates</li>
+        <li>LLM cost tracking via LangSmith / Helicone; per-agent token spend alerts</li>
+        <li>Slack/PagerDuty escalation when agent confidence &lt;70% on any triage decision</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-purple"></span>State Management</div>
+      <ul class="item-list">
+        <li>LangGraph checkpointing to Redis for in-flight agent state; Postgres for durable incident state</li>
+        <li>Agent memory: episodic (current incident context in Redis), semantic (runbook embeddings in pgvector), procedural (RL policy weights in Vertex AI)</li>
+        <li>Conversation context window managed via sliding window + summarisation; max 32K tokens per incident thread</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Infrastructure Blueprint</h3>
+  <div class="grid2 mt8">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-blue"></span>GCP-Primary Deployment</div>
+      <ul class="item-list">
+        <li><strong>GKE Autopilot:</strong> Agent pods with resource requests (2 vCPU, 4GB) and HPA on queue depth</li>
+        <li><strong>Cloud Run:</strong> Lightweight tool-execution lambdas (sub-agent API calls)</li>
+        <li><strong>Vertex AI:</strong> LLM hosting (Gemini 1.5 Pro/Flash), Matching Engine for vector search, RL jobs</li>
+        <li><strong>Cloud Spanner:</strong> Global incident state store (multi-region, 99.999% SLA)</li>
+        <li><strong>Pub/Sub + Dataflow:</strong> Agent event bus; Dataflow for stream processing at scale</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-amber"></span>Multi-Cloud &amp; Hybrid</div>
+      <ul class="item-list">
+        <li><strong>AWS Bedrock:</strong> Titan embeddings as backup; Bedrock Agents for AWS-native resource remediation (EC2, RDS, ECS scaling)</li>
+        <li><strong>Azure AI Services:</strong> Azure OpenAI fallback; Azure Personalizer for feedback loop variant; Teams webhook integration</li>
+        <li><strong>On-prem Kafka cluster:</strong> PCI-compliant network zone; no raw payment data leaves on-prem; anonymised events forwarded to cloud</li>
+        <li><strong>N8n self-hosted:</strong> All automation workflows run on-prem to access internal APIs without VPN overhead</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+
+<!-- ─── PHASE 3: LLD ───────────────────────────────────────── -->
+<section class="phase" id="p3">
+  <div class="phase-header">
+    <div class="phase-num green">PHASE 03</div>
+    <div class="phase-title-block">
+      <h2>Low-Level Design (LLD)</h2>
+      <p class="phase-desc">Per-agent internals, tool specifications, API contracts, database schemas, prompt engineering strategies, and RAG pipeline design.</p>
+    </div>
+  </div>
+
+  <h3>Agent Internal Design</h3>
+  <div class="grid2">
+
+    <div class="agent-card">
+      <div class="agent-header" style="background: rgba(34,217,200,0.05);">
+        <div class="agent-icon" style="background: rgba(34,217,200,0.15);">🔭</div>
+        <div><div class="agent-name">Monitoring Agent</div><div class="agent-role">langchain · autogen · prometheus-tools</div></div>
+      </div>
+      <div class="agent-body">
+        <p><strong style="color: var(--text)">Trigger:</strong> Kafka consumer on <code style="font-family: JetBrains Mono; font-size: 11px; color: var(--cyan)">telemetry.normalized</code> topic. Processes each event through a LangChain tool-calling loop with a ReAct reasoning chain.</p>
+        <div class="code-block">
+<span class="cmt"># Core tool definitions</span><br>
+tools = [<br>
+&nbsp;&nbsp;<span class="fn">PrometheusQueryTool</span>(endpoint=PROM_URL),<br>
+&nbsp;&nbsp;<span class="fn">KafkaLagInspectorTool</span>(brokers=BROKERS),<br>
+&nbsp;&nbsp;<span class="fn">FraudSignalFetchTool</span>(store=REDIS),<br>
+&nbsp;&nbsp;<span class="fn">BaselineCompareTool</span>(window=<span class="str">"7d"</span>),<br>
+&nbsp;&nbsp;<span class="fn">AnomalyClassifierTool</span>(model=<span class="str">"iso_forest_v3"</span>)<br>
+]<br>
+<span class="cmt"># Confidence gate: escalate if score &gt; 0.75</span>
+        </div>
+        <ul class="item-list mt8">
+          <li><strong>Anomaly Detection:</strong> Isolation Forest + LSTM autoencoder for time-series; statistical z-score for simple threshold breaches</li>
+          <li><strong>Natural Language Reasoning:</strong> ReAct prompt — agent explains why it flagged the anomaly before escalating</li>
+          <li><strong>Output Schema:</strong> <code style="font-family: JetBrains Mono; font-size: 11px; color: var(--cyan)">AnomalyEvent(id, severity, affected_service, metrics_snapshot, reasoning, confidence)</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-header" style="background: rgba(245,158,11,0.05);">
+        <div class="agent-icon" style="background: rgba(245,158,11,0.15);">🔬</div>
+        <div><div class="agent-name">Diagnosis Agent</div><div class="agent-role">langgraph · crewai · rag · sub-agents</div></div>
+      </div>
+      <div class="agent-body">
+        <p><strong style="color: var(--text)">Architecture:</strong> LangGraph DAG with 4 nodes: <em>context_gather → rag_lookup → sub_agent_dispatch → synthesis</em>. CrewAI coordinates 3 specialised sub-agents.</p>
+        <div class="code-block">
+<span class="kw">class</span> <span class="fn">DiagnosisGraph</span>(StateGraph):<br>
+&nbsp;&nbsp;nodes = [<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"gather_context"</span>,   <span class="cmt"># pull metrics window</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"rag_runbook_lookup"</span>, <span class="cmt"># pgvector similarity</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"dispatch_subagents"</span>, <span class="cmt"># CrewAI crew</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"synthesise_rca"</span>    <span class="cmt"># structured output</span><br>
+&nbsp;&nbsp;]<br>
+&nbsp;&nbsp;<span class="cmt"># State persisted in Redis checkpoint</span>
+        </div>
+        <ul class="item-list mt8">
+          <li><strong>Network Sub-Agent:</strong> Checks DNS resolution times, CDN edge latency, BGP route anomalies, firewall rule changes</li>
+          <li><strong>Database Sub-Agent:</strong> Queries slow query log, lock wait graphs, connection pool saturation, replication lag</li>
+          <li><strong>Application Sub-Agent:</strong> Inspects pod crash logs, OOM events, deployment diffs from last 30 min, circuit breaker states</li>
+          <li><strong>RAG Config:</strong> Top-5 runbook chunks by cosine similarity; reranked by BM25 keyword overlap with anomaly description</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-header" style="background: rgba(34,197,94,0.05);">
+        <div class="agent-icon" style="background: rgba(34,197,94,0.15);">⚙️</div>
+        <div><div class="agent-name">Action Agent</div><div class="agent-role">n8n · incident-api · slack · autogen</div></div>
+      </div>
+      <div class="agent-body">
+        <p><strong style="color: var(--text)">Decision Gate:</strong> Actions classified into 3 tiers by blast radius. Tier 1 executes autonomously; Tier 2 requires async SRE approval via Slack interactive message; Tier 3 always pages on-call.</p>
+        <div class="code-block">
+<span class="kw">ACTION_TIERS</span> = {<br>
+&nbsp;&nbsp;<span class="str">"tier1_auto"</span>: [<span class="str">"scale_replicas"</span>, <span class="str">"clear_cache"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"restart_unhealthy_pod"</span>, <span class="str">"update_circuit_breaker"</span>],<br>
+&nbsp;&nbsp;<span class="str">"tier2_approve"</span>: [<span class="str">"drain_node"</span>, <span class="str">"failover_db"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"throttle_merchant"</span>],<br>
+&nbsp;&nbsp;<span class="str">"tier3_human"</span>: [<span class="str">"rollback_deployment"</span>, <span class="str">"block_issuer"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"network_policy_change"</span>]<br>
+}
+        </div>
+        <ul class="item-list mt8">
+          <li><strong>N8n Workflows:</strong> 14 pre-built automation workflows triggered via webhook; each workflow idempotent with rollback capability</li>
+          <li><strong>Incident Summary:</strong> Autogen drafts plain-language incident summary (≤200 words) with RCA, actions taken, and next steps</li>
+          <li><strong>Output:</strong> Incident record written to Spanner; Slack thread updated with status and timeline</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-header" style="background: rgba(167,139,250,0.05);">
+        <div class="agent-icon" style="background: rgba(167,139,250,0.15);">🔄</div>
+        <div><div class="agent-name">Feedback Loop Agent</div><div class="agent-role">vertex ai rl · reward shaping · policy update</div></div>
+      </div>
+      <div class="agent-body">
+        <p><strong style="color: var(--text)">Architecture:</strong> Contextual bandit model on Vertex AI. Observes (state → action → outcome) triplets; reward signal shaped by MTTR reduction and false-positive rate.</p>
+        <div class="code-block">
+<span class="cmt"># Reward function</span><br>
+<span class="kw">def</span> <span class="fn">compute_reward</span>(incident):<br>
+&nbsp;&nbsp;r = <span class="num">0.0</span><br>
+&nbsp;&nbsp;<span class="kw">if</span> incident.auto_resolved:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;r += <span class="num">1.0</span> - (incident.ttm / BASELINE_TTM)<br>
+&nbsp;&nbsp;<span class="kw">if</span> incident.false_positive:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;r -= <span class="num">0.5</span><br>
+&nbsp;&nbsp;<span class="kw">if</span> incident.human_overrode:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;r -= <span class="num">0.3</span>  <span class="cmt"># human disagreed</span><br>
+&nbsp;&nbsp;<span class="kw">return</span> r
+        </div>
+        <ul class="item-list mt8">
+          <li><strong>Policy Updates:</strong> New policy candidate trained offline every 24h; A/B tested on 10% of traffic for 48h before promotion</li>
+          <li><strong>Runbook Evolution:</strong> When a new resolution pattern appears ≥3 times, agent proposes runbook addition to SRE team for review</li>
+          <li><strong>Drift Detection:</strong> KL-divergence between current and previous policy; &gt;0.1 triggers automatic rollback</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h3>RAG Pipeline Design</h3>
+  <div class="grid3 mt8">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Document Processing</div>
+      <ul class="item-list">
+        <li>Recursive character splitter: 512 token chunks, 64 token overlap</li>
+        <li>Metadata tags: source, severity_relevance, last_updated, service_tags</li>
+        <li>Embeddings: text-embedding-004 (768-dim) via Vertex AI</li>
+        <li>Storage: pgvector (dev) → Vertex AI Matching Engine (prod, 100M+ vectors)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-amber"></span>Retrieval Strategy</div>
+      <ul class="item-list">
+        <li>Hybrid search: dense vector (cosine) + sparse BM25 keyword search</li>
+        <li>Reciprocal Rank Fusion (RRF) to merge ranked lists from both retrieval modes</li>
+        <li>Contextual compression: filter top-5 chunks to only relevant sentences using a cross-encoder reranker</li>
+        <li>Metadata filtering: pre-filter by service_tags matching affected service before ANN search</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-purple"></span>Prompt Engineering</div>
+      <ul class="item-list">
+        <li>System prompt: role-specific persona + output schema (Pydantic model enforced via structured output)</li>
+        <li>RAG context injected as XML-tagged sections: <code style="color: var(--cyan); font-size: 10.5px; font-family: JetBrains Mono">&lt;runbook&gt;...&lt;/runbook&gt;</code></li>
+        <li>Chain-of-thought enforced: "Reason step-by-step before outputting JSON"</li>
+        <li>Fallback: if no runbook match (similarity &lt; 0.75), agent must explicitly flag as "novel incident" requiring human triage</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>API Contract (Agent-to-Agent)</h3>
+  <div class="code-block">
+<span class="cmt"># AnomalyEvent: Monitoring → Diagnosis Agent</span><br>
+{<br>
+&nbsp;&nbsp;<span class="str">"event_id"</span>: <span class="str">"uuid4"</span>,<br>
+&nbsp;&nbsp;<span class="str">"timestamp"</span>: <span class="str">"ISO8601"</span>,<br>
+&nbsp;&nbsp;<span class="str">"severity"</span>: <span class="str">"critical|high|medium|low"</span>,<br>
+&nbsp;&nbsp;<span class="str">"affected_services"</span>: [<span class="str">"payment-gateway"</span>, <span class="str">"fraud-api"</span>],<br>
+&nbsp;&nbsp;<span class="str">"anomaly_type"</span>: <span class="str">"latency_spike|error_rate|data_quality|fraud_signal"</span>,<br>
+&nbsp;&nbsp;<span class="str">"metrics_snapshot"</span>: { <span class="str">"p99_latency_ms"</span>: <span class="num">1240</span>, <span class="str">"error_rate"</span>: <span class="num">0.08</span> },<br>
+&nbsp;&nbsp;<span class="str">"reasoning"</span>: <span class="str">"string (LLM reasoning chain)"</span>,<br>
+&nbsp;&nbsp;<span class="str">"confidence"</span>: <span class="num">0.92</span><br>
+}<br><br>
+<span class="cmt"># DiagnosisResult: Diagnosis → Action Agent</span><br>
+{<br>
+&nbsp;&nbsp;<span class="str">"incident_id"</span>: <span class="str">"uuid4"</span>,<br>
+&nbsp;&nbsp;<span class="str">"root_cause"</span>: <span class="str">"string"</span>,<br>
+&nbsp;&nbsp;<span class="str">"root_cause_category"</span>: <span class="str">"network|database|application|external"</span>,<br>
+&nbsp;&nbsp;<span class="str">"runbook_references"</span>: [<span class="str">"runbook://db/connection-pool-exhaustion"</span>],<br>
+&nbsp;&nbsp;<span class="str">"recommended_actions"</span>: [{<span class="str">"action"</span>: <span class="str">"scale_replicas"</span>, <span class="str">"tier"</span>: 1, <span class="str">"params"</span>: {}}],<br>
+&nbsp;&nbsp;<span class="str">"sub_agent_reports"</span>: { <span class="str">"network"</span>: ..., <span class="str">"database"</span>: ..., <span class="str">"application"</span>: ... },<br>
+&nbsp;&nbsp;<span class="str">"confidence"</span>: <span class="num">0.87</span><br>
+}
+  </div>
+</section>
+
+
+<!-- ─── PHASE 4: DEVELOPMENT ──────────────────────────────── -->
+<section class="phase" id="p4">
+  <div class="phase-header">
+    <div class="phase-num purple">PHASE 04</div>
+    <div class="phase-title-block">
+      <h2>Development Phase</h2>
+      <p class="phase-desc">Sprint planning, environment setup, agent implementation, framework wiring, tooling, and code organisation strategy.</p>
+    </div>
+  </div>
+
+  <h3>Sprint Roadmap (16 Weeks)</h3>
+  <div class="timeline">
+    <div class="tl-item"><div class="tl-title">Sprint 1–2 · Foundation (Wk 1–4)</div><div class="tl-body">Dev environment with Docker Compose (Kafka, Redis, Postgres, Supabase). Flink local cluster. LangChain + LangGraph scaffolding. Monitoring agent skeleton with mock tools. Basic Prometheus tool integration. First end-to-end anomaly event flow (mock data).</div></div>
+    <div class="tl-item"><div class="tl-title">Sprint 3–4 · Data Pipeline (Wk 5–8)</div><div class="tl-body">Flink transformation jobs (latency windowing, alert dedup, fraud enrichment). Schema registry setup. Great Expectations data quality checks. Runbook ingestion pipeline: Confluence API → chunking → embedding → pgvector. RAG retrieval API service.</div></div>
+    <div class="tl-item"><div class="tl-title">Sprint 5–7 · Agent Core (Wk 9–14)</div><div class="tl-body">Diagnosis Agent LangGraph DAG with full state checkpointing. CrewAI crew setup with 3 sub-agents. RAG integration with hybrid search. Action Agent with N8n webhook integration. Tier-1 autonomous actions live. Slack notification bot. Feedback loop data collection (logging reward signals).</div></div>
+    <div class="tl-item"><div class="tl-title">Sprint 8 · RL &amp; Hardening (Wk 15–16)</div><div class="tl-body">Vertex AI contextual bandit model training on historical incidents. A/B test framework. Human-in-the-loop Slack approval flow for Tier-2 actions. PII masking middleware for all LLM calls. Cost budget enforcement. End-to-end integration tests with synthetic traffic replay.</div></div>
+  </div>
+
+  <h3>Repository Structure</h3>
+  <div class="code-block">
+payment-reliability-agents/<br>
+├── agents/<br>
+│&nbsp;&nbsp; ├── monitoring/       <span class="cmt"># LangChain ReAct agent + tools</span><br>
+│&nbsp;&nbsp; ├── diagnosis/        <span class="cmt"># LangGraph DAG + CrewAI crew</span><br>
+│&nbsp;&nbsp; ├── action/           <span class="cmt"># N8n client + tier classification</span><br>
+│&nbsp;&nbsp; └── feedback/         <span class="cmt"># Vertex AI RL client + reward calc</span><br>
+├── data_pipeline/<br>
+│&nbsp;&nbsp; ├── flink_jobs/       <span class="cmt"># Java/Python Flink operators</span><br>
+│&nbsp;&nbsp; ├── connectors/       <span class="cmt"># Kafka Connect configs</span><br>
+│&nbsp;&nbsp; └── dbt_models/       <span class="cmt"># BigQuery transformation models</span><br>
+├── knowledge_base/<br>
+│&nbsp;&nbsp; ├── ingestion/        <span class="cmt"># Confluence → chunking → embedding</span><br>
+│&nbsp;&nbsp; ├── retrieval/        <span class="cmt"># Hybrid search API service</span><br>
+│&nbsp;&nbsp; └── migrations/       <span class="cmt"># pgvector schema migrations</span><br>
+├── automation/<br>
+│&nbsp;&nbsp; └── n8n_workflows/    <span class="cmt"># Exported N8n workflow JSONs</span><br>
+├── infra/<br>
+│&nbsp;&nbsp; ├── terraform/        <span class="cmt"># GKE, Spanner, Vertex AI, PubSub</span><br>
+│&nbsp;&nbsp; ├── helm_charts/      <span class="cmt"># Agent deployment manifests</span><br>
+│&nbsp;&nbsp; └── docker/           <span class="cmt"># Dockerfiles per service</span><br>
+├── tests/                    <span class="cmt"># Unit, integration, e2e</span><br>
+└── observability/            <span class="cmt"># Grafana dashboards, alert rules</span>
+  </div>
+
+  <h3>Key Development Patterns</h3>
+  <div class="grid3">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Structured Output Enforcement</div>
+      <p>All LLM outputs validated against Pydantic v2 models. If validation fails, agent retries with "fix the JSON" prompt up to 3 times before escalating with raw output to human review queue.</p>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-amber"></span>Tool Call Idempotency</div>
+      <p>Every N8n workflow and remediation action is idempotent — calling it twice produces the same state. Implemented via Redis distributed locks with 60-second TTL keyed on (incident_id, action_type).</p>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-purple"></span>Cost Budget Enforcement</div>
+      <p>Per-incident LLM token budget capped at 50K tokens. Monitoring agent uses cheaper model (Haiku/Flash); Diagnosis agent uses full model only for synthesis step. Budget tracked via LangSmith middleware.</p>
+    </div>
+  </div>
+</section>
+
+
+<!-- ─── PHASE 5: TESTING ──────────────────────────────────── -->
+<section class="phase" id="p5">
+  <div class="phase-header">
+    <div class="phase-num red">PHASE 05</div>
+    <div class="phase-title-block">
+      <h2>Testing Phase</h2>
+      <p class="phase-desc">Multi-layer testing strategy for agent behaviour, data pipelines, tool integrations, load characteristics, and chaos resilience.</p>
+    </div>
+  </div>
+
+  <h3>Testing Pyramid</h3>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-green"></span>Unit Tests (pytest + pytest-asyncio)</div>
+      <ul class="item-list">
+        <li><strong>Tool mocking:</strong> All external tools (Prometheus, Redis, N8n) mocked via respx/pytest-mock; each tool tested independently for correct output schemas</li>
+        <li><strong>Pydantic validation:</strong> Property-based tests (Hypothesis) fuzz LLM output parsing — ensure no JSON shape causes unhandled exceptions</li>
+        <li><strong>Flink operators:</strong> Unit tests with local mini-cluster; test windows, watermarks, and state eviction logic</li>
+        <li><strong>Reward function:</strong> Table-driven tests covering all incident outcome combinations</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-blue"></span>Integration Tests</div>
+      <ul class="item-list">
+        <li><strong>Agent-to-agent:</strong> Test full Monitoring → Diagnosis → Action → Feedback chain on synthetic anomaly events injected into local Kafka</li>
+        <li><strong>RAG pipeline:</strong> Verify top-5 runbook retrieval for 50 known incident types matches expected runbooks (recall@5 ≥ 0.90)</li>
+        <li><strong>N8n workflows:</strong> Regression tests against N8n test environment — verify each workflow executes correct API calls and returns expected outputs</li>
+        <li><strong>Flink jobs:</strong> Testcontainers-based integration tests with real Kafka and Postgres instances</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-amber"></span>Agent Behaviour Tests (LLM Evals)</div>
+      <ul class="item-list">
+        <li><strong>LangSmith evaluation:</strong> 200-case golden dataset of (anomaly_input → expected_diagnosis) pairs; automated LLM-as-judge scoring for accuracy, relevance, and hallucination rate</li>
+        <li><strong>False positive benchmark:</strong> Replay 1 month of production telemetry through Monitoring Agent; count false positive alerts vs. ground truth PagerDuty incidents</li>
+        <li><strong>Action safety test:</strong> Inject Tier-3 scenarios; assert agent always pages human and never executes destructive action autonomously</li>
+        <li><strong>Adversarial prompts:</strong> Test prompt injection via malicious log lines; assert agent maintains task focus and doesn't exfiltrate data</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-red"></span>Load &amp; Chaos Testing</div>
+      <ul class="item-list">
+        <li><strong>Load test:</strong> k6 + Locust simulate 10× peak Kafka event rate; assert agent queue depth stays &lt;1000 and p99 triage latency &lt;30s under sustained load</li>
+        <li><strong>Chaos engineering (Chaos Monkey / Litmus):</strong> Kill random agent pods, inject Kafka partition lag, simulate Redis failover, drop 20% of tool call responses</li>
+        <li><strong>LLM API failure:</strong> Block Vertex AI / OpenAI endpoints; verify graceful degradation to rule-based fallback classifier with alert to SRE</li>
+        <li><strong>State corruption:</strong> Corrupt Redis checkpoint; verify LangGraph re-hydrates from Postgres durable store without data loss</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout callout-amber mt16">
+    <strong>Test Data Strategy:</strong> Production telemetry anonymised via a tokenisation layer (txn_id → opaque UUID, merchant_id → synthetic ID) and used as test fixtures. A synthetic incident generator produces realistic anomaly patterns (latency spikes, error bursts, fraud surges) on-demand for CI pipelines without requiring production access.
+  </div>
+</section>
+
+
+<!-- ─── PHASE 6: PRODUCTION ───────────────────────────────── -->
+<section class="phase" id="p6">
+  <div class="phase-header">
+    <div class="phase-num pink">PHASE 06</div>
+    <div class="phase-title-block">
+      <h2>Production Deployment Phase</h2>
+      <p class="phase-desc">CI/CD pipeline, container orchestration, infrastructure-as-code, release strategy, and go-live runbook.</p>
+    </div>
+  </div>
+
+  <h3>CI/CD Pipeline</h3>
+  <div class="pipeline">
+    <div class="pipe-step"><div class="pipe-step-num">01</div><div class="pipe-step-name">PR Checks</div><div class="pipe-step-tool">pytest · ruff · mypy</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">02</div><div class="pipe-step-name">LLM Evals</div><div class="pipe-step-tool">LangSmith · golden set</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">03</div><div class="pipe-step-name">Build &amp; Scan</div><div class="pipe-step-tool">Docker · Trivy · SBOM</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">04</div><div class="pipe-step-name">Push to Registry</div><div class="pipe-step-tool">Artifact Registry</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">05</div><div class="pipe-step-name">Deploy Staging</div><div class="pipe-step-tool">Helm · ArgoCD</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">06</div><div class="pipe-step-name">Integration Tests</div><div class="pipe-step-tool">k6 · Testcontainers</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">07</div><div class="pipe-step-name">Canary Deploy</div><div class="pipe-step-tool">10% traffic split</div></div>
+    <div class="pipe-step"><div class="pipe-step-num">08</div><div class="pipe-step-name">Full Rollout</div><div class="pipe-step-tool">ArgoCD progressive</div></div>
+  </div>
+
+  <h3>Release Strategy</h3>
+  <div class="grid3 mt16">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Canary Releases</div>
+      <p>New agent versions rolled to 10% of Kafka consumer group partitions first. Monitored for 2h: false positive rate, triage latency, LLM cost per incident. Auto-rollback if any metric degrades &gt;15% vs. baseline.</p>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-blue"></span>Blue-Green for Actions</div>
+      <p>Action Agent deployments use blue-green with instant cutover. "Blue" environment handles live incidents; "Green" environment runs in shadow mode (same inputs, actions logged but not executed) until validated.</p>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-amber"></span>RL Policy Rollout</div>
+      <p>New RL policy versions deployed via feature flags in Redis. A/B test with 50/50 traffic split for 48h. Promote only if: reward ≥ baseline + 0.1σ, no Tier-3 escalations triggered incorrectly, and SRE sign-off on policy diff review.</p>
+    </div>
+  </div>
+
+  <h3>Infrastructure-as-Code Scope (Terraform)</h3>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-green"></span>GCP Resources</div>
+      <ul class="item-list">
+        <li><strong>GKE Autopilot cluster</strong> in 3 zones (us-central1) + regional node pools</li>
+        <li><strong>Cloud Spanner</strong> multi-region instance (nam6) for incident state</li>
+        <li><strong>Vertex AI Matching Engine</strong> index with 768-dim vectors, cosine metric</li>
+        <li><strong>Pub/Sub topics</strong>: anomaly_events, action_results, feedback_events</li>
+        <li><strong>Cloud Armor</strong> WAF policies for agent API endpoints</li>
+        <li><strong>VPC Service Controls</strong> perimeter around PII-adjacent resources</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-purple"></span>Supporting Infrastructure</div>
+      <ul class="item-list">
+        <li><strong>Kafka</strong> on-prem via Strimzi operator on dedicated Kubernetes cluster</li>
+        <li><strong>HashiCorp Vault</strong> on-prem; GCP auth backend for pod service account token exchange</li>
+        <li><strong>Supabase</strong> managed instance (dev/staging) → pgvector with row-level security</li>
+        <li><strong>N8n</strong> self-hosted on Kubernetes with persistent volume for workflow state</li>
+        <li><strong>Grafana Cloud</strong> with Loki (logs), Tempo (traces), Mimir (metrics) stacks</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+
+<!-- ─── PHASE 7: POST-PRODUCTION ─────────────────────────── -->
+<section class="phase" id="p7">
+  <div class="phase-header">
+    <div class="phase-num teal">PHASE 07</div>
+    <div class="phase-title-block">
+      <h2>Post-Production Phase</h2>
+      <p class="phase-desc">Ongoing operations: observability, SLO tracking, continuous improvement, model governance, knowledge base evolution, and long-term scaling.</p>
+    </div>
+  </div>
+
+  <h3>Operational Dashboard (Grafana)</h3>
+  <div class="grid4">
+    <div class="card"><div class="card-title" style="font-size: 10px; color: var(--green)">MTTA <span class="status status-ok">live</span></div><p style="font-size: 20px; color: #fff; font-family: JetBrains Mono; font-weight: 600;">78s</p><p>↓ 87% vs. manual baseline</p></div>
+    <div class="card"><div class="card-title" style="font-size: 10px; color: var(--blue)">MTTR <span class="status status-ok">live</span></div><p style="font-size: 20px; color: #fff; font-family: JetBrains Mono; font-weight: 600;">6.2m</p><p>↓ 84% vs. manual baseline</p></div>
+    <div class="card"><div class="card-title" style="font-size: 10px; color: var(--amber)">False Positive Rate <span class="status status-warn">watch</span></div><p style="font-size: 20px; color: #fff; font-family: JetBrains Mono; font-weight: 600;">3.8%</p><p>Target: &lt;5%. Trend improving.</p></div>
+    <div class="card"><div class="card-title" style="font-size: 10px; color: var(--purple)">Auto-Resolved <span class="status status-ok">live</span></div><p style="font-size: 20px; color: #fff; font-family: JetBrains Mono; font-weight: 600;">71%</p><p>of all incidents resolved without human action</p></div>
+  </div>
+
+  <h3>Continuous Improvement Loop</h3>
+  <div class="grid2 mt8">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Weekly Operations Review</div>
+      <ul class="item-list">
+        <li><strong>Incident retrospective:</strong> Review all human-overridden agent decisions; label corrected actions as training data for RL reward model</li>
+        <li><strong>False positive audit:</strong> Weekly sampling of 50 agent triage decisions by SRE; disagreements fed back as labelled examples</li>
+        <li><strong>Runbook gap analysis:</strong> Any incident where agent confidence &lt;0.75 and no runbook match triggers a runbook authoring task in JIRA</li>
+        <li><strong>Cost review:</strong> LLM spend per incident type; identify high-cost patterns for prompt optimisation or model downgrade</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-purple"></span>Monthly Model Governance</div>
+      <ul class="item-list">
+        <li><strong>RL policy review:</strong> SRE lead reviews policy diff; evaluates against ethical guardrails (no actions that risk data loss without explicit override)</li>
+        <li><strong>Embedding model refresh:</strong> Quarterly re-embedding of full runbook corpus when a new embedding model version releases; A/B test retrieval quality</li>
+        <li><strong>LLM version management:</strong> Track base model deprecations; test replacements on golden eval set before switching</li>
+        <li><strong>Compliance audit:</strong> Security team reviews all autonomous action logs; verify PII masking has not leaked; export audit trail to compliance vault</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Scaling Roadmap</h3>
+  <div class="timeline mt8">
+    <div class="tl-item"><div class="tl-title">Month 3 — Domain Expansion</div><div class="tl-body">Extend Monitoring Agent to cover database replication lag and CDN origin health. Add a CS Deflection Sub-Agent that auto-responds to customer-facing service status queries during incidents. Integrate with Statuspage API for automatic public incident communication.</div></div>
+    <div class="tl-item"><div class="tl-title">Month 6 — Proactive Prediction</div><div class="tl-body">Shift from reactive anomaly detection to proactive capacity forecasting — LSTM-based predictor on infrastructure metrics flags resource contention 30 minutes ahead. Monitoring Agent gains a "pre-emptive scaling" action tier. RL policy updated to reward prevented incidents, not just resolved ones.</div></div>
+    <div class="tl-item"><div class="tl-title">Month 9 — Multi-Region Agents</div><div class="tl-body">Deploy agent stack in EU and APAC regions with region-local LLM endpoints (Vertex AI regional endpoints) and Kafka MirrorMaker for cross-region telemetry replication. Global incident correlation agent coordinates cross-region diagnosis for distributed outages.</div></div>
+    <div class="tl-item"><div class="tl-title">Month 12 — Self-Healing Architecture</div><div class="tl-body">Action Agent gains the ability to auto-generate and propose infrastructure-as-code patches (Terraform diffs) for structural configuration issues — reviewed and applied by SRE. Feedback loop learns from code change outcomes. Full autonomous operations for all Tier-1 incident types with less than 1% false action rate.</div></div>
+  </div>
+
+  <div class="callout callout-green mt16">
+    <strong>Long-Term Vision:</strong> The system evolves from a reactive triage tool into an AI SRE that understands the full causal graph of the payment platform — capable of predicting failures before customers notice, autonomously implementing and validating remediations, and continuously updating its own runbook knowledge from every incident it handles.
+  </div>
+
+  <h3>Technology Stack Summary</h3>
+  <div class="arch-diagram">
+    <table class="data-table">
+      <thead><tr><th>Layer</th><th>Technology</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td class="td-name">Agent Framework</td><td><span class="pill pill-cyan">LangGraph</span> <span class="pill pill-cyan">LangChain</span> <span class="pill pill-blue">CrewAI</span> <span class="pill pill-blue">Autogen</span></td><td>Orchestration, multi-agent coordination, stateful workflows</td></tr>
+        <tr><td class="td-name">LLM Backbone</td><td><span class="pill pill-purple">Vertex AI Gemini 1.5 Pro</span> <span class="pill pill-purple">GPT-4o</span> <span class="pill pill-gray">Claude 3.5 Haiku</span></td><td>Reasoning (Pro), high-frequency classification (Haiku), multi-provider resilience</td></tr>
+        <tr><td class="td-name">Vector Store</td><td><span class="pill pill-cyan">Supabase pgvector</span> <span class="pill pill-blue">Vertex AI Matching Engine</span></td><td>RAG retrieval for runbooks, dev → prod path</td></tr>
+        <tr><td class="td-name">Stream Processing</td><td><span class="pill pill-amber">Apache Kafka</span> <span class="pill pill-amber">Apache Flink</span> <span class="pill pill-amber">PubSub</span></td><td>Telemetry ingestion, transformation, agent event bus</td></tr>
+        <tr><td class="td-name">Automation</td><td><span class="pill pill-green">N8n</span> <span class="pill pill-green">Temporal</span></td><td>DevOps action workflows, durable execution guarantees</td></tr>
+        <tr><td class="td-name">Reinforcement Learning</td><td><span class="pill pill-purple">Vertex AI RL</span> <span class="pill pill-blue">Azure Personalizer</span></td><td>Feedback loop, contextual bandit policy updates</td></tr>
+        <tr><td class="td-name">LLM Observability</td><td><span class="pill pill-cyan">Langfuse (self-hosted)</span> <span class="pill pill-green">Arize Phoenix</span> <span class="pill pill-blue">Datadog LLM Obs</span></td><td>Langfuse: primary audit + trace backbone · Phoenix: RAG quality + hallucination evals · Datadog: unified SRE view (sanitised OTLP)</td></tr>
+        <tr><td class="td-name">Infra Observability</td><td><span class="pill pill-cyan">OpenTelemetry</span> <span class="pill pill-blue">Grafana</span> <span class="pill pill-gray">Prometheus</span></td><td>Agent infrastructure traces, infra metrics, service dashboards</td></tr>
+        <tr><td class="td-name">Infrastructure</td><td><span class="pill pill-blue">GKE Autopilot</span> <span class="pill pill-amber">Terraform</span> <span class="pill pill-green">ArgoCD</span> <span class="pill pill-gray">Helm</span></td><td>Container orchestration, IaC, GitOps CD</td></tr>
+        <tr><td class="td-name">Storage</td><td><span class="pill pill-purple">Cloud Spanner</span> <span class="pill pill-gray">Redis</span> <span class="pill pill-gray">BigQuery</span> <span class="pill pill-cyan">ClickHouse</span></td><td>Incident state, agent memory, analytics, hot query store</td></tr>
+        <tr><td class="td-name">Security</td><td><span class="pill pill-red">HashiCorp Vault</span> <span class="pill pill-red">GCP IAM</span> <span class="pill pill-red">mTLS</span> <span class="pill pill-red">VPC SC</span></td><td>Secrets, access control, service-to-service auth, PII perimeter</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ─── PHASE 8: LLM OBSERVABILITY ────────────────────────── -->
+<section class="phase" id="p8">
+  <div class="phase-header">
+    <div class="phase-num teal">PHASE 08</div>
+    <div class="phase-title-block">
+      <h2>LLM Observability Architecture</h2>
+      <p class="phase-desc">Tool selection rationale, 3-tool integration design, per-agent instrumentation, RAG quality monitoring, production alert rules, and a compliance-grade audit query API — purpose-built for a 24/7 multi-agent payment system.</p>
+    </div>
+  </div>
+
+  <div class="callout callout-amber">
+    <strong>Why generic APM isn't enough:</strong> OpenTelemetry + Grafana captures latency and error rates but is completely blind to the failure modes that matter most in LLM-powered systems — prompt regressions, hallucination rate trends, RAG retrieval quality degradation, token cost explosions per agent, and the ability to replay any autonomous remediation decision with its exact prompt, retrieved runbook context, and model output. For a system making autonomous actions on a live payment platform, this isn't optional.
+  </div>
+
+  <h3>Tool Evaluation — Langfuse vs Arize Phoenix vs Datadog LLM Observability</h3>
+  <div class="tool-grid">
+
+    <!-- LANGFUSE -->
+    <div class="tool-card winner">
+      <div class="tool-header">
+        <div class="tool-icon" style="background:rgba(34,217,200,0.12);">🪢</div>
+        <div>
+          <div class="tool-name">Langfuse</div>
+          <div class="tool-sub">self-hosted · open source · trace-first</div>
+        </div>
+        <div class="tool-badge tb-winner">★ Primary</div>
+      </div>
+      <div class="tool-body">
+        <div class="score-row"><span class="score-label">Self-hosting capability</span><div class="score-bar-wrap"><div class="score-bar" style="width:95%;background:var(--cyan)"></div></div><span class="score-val">9.5</span></div>
+        <div class="score-row"><span class="score-label">Multi-agent trace nesting</span><div class="score-bar-wrap"><div class="score-bar" style="width:93%;background:var(--cyan)"></div></div><span class="score-val">9.3</span></div>
+        <div class="score-row"><span class="score-label">Prompt versioning &amp; mgmt</span><div class="score-bar-wrap"><div class="score-bar" style="width:95%;background:var(--cyan)"></div></div><span class="score-val">9.5</span></div>
+        <div class="score-row"><span class="score-label">LangGraph SDK integration</span><div class="score-bar-wrap"><div class="score-bar" style="width:92%;background:var(--cyan)"></div></div><span class="score-val">9.2</span></div>
+        <div class="score-row"><span class="score-label">Compliance audit trail</span><div class="score-bar-wrap"><div class="score-bar" style="width:95%;background:var(--cyan)"></div></div><span class="score-val">9.5</span></div>
+        <div class="score-row"><span class="score-label">Cost per session tracking</span><div class="score-bar-wrap"><div class="score-bar" style="width:90%;background:var(--cyan)"></div></div><span class="score-val">9.0</span></div>
+        <div class="score-row"><span class="score-label">Eval datasets + scoring</span><div class="score-bar-wrap"><div class="score-bar" style="width:88%;background:var(--cyan)"></div></div><span class="score-val">8.8</span></div>
+        <div class="score-row"><span class="score-label">RAG retrieval tracing</span><div class="score-bar-wrap"><div class="score-bar" style="width:76%;background:var(--amber)"></div></div><span class="score-val">7.6</span></div>
+        <div class="score-row"><span class="score-label">Multi-LLM provider support</span><div class="score-bar-wrap"><div class="score-bar" style="width:92%;background:var(--cyan)"></div></div><span class="score-val">9.2</span></div>
+        <p style="margin-top:12px;">Self-hosted on GKE — no prompt data or runbook context leaves the network boundary. The <code style="font-family:JetBrains Mono;font-size:11px;color:var(--cyan)">session → trace → span → generation</code> hierarchy maps exactly to LangGraph's node/edge/tool-call model. Every incident becomes one queryable session containing all four agents' LLM calls, tool invocations, RAG retrievals, and decisions — tied to a single incident ID. Prompt versioning lets the SRE team audit <em>exactly which prompt version</em> was running when a remediation action was taken.</p>
+      </div>
+    </div>
+
+    <!-- ARIZE PHOENIX -->
+    <div class="tool-card secondary">
+      <div class="tool-header">
+        <div class="tool-icon" style="background:rgba(61,142,240,0.12);">🔥</div>
+        <div>
+          <div class="tool-name">Arize Phoenix</div>
+          <div class="tool-sub">open source · rag-eval · embedding drift</div>
+        </div>
+        <div class="tool-badge tb-second">Secondary</div>
+      </div>
+      <div class="tool-body">
+        <div class="score-row"><span class="score-label">Self-hosting capability</span><div class="score-bar-wrap"><div class="score-bar" style="width:88%;background:var(--blue)"></div></div><span class="score-val">8.8</span></div>
+        <div class="score-row"><span class="score-label">Multi-agent trace nesting</span><div class="score-bar-wrap"><div class="score-bar" style="width:71%;background:var(--amber)"></div></div><span class="score-val">7.1</span></div>
+        <div class="score-row"><span class="score-label">Prompt versioning &amp; mgmt</span><div class="score-bar-wrap"><div class="score-bar" style="width:50%;background:var(--muted)"></div></div><span class="score-val">5.0</span></div>
+        <div class="score-row"><span class="score-label">LangGraph SDK integration</span><div class="score-bar-wrap"><div class="score-bar" style="width:75%;background:var(--amber)"></div></div><span class="score-val">7.5</span></div>
+        <div class="score-row"><span class="score-label">Compliance audit trail</span><div class="score-bar-wrap"><div class="score-bar" style="width:62%;background:var(--amber)"></div></div><span class="score-val">6.2</span></div>
+        <div class="score-row"><span class="score-label">Cost per session tracking</span><div class="score-bar-wrap"><div class="score-bar" style="width:55%;background:var(--muted)"></div></div><span class="score-val">5.5</span></div>
+        <div class="score-row"><span class="score-label">Eval datasets + scoring</span><div class="score-bar-wrap"><div class="score-bar" style="width:95%;background:var(--blue)"></div></div><span class="score-val">9.5</span></div>
+        <div class="score-row"><span class="score-label">RAG retrieval tracing</span><div class="score-bar-wrap"><div class="score-bar" style="width:97%;background:var(--blue)"></div></div><span class="score-val">9.7</span></div>
+        <div class="score-row"><span class="score-label">Embedding drift detection</span><div class="score-bar-wrap"><div class="score-bar" style="width:97%;background:var(--blue)"></div></div><span class="score-val">9.7</span></div>
+        <p style="margin-top:12px;">Best-in-class for RAG pipeline quality monitoring and embedding drift — the two failure modes most likely to silently degrade the Diagnosis Agent's runbook retrieval without any latency signal. Used specifically for the Diagnosis Agent's RAG pipeline: tracks retrieval recall@5, context faithfulness, and hallucination rate via LLM-as-judge scoring. Also monitors runbook embedding corpus drift against a 30-day cosine baseline. Spans forwarded from Langfuse via OTLP exporter — no double instrumentation needed.</p>
+      </div>
+    </div>
+
+    <!-- DATADOG -->
+    <div class="tool-card">
+      <div class="tool-header">
+        <div class="tool-icon" style="background:rgba(245,158,11,0.12);">🐕</div>
+        <div>
+          <div class="tool-name">Datadog LLM Obs</div>
+          <div class="tool-sub">saas · unified infra+llm · sre-first</div>
+        </div>
+        <div class="tool-badge tb-third">SRE View</div>
+      </div>
+      <div class="tool-body">
+        <div class="score-row"><span class="score-label">Self-hosting capability</span><div class="score-bar-wrap"><div class="score-bar" style="width:0%;background:var(--red)"></div></div><span class="score-val">0</span></div>
+        <div class="score-row"><span class="score-label">Multi-agent trace nesting</span><div class="score-bar-wrap"><div class="score-bar" style="width:70%;background:var(--amber)"></div></div><span class="score-val">7.0</span></div>
+        <div class="score-row"><span class="score-label">Prompt versioning &amp; mgmt</span><div class="score-bar-wrap"><div class="score-bar" style="width:40%;background:var(--red)"></div></div><span class="score-val">4.0</span></div>
+        <div class="score-row"><span class="score-label">Unified infra + LLM view</span><div class="score-bar-wrap"><div class="score-bar" style="width:98%;background:var(--green)"></div></div><span class="score-val">9.8</span></div>
+        <div class="score-row"><span class="score-label">Alerting &amp; PagerDuty routing</span><div class="score-bar-wrap"><div class="score-bar" style="width:96%;background:var(--green)"></div></div><span class="score-val">9.6</span></div>
+        <div class="score-row"><span class="score-label">Cost analytics</span><div class="score-bar-wrap"><div class="score-bar" style="width:82%;background:var(--blue)"></div></div><span class="score-val">8.2</span></div>
+        <div class="score-row"><span class="score-label">Eval datasets + scoring</span><div class="score-bar-wrap"><div class="score-bar" style="width:50%;background:var(--muted)"></div></div><span class="score-val">5.0</span></div>
+        <div class="score-row"><span class="score-label">RAG retrieval tracing</span><div class="score-bar-wrap"><div class="score-bar" style="width:55%;background:var(--muted)"></div></div><span class="score-val">5.5</span></div>
+        <div class="score-row"><span class="score-label">Multi-LLM provider support</span><div class="score-bar-wrap"><div class="score-bar" style="width:85%;background:var(--blue)"></div></div><span class="score-val">8.5</span></div>
+        <p style="margin-top:12px;">SaaS-only — raw prompts and any telemetry referencing incident context must never be sent to Datadog. Used exclusively as a <strong>downstream aggregation layer</strong>: Langfuse exports sanitised OTLP metrics (token counts, latency, error rates, cost per agent — zero prompt content) to Datadog, giving the SRE team a unified dashboard alongside Prometheus infrastructure metrics and Grafana alerts without any data-boundary risk. Datadog handles PagerDuty escalation routing for combined infra + LLM alert rules.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>Why Langfuse Wins as Primary for This Use Case</h3>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Constraint 1 — Data Residency &amp; Network Isolation</div>
+      <p>The Monitoring Agent ingests raw telemetry from payment gateways; the Diagnosis Agent retrieves runbook chunks that may reference internal service names and topology. None of this can egress to a SaaS platform. Langfuse self-hosted on GKE runs entirely within the same network boundary as the agents themselves — traces are stored in a Postgres instance that never leaves the cluster. Datadog SaaS is immediately disqualified for primary trace storage on this basis alone.</p>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Constraint 2 — LangGraph Native Trace Nesting</div>
+      <p>A single incident creates a Monitoring Agent span, which spawns a Diagnosis Agent LangGraph DAG with multiple nodes, which spawns a CrewAI crew with three sub-agents, each making LLM calls and tool calls. Langfuse's <code style="font-family:JetBrains Mono;font-size:11px;color:var(--cyan)">CallbackHandler</code> wraps LangGraph natively and automatically builds the complete nested hierarchy under one <code style="font-family:JetBrains Mono;font-size:11px;color:var(--cyan)">session_id = incident_id</code>. No manual span management required.</p>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Constraint 3 — Prompt Versioning for Autonomous Actions</div>
+      <p>When the Action Agent autonomously scales a service or restarts a pod, the SRE team needs to know which prompt version was responsible — especially after a false-positive action causes a blast-radius event. Langfuse's prompt registry ties every production trace to a named, versioned prompt with a full diff history. This enables exact root-cause isolation: "the pod-restart false positive correlates with prompt version <code style="font-family:JetBrains Mono;font-size:11px;color:var(--cyan)">action-remediation-v1.4</code> deployed 3 hours ago."</p>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Constraint 4 — Incident Audit &amp; Replay</div>
+      <p>SRE postmortems require replaying the full reasoning chain behind any autonomous action. Langfuse's immutable Postgres trace storage, combined with the session/trace/span hierarchy, makes every incident fully replayable: the exact input telemetry, retrieved runbook context, LLM reasoning, tool calls, and final decision are all queryable by <code style="font-family:JetBrains Mono;font-size:11px;color:var(--cyan)">incident_id</code> in a single API call. Neither Phoenix nor Datadog offer this level of structured, incident-scoped audit access.</p>
+    </div>
+  </div>
+
+  <h3>3-Tool Integration Architecture</h3>
+  <div class="obs-flow">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--dim);letter-spacing:0.07em;text-transform:uppercase;margin-bottom:14px;">Signal Flow — All Agents to All Tools</div>
+
+    <!-- Agent layer -->
+    <div style="background:rgba(34,217,200,0.04);border:1px dashed rgba(34,217,200,0.2);border-radius:8px;padding:12px 16px;margin-bottom:10px;">
+      <div style="color:var(--cyan);font-size:10px;letter-spacing:0.09em;text-transform:uppercase;margin-bottom:8px;">Agent Layer — Instrumented via Langfuse SDK Callbacks</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <span style="background:var(--bg4);border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:10.5px;color:var(--text);font-family:'JetBrains Mono',monospace;">🔭 Monitoring Agent</span>
+        <span style="background:var(--bg4);border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:10.5px;color:var(--text);font-family:'JetBrains Mono',monospace;">🔬 Diagnosis Agent</span>
+        <span style="background:var(--bg4);border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:10.5px;color:var(--text);font-family:'JetBrains Mono',monospace;">⚙️ Action Agent</span>
+        <span style="background:var(--bg4);border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:10.5px;color:var(--text);font-family:'JetBrains Mono',monospace;">🔄 Feedback Loop Agent</span>
+      </div>
+      <div style="color:var(--dim);font-size:10.5px;margin-top:8px;">Every LLM call, RAG retrieval, tool invocation &amp; decision emits spans via <span style="color:var(--cyan)">CallbackHandler(session_id=incident_id)</span> + <span style="color:var(--cyan)">@observe()</span> decorator</div>
+    </div>
+
+    <div style="text-align:center;color:var(--dim);font-size:12px;margin:6px 0;">↓ full traces (on-cluster) &nbsp;&nbsp;·&nbsp;&nbsp; ↓ RAG spans via OTLP forward &nbsp;&nbsp;·&nbsp;&nbsp; ↓ sanitised metrics only (no prompt data)</div>
+
+    <!-- Three tools -->
+    <div class="grid3" style="margin:10px 0;">
+      <div style="background:rgba(34,217,200,0.05);border:1.5px solid rgba(34,217,200,0.25);border-radius:8px;padding:14px;">
+        <div style="color:var(--cyan);font-size:11.5px;font-weight:600;margin-bottom:8px;">🪢 Langfuse (GKE, on-cluster)</div>
+        <ul style="list-style:none;font-size:11px;color:var(--muted);line-height:1.9;">
+          <li>· Full session / trace / span hierarchy</li>
+          <li>· Prompt version registry per agent</li>
+          <li>· Cost per incident + per agent type</li>
+          <li>· Eval datasets &amp; annotation queues</li>
+          <li>· Golden set regression runs on deploy</li>
+          <li>· Immutable Postgres audit log</li>
+          <li>· Incident replay API</li>
+        </ul>
+      </div>
+      <div style="background:rgba(61,142,240,0.04);border:1px solid rgba(61,142,240,0.22);border-radius:8px;padding:14px;">
+        <div style="color:#7eb8ff;font-size:11.5px;font-weight:600;margin-bottom:8px;">🔥 Arize Phoenix (on-cluster)</div>
+        <ul style="list-style:none;font-size:11px;color:var(--muted);line-height:1.9;">
+          <li>· RAG retrieval recall@5 per corpus</li>
+          <li>· Embedding drift vs 30-day baseline</li>
+          <li>· Hallucination rate (LLM-as-judge)</li>
+          <li>· Query-document relevance heatmap</li>
+          <li>· Context faithfulness scoring</li>
+          <li>· Spans received via OTLP from Langfuse</li>
+          <li>· Used: Diagnosis Agent RAG pipeline only</li>
+        </ul>
+      </div>
+      <div style="background:rgba(245,158,11,0.04);border:1px solid rgba(245,158,11,0.2);border-radius:8px;padding:14px;">
+        <div style="color:var(--amber);font-size:11.5px;font-weight:600;margin-bottom:8px;">🐕 Datadog LLM Obs (SaaS)</div>
+        <ul style="list-style:none;font-size:11px;color:var(--muted);line-height:1.9;">
+          <li>· Sanitised OTLP from Langfuse only</li>
+          <li>· No raw prompts or context data</li>
+          <li>· Token count + latency + error rate</li>
+          <li>· Cost trends per agent (aggregated)</li>
+          <li>· Unified view alongside Prometheus</li>
+          <li>· PagerDuty alert routing for SRE</li>
+          <li>· Cross-team ops dashboard</li>
+        </ul>
+      </div>
+    </div>
+
+    <div style="text-align:center;color:var(--dim);font-size:12px;margin:6px 0;">↓ postmortem reports &nbsp;&nbsp;·&nbsp;&nbsp; ↓ RAG quality reports → ML team &nbsp;&nbsp;·&nbsp;&nbsp; ↓ ops alerts → SRE on-call</div>
+
+    <div class="grid3" style="margin-top:10px;">
+      <div style="background:var(--bg4);border:1px solid var(--border);border-radius:6px;padding:10px 12px;text-align:center;font-size:11px;color:var(--muted);">📋 SRE Postmortems<br><span style="color:var(--cyan);font-family:'JetBrains Mono',monospace;font-size:10px;">incident replay API</span></div>
+      <div style="background:var(--bg4);border:1px solid var(--border);border-radius:6px;padding:10px 12px;text-align:center;font-size:11px;color:var(--muted);">🤖 ML Engineering<br><span style="color:#7eb8ff;font-family:'JetBrains Mono',monospace;font-size:10px;">RAG evals · drift alerts</span></div>
+      <div style="background:var(--bg4);border:1px solid var(--border);border-radius:6px;padding:10px 12px;text-align:center;font-size:11px;color:var(--muted);">🔧 Platform On-Call<br><span style="color:var(--amber);font-family:'JetBrains Mono',monospace;font-size:10px;">PagerDuty · unified ops</span></div>
+    </div>
+  </div>
+
+  <h3>Langfuse Instrumentation — Per Agent</h3>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>Monitoring + Action Agent — Session-Scoped Tracing</div>
+      <div class="code-block">
+<span class="kw">from</span> <span class="fn">langfuse.callback</span> <span class="kw">import</span> CallbackHandler<br>
+<span class="kw">from</span> <span class="fn">langfuse.decorators</span> <span class="kw">import</span> observe, langfuse_context<br><br>
+<span class="cmt"># One session per incident — ties all 4 agents together</span><br>
+handler = <span class="fn">CallbackHandler</span>(<br>
+&nbsp;&nbsp;session_id=incident_id,   <span class="cmt"># incident_id is the anchor</span><br>
+&nbsp;&nbsp;user_id=<span class="str">"sre-system"</span>,<br>
+&nbsp;&nbsp;tags=[<span class="str">"agent:monitoring"</span>, <span class="str">"env:prod"</span>],<br>
+&nbsp;&nbsp;metadata={<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"agent_version"</span>: AGENT_VERSION,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"prompt_version"</span>: PROMPT_VERSION, <span class="cmt"># ← audit-critical</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"affected_service"</span>: service_name<br>
+&nbsp;&nbsp;}<br>
+)<br><br>
+<span class="cmt"># LangChain ReAct loop — all tool calls auto-traced</span><br>
+result = monitoring_agent.<span class="fn">run</span>(<br>
+&nbsp;&nbsp;telemetry_payload,<br>
+&nbsp;&nbsp;callbacks=[handler]<br>
+)<br>
+<span class="cmt"># Langfuse records: every tool call, LLM input/output,</span><br>
+<span class="cmt"># reasoning chain, token count, latency, model, cost</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot dot-blue"></span>Diagnosis Agent — RAG Span Instrumentation (+ Phoenix export)</div>
+      <div class="code-block">
+<span class="fn">@observe</span>(name=<span class="str">"rag_runbook_retrieval"</span>)<br>
+<span class="kw">def</span> <span class="fn">retrieve_runbooks</span>(query: str, k: int = <span class="num">5</span>):<br>
+&nbsp;&nbsp;langfuse_context.<span class="fn">update_current_observation</span>(<br>
+&nbsp;&nbsp;&nbsp;&nbsp;input={<span class="str">"query"</span>: query, <span class="str">"k"</span>: k},<br>
+&nbsp;&nbsp;&nbsp;&nbsp;metadata={<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"corpus"</span>: <span class="str">"runbooks_v2"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"embedding_model"</span>: EMB_VERSION,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"retrieval_strategy"</span>: <span class="str">"hybrid_rrf"</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;}<br>
+&nbsp;&nbsp;)<br>
+&nbsp;&nbsp;results = vector_store.<span class="fn">similarity_search</span>(query, k)<br>
+&nbsp;&nbsp;langfuse_context.<span class="fn">update_current_observation</span>(<br>
+&nbsp;&nbsp;&nbsp;&nbsp;output={<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"doc_ids"</span>: [r.id <span class="kw">for</span> r <span class="kw">in</span> results],<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"scores"</span>: [r.score <span class="kw">for</span> r <span class="kw">in</span> results]<br>
+&nbsp;&nbsp;&nbsp;&nbsp;}<br>
+&nbsp;&nbsp;)<br>
+&nbsp;&nbsp;<span class="cmt"># Span also forwarded to Arize Phoenix via OTLP</span><br>
+&nbsp;&nbsp;<span class="cmt"># for recall@5 and embedding drift tracking</span><br>
+&nbsp;&nbsp;<span class="kw">return</span> results
+      </div>
+    </div>
+  </div>
+
+  <h3>Arize Phoenix — RAG Quality Monitoring for Diagnosis Agent</h3>
+  <div class="arch-diagram">
+    <table class="data-table">
+      <thead><tr><th>RAG Metric</th><th>What It Catches</th><th>Alert Threshold</th><th>Response</th></tr></thead>
+      <tbody>
+        <tr><td class="td-name">Retrieval Recall@5</td><td>The top-5 runbook chunks retrieved for a given anomaly description don't contain the correct remediation procedure — agent diagnoses with wrong context</td><td class="td-tech">&lt; 0.88 on benchmark query set</td><td>Trigger runbook re-embedding job; inspect hybrid search weights; notify ML team</td></tr>
+        <tr><td class="td-name">Context Faithfulness</td><td>LLM synthesises an RCA that introduces steps or facts not present in the retrieved runbook chunks — hallucinated remediation</td><td class="td-tech">&lt; 0.90 faithfulness score</td><td>P0 — Diagnosis Agent rolls back to previous prompt version; incident escalated to human SRE immediately</td></tr>
+        <tr><td class="td-name">Embedding Drift</td><td>New runbooks added to the corpus shift the embedding distribution significantly; existing queries start retrieving semantically misaligned chunks without any latency change visible in Prometheus</td><td class="td-tech">Cosine drift &gt; 0.12 vs 30-day baseline</td><td>Schedule full corpus re-embedding within 4h; alert ML team; continue operating with existing index</td></tr>
+        <tr><td class="td-name">Query-Document Relevance</td><td>Anomaly descriptions from a new service type (e.g., a new microservice with no historical runbooks) produce low-relevance top-k results — agent is essentially operating blind</td><td class="td-tech">Mean relevance &lt; 0.65 for any 10-query window</td><td>Flag as "novel service pattern"; route incident to human SRE; create runbook authoring JIRA task</td></tr>
+        <tr><td class="td-name">Hallucination Rate (LLM-as-judge)</td><td>Diagnosis Agent's root-cause explanations contain claims not supported by retrieved runbooks or the provided telemetry snapshot — fabricated incident attribution</td><td class="td-tech">&gt; 3% across rolling 24h window</td><td>P1 — review top-10 hallucinated traces in Phoenix UI; identify prompt or retrieval regression; hot-patch prompt if cause identified</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Production Alert Rules — LLM Observability</h3>
+  <div class="grid2">
+    <div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em;">Langfuse Alerts → PagerDuty (via Datadog OTLP)</div>
+      <div class="alert-chip"><span class="sev sev-p0">P0</span><div class="alert-text"><strong>Token budget exceeded per incident session:</strong> Any session surpasses 50K tokens. Signals prompt injection via malicious log lines or a runaway reasoning loop. Auto-kills session and pages SRE.</div></div>
+      <div class="alert-chip"><span class="sev sev-p0">P0</span><div class="alert-text"><strong>Prompt version unregistered in registry:</strong> A production trace references a prompt version not in the Langfuse registry — possible unauthorized deployment or config tampering. Auto-rollback + security page.</div></div>
+      <div class="alert-chip"><span class="sev sev-p1">P1</span><div class="alert-text"><strong>LLM error rate &gt; 3% (5-min rolling window):</strong> Across any single agent. Likely upstream API degradation. Routes to Action Agent's fallback: rule-based classification with human escalation.</div></div>
+      <div class="alert-chip"><span class="sev sev-p1">P1</span><div class="alert-text"><strong>Cost per decision spike &gt; 3× baseline:</strong> Per-agent rolling 1-hour window. Triggers investigation into prompt regression or a new high-complexity input pattern driving token inflation.</div></div>
+      <div class="alert-chip"><span class="sev sev-p2">P2</span><div class="alert-text"><strong>Model latency p99 &gt; 6s:</strong> For any agent in the critical path. Auto-switches to faster model tier (Haiku/Flash) while primary model is investigated. SRE notified.</div></div>
+    </div>
+    <div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em;">Arize Phoenix Alerts → ML Engineering Slack</div>
+      <div class="alert-chip"><span class="sev sev-p0">P0</span><div class="alert-text"><strong>Context faithfulness &lt; 0.90:</strong> Diagnosis Agent is hallucinating runbook steps. All autonomous Tier-1 actions paused; human SRE takes over incident triage; Langfuse prompt version flagged for review.</div></div>
+      <div class="alert-chip"><span class="sev sev-p1">P1</span><div class="alert-text"><strong>Retrieval recall@5 &lt; 0.88:</strong> Runbook retrieval quality has degraded below acceptable threshold. Re-embedding job triggered immediately. Diagnosis Agent continues with degraded-mode warning in Slack thread.</div></div>
+      <div class="alert-chip"><span class="sev sev-p1">P1</span><div class="alert-text"><strong>Embedding drift &gt; 0.12 cosine:</strong> Runbook corpus embedding distribution has shifted materially — likely due to a batch of new runbooks or silent embedding model version change. Nightly re-embed job fast-tracked.</div></div>
+      <div class="alert-chip"><span class="sev sev-p2">P2</span><div class="alert-text"><strong>Hallucination rate &gt; 3% (24h rolling):</strong> ML team reviews top-10 hallucinated traces in Phoenix UI; identifies whether prompt, retrieval, or model change is the root cause; hot-patch in next deploy.</div></div>
+      <div class="alert-chip"><span class="sev sev-p2">P2</span><div class="alert-text"><strong>Novel service pattern — relevance &lt; 0.65:</strong> New microservice producing low-relevance runbook matches. Incident routes to human; runbook authoring JIRA task auto-created with the query that triggered the low-relevance window.</div></div>
+    </div>
+  </div>
+
+  <h3>Incident Audit Replay API (Langfuse)</h3>
+  <div class="grid2 mt8">
+    <div class="card">
+      <div class="card-title"><span class="dot dot-cyan"></span>What SRE Can Retrieve per Incident</div>
+      <ul class="item-list">
+        <li><strong>Full reasoning chain:</strong> Every LLM input/output across all four agents for the incident, ordered by timestamp — the complete chain of thought from anomaly detection through action execution</li>
+        <li><strong>Prompt version at time of action:</strong> Exact prompt version for each agent at the moment the Tier-1 or Tier-2 action was taken — essential for false-positive postmortems</li>
+        <li><strong>Retrieved runbook chunks:</strong> The exact document IDs and cosine scores of the top-5 chunks used by the Diagnosis Agent — enables evaluation of whether the correct runbook was available and retrieved</li>
+        <li><strong>Token + cost breakdown:</strong> Per-agent, per-LLM-call breakdown of tokens consumed and estimated cost for the full incident session</li>
+        <li><strong>Tool call audit:</strong> Every N8n workflow triggered, every Prometheus query executed, every Redis lookup — with input/output and latency for each</li>
+      </ul>
+    </div>
+    <div class="code-block" style="align-self:start;">
+<span class="cmt"># Incident replay query</span><br>
+GET /api/v1/sessions/<span class="num">{incident_id}</span><br><br>
+<span class="cmt"># Returns (sanitised — no raw infrastructure data)</span><br>
+{<br>
+&nbsp;&nbsp;<span class="str">"session_id"</span>: <span class="str">"inc_20260408_a3f9"</span>,<br>
+&nbsp;&nbsp;<span class="str">"agents_involved"</span>: [<span class="str">"monitoring"</span>, <span class="str">"diagnosis"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"action"</span>, <span class="str">"feedback"</span>],<br>
+&nbsp;&nbsp;<span class="str">"prompt_versions"</span>: {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"monitoring"</span>: <span class="str">"mon-react-v2.1.0"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"diagnosis"</span>:  <span class="str">"diag-rag-v3.4.2"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"action"</span>:     <span class="str">"act-tier-v1.8.0"</span><br>
+&nbsp;&nbsp;},<br>
+&nbsp;&nbsp;<span class="str">"total_tokens"</span>:   <span class="num">18420</span>,<br>
+&nbsp;&nbsp;<span class="str">"total_cost_usd"</span>: <span class="num">0.0041</span>,<br>
+&nbsp;&nbsp;<span class="str">"action_taken"</span>:   <span class="str">"scale_replicas: 3→8"</span>,<br>
+&nbsp;&nbsp;<span class="str">"action_tier"</span>:    <span class="num">1</span>,  <span class="cmt"># autonomous</span><br>
+&nbsp;&nbsp;<span class="str">"runbooks_retrieved"</span>: [<br>
+&nbsp;&nbsp;&nbsp;&nbsp;{<span class="str">"id"</span>: <span class="str">"rb://payment/scale-out"</span>, <span class="str">"score"</span>: <span class="num">0.94</span>}<br>
+&nbsp;&nbsp;],<br>
+&nbsp;&nbsp;<span class="str">"mttr_seconds"</span>: <span class="num">312</span>,<br>
+&nbsp;&nbsp;<span class="str">"resolved_by"</span>:  <span class="str">"autonomous"</span><br>
+}
+    </div>
+  </div>
+
+  <h3>LLM Observability Cost Dashboard</h3>
+  <div class="grid4 mt8">
+    <div class="obs-stat"><div class="obs-stat-label">Daily Token Spend</div><div class="obs-stat-val" style="color:var(--cyan)">$1.8K</div><div class="obs-stat-sub">All 4 agents · tracked per agent in Langfuse</div></div>
+    <div class="obs-stat"><div class="obs-stat-label">Cost per Incident</div><div class="obs-stat-val" style="color:var(--green)">$0.004</div><div class="obs-stat-sub">Avg across all severity levels</div></div>
+    <div class="obs-stat"><div class="obs-stat-label">Highest Cost Agent</div><div class="obs-stat-val" style="color:var(--amber)">Diagnosis</div><div class="obs-stat-sub">42% of token budget · multi-LLM sub-agents</div></div>
+    <div class="obs-stat"><div class="obs-stat-label">RAG Recall@5</div><div class="obs-stat-val" style="color:var(--blue)">0.93</div><div class="obs-stat-sub">Current · tracked in Arize Phoenix</div></div>
+  </div>
+
+  <div class="callout callout-green mt16">
+    <strong>Observability closes the feedback loop:</strong> Every Langfuse trace where the SRE team overrides an agent decision becomes a labelled training example for the Vertex AI RL reward model. Phoenix's hallucination scores feed directly into the Feedback Loop Agent's reward shaping — a diagnosis that hallucinates runbook steps gets a negative reward signal regardless of whether the recommended action happened to work. The three-tool stack doesn't just monitor the system: it actively improves it.
+  </div>
+</section>
+
+</main>
+
+<script>
+  const sections = document.querySelectorAll('.phase');
+  const navItems = document.querySelectorAll('.nav-item');
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        navItems.forEach(n => n.classList.remove('active'));
+        const id = entry.target.id;
+        const link = document.querySelector(`.nav-item[href="#${id}"]`);
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+
+  sections.forEach(s => observer.observe(s));
+
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', e => {
+      e.preventDefault();
+      const target = document.querySelector(item.getAttribute('href'));
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+</script>
+
+</body>
+</html>

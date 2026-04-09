@@ -18,6 +18,7 @@ from sklearn.preprocessing import StandardScaler
 
 from agents.feedback.reward import compute_batch_rewards, compute_reward
 from shared.config import get_settings
+from langfuse import Langfuse
 from shared.schemas import IncidentRecord
 from shared.utils import get_logger, get_tracer
 
@@ -103,6 +104,21 @@ class FeedbackLoopAgent:
                 reward=reward,
                 buffer_size=len(self.experience_buffer),
             )
+
+            # Send reward to Langfuse trace
+            try:
+                langfuse = Langfuse(
+                    public_key=self.settings.observability.langfuse_public_key,
+                    secret_key=self.settings.observability.langfuse_secret_key,
+                    host=self.settings.observability.langfuse_host
+                )
+                langfuse.score(
+                    trace_id=incident.incident_id,
+                    name="reward",
+                    value=reward
+                )
+            except Exception as e:
+                logger.warning("failed_to_score_langfuse", error=str(e))
 
             # Periodically retrain (every 50 experiences)
             if len(self.experience_buffer) % 50 == 0 and len(self.experience_buffer) >= 50:

@@ -17,6 +17,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langfuse.callback import CallbackHandler
 
 from agents.action.tiers import classify_action, get_tier_description
 from agents.action.workflows import trigger_workflow
@@ -96,7 +97,20 @@ class ActionAgent:
                 )
 
             # Generate incident summary
-            summary = await self._generate_incident_summary(diagnosis, results, cost_tracker)
+            handler = CallbackHandler(
+                public_key=self.settings.observability.langfuse_public_key,
+                secret_key=self.settings.observability.langfuse_secret_key,
+                host=self.settings.observability.langfuse_host,
+                session_id=diagnosis.incident_id,
+                user_id="sre-system",
+                tags=["agent:action", f"env:{self.settings.app.app_env}"],
+                metadata={
+                    "agent_version": "1.0.0",
+                    "prompt_version": "act-tier-v1.8.0"
+                }
+            )
+
+            summary = await self._generate_incident_summary(diagnosis, results, cost_tracker, handler)
 
             # Send notification
             await self._send_notification(diagnosis, results, summary)
@@ -211,6 +225,7 @@ class ActionAgent:
         diagnosis: DiagnosisResult,
         results: list[ActionResult],
         cost_tracker: LLMCostTracker | None = None,
+        handler: CallbackHandler | None = None,
     ) -> str:
         """Generate a plain-language incident summary (≤200 words)."""
         prompt = f"""Generate a concise incident summary (max 200 words) for Slack notification.
@@ -231,7 +246,7 @@ Format as:
         response = await self.llm.ainvoke([
             SystemMessage(content="You are an SRE writing a concise incident summary for Slack."),
             HumanMessage(content=prompt),
-        ])
+        ], config={"callbacks": [handler]} if handler else None)
 
         if cost_tracker and hasattr(response, "usage_metadata") and response.usage_metadata:
             cost_tracker.track(

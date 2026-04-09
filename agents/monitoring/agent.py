@@ -13,6 +13,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langfuse.callback import CallbackHandler
 
 from agents.monitoring.prompts import MONITORING_HUMAN_PROMPT, MONITORING_SYSTEM_PROMPT
 from agents.monitoring.tools.monitoring_tools import ALL_MONITORING_TOOLS
@@ -68,10 +69,24 @@ class MonitoringAgent:
             span.set_attribute("event.source", event.source)
             span.set_attribute("event.service", event.service_name)
 
+            handler = CallbackHandler(
+                public_key=self.settings.observability.langfuse_public_key,
+                secret_key=self.settings.observability.langfuse_secret_key,
+                host=self.settings.observability.langfuse_host,
+                session_id=event.event_id,
+                user_id="sre-system",
+                tags=["agent:monitoring", f"env:{self.settings.app.app_env}"],
+                metadata={
+                    "agent_version": "1.0.0",
+                    "prompt_version": "mon-react-v1",
+                    "affected_service": event.service_name
+                }
+            )
+
             timer = Timer()
             with timer:
                 try:
-                    result = await self._run_react_loop(event, cost_tracker)
+                    result = await self._run_react_loop(event, cost_tracker, handler)
 
                     if result and result.confidence >= self.confidence_threshold:
                         logger.info(
@@ -104,6 +119,7 @@ class MonitoringAgent:
         self,
         event: TelemetryEvent,
         cost_tracker: LLMCostTracker | None = None,
+        handler: CallbackHandler | None = None,
     ) -> AnomalyEvent | None:
         """Run the ReAct reasoning loop with tool calls."""
 
@@ -119,7 +135,8 @@ class MonitoringAgent:
 
         # Iterative tool-calling loop (max 5 iterations)
         for iteration in range(5):
-            response = await self.llm_with_tools.ainvoke(messages)
+            config = {"callbacks": [handler]} if handler else None
+            response = await self.llm_with_tools.ainvoke(messages, config=config)
 
             # Track cost
             if cost_tracker and hasattr(response, "usage_metadata") and response.usage_metadata:

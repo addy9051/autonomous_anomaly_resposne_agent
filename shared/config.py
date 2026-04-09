@@ -131,6 +131,10 @@ class ObservabilityConfig(BaseSettings):
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
     otel_service_name: str = "anomaly-response-agent"
 
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "http://localhost:3001"
+
 
 class AppConfig(BaseSettings):
     """Application-level configuration."""

@@ -174,6 +174,44 @@ services:
     volumes:
       - ./observability/otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
 
+  # ─── Langfuse (LLM Observability) ────────────────────────────
+  langfuse-server:
+    image: langfuse/langfuse:2
+    container_name: anomaly-langfuse
+    depends_on:
+      - langfuse-db
+    ports:
+      - "3001:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@langfuse-db:5432/postgres
+      - NEXTAUTH_SECRET=mysecret
+      - SALT=mysalt
+      - NEXTAUTH_URL=http://localhost:3001
+      - TELEMETRY_ENABLED=false
+
+  langfuse-db:
+    image: postgres:15
+    container_name: anomaly-langfuse-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - langfuse-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  # ─── Arize Phoenix (RAG Observability) ───────────────────────
+  arize-phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: anomaly-phoenix
+    ports:
+      - "6006:6006"
+      - "4329:4317" # Phoenix OTLP gRPC endpoint
+
 volumes:
   kafka-data:
   redis-data:
@@ -183,3 +221,4 @@ volumes:
   grafana-data:
   loki-data:
   tempo-data:
+  langfuse-data:
