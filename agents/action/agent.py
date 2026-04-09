@@ -15,8 +15,9 @@ import json
 from datetime import datetime
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langfuse.callback import CallbackHandler
+
+from shared.llm import get_chat_model
 
 from agents.action.tiers import classify_action
 from agents.action.workflows import trigger_workflow
@@ -46,9 +47,8 @@ class ActionAgent:
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.llm = ChatOpenAI(
-            model=self.settings.llm.action_agent_model,
-            api_key=self.settings.llm.openai_api_key,
+        self.llm = get_chat_model(
+            model_name=self.settings.llm.action_agent_model,
             temperature=0.1,
             max_tokens=2048,
         )
@@ -95,19 +95,25 @@ class ActionAgent:
                     elapsed_ms=timer.elapsed_ms,
                 )
 
-            # Generate incident summary
-            handler = CallbackHandler(
-                public_key=self.settings.observability.langfuse_public_key,
-                secret_key=self.settings.observability.langfuse_secret_key,
-                host=self.settings.observability.langfuse_host,
-                session_id=diagnosis.incident_id,
-                user_id="sre-system",
-                tags=["agent:action", f"env:{self.settings.app.app_env}"],
-                metadata={
-                    "agent_version": "1.0.0",
-                    "prompt_version": "act-tier-v1.8.0"
-                }
-            )
+            # Only initialize Langfuse if credentials are provided
+            handler = None
+            if self.settings.observability.langfuse_public_key:
+                try:
+                    handler = CallbackHandler(
+                        public_key=self.settings.observability.langfuse_public_key,
+                        secret_key=self.settings.observability.langfuse_secret_key,
+                        host=self.settings.observability.langfuse_host,
+                        session_id=diagnosis.incident_id,
+                        user_id="sre-system",
+                        tags=["agent:action", f"env:{self.settings.app.app_env}"],
+                        metadata={
+                            "agent_version": "1.0.0",
+                            "prompt_version": "act-tier-v1.8.0"
+                        }
+                    )
+                except Exception as e:
+                    logger.warning("langfuse_init_failed", error=str(e))
+                    handler = None
 
             summary = await self._generate_incident_summary(diagnosis, results, cost_tracker, handler)
 
@@ -263,18 +269,46 @@ Format as:
         summary: str,
     ) -> None:
         """Send Slack notification about the incident."""
-        # In development, just log it
+        # Log locally first
         logger.info(
             "incident_notification",
             incident_id=diagnosis.incident_id,
-            summary=summary[:200],
             num_actions=len(results),
         )
 
-        # In production, this would use slack-sdk to post to the configured channel
-        # from slack_sdk.web.async_client import AsyncWebClient
-        # client = AsyncWebClient(token=self.settings.integrations.slack_bot_token)
-        # await client.chat_postMessage(
-        #     channel=self.settings.integrations.slack_alert_channel,
-        #     text=summary,
-        # )
+        # Attempt real Slack notification
+        if self.settings.integrations.slack_bot_token:
+            from slack_sdk.web.async_client import AsyncWebClient
+            from slack_sdk.errors import SlackApiError
+
+            client = AsyncWebClient(token=self.settings.integrations.slack_bot_token)
+            channel = self.settings.integrations.slack_alert_channel
+
+            try:
+                # Add severity icon to summary
+                icon = "🔴" if diagnosis.confidence > 0.8 else "🟡"
+                header = f"{icon} *Anomaly Detected: {diagnosis.incident_id[:8]}*"
+                
+                blocks = [
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": f"{header}\n{summary}"}
+                    },
+                    {
+                        "type": "context",
+                        "elements": [
+                            {"type": "mrkdwn", "text": f"*Incident ID:* `{diagnosis.incident_id}`"},
+                            {"type": "mrkdwn", "text": f"*Category:* `{diagnosis.root_cause_category.value}`"}
+                        ]
+                    }
+                ]
+
+                await client.chat_postMessage(channel=channel, blocks=blocks, text=summary)
+                logger.debug("slack_notified", incident_id=diagnosis.incident_id)
+            
+            except SlackApiError as e:
+                logger.error("slack_api_error", error=e.response["error"], incident_id=diagnosis.incident_id)
+            except Exception as e:
+                logger.error("slack_unexpected_error", error=str(e), incident_id=diagnosis.incident_id)
+        else:
+            logger.debug("slack_skipped", reason="no_token")

@@ -1,0 +1,34 @@
+# ═══════════════════════════════════════════════════════════════
+#  Lite Infrastructure — Low RAM Environment
+#  Only starts core databases required for basic agent functionality.
+# ═══════════════════════════════════════════════════════════════
+
+services:
+
+  # ─── Redis (agent state + feature cache) ───
+  redis:
+    image: redis:7-alpine
+    container_name: anomaly-redis-lite
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+
+  # ─── PostgreSQL + pgvector (Knowledge Base) ───
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: anomaly-postgres-lite
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: agent_kb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: agent_secret_2024
+    healthcheck:
+      test: pg_isready -U postgres
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+networks:
+  default:
+    name: anomaly-network-lite

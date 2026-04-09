@@ -40,8 +40,8 @@ async def test_vertex_llm_contract() -> None:
         pytest.skip("No real OpenAI key provided.")
 
     from langchain_core.messages import HumanMessage
-    from langchain_openai import ChatOpenAI
+    from shared.llm import get_chat_model
 
-    llm = ChatOpenAI(api_key=settings.llm.openai_api_key, model="gpt-4o-mini", max_tokens=10)
+    llm = get_chat_model(model_name="gpt-4o-mini", max_tokens=10)
     response = await llm.ainvoke([HumanMessage(content="Hello")])
     assert response.content is not None

@@ -178,8 +178,10 @@ resource "google_compute_security_policy" "agent_waf" {
   }
 }
 
-# ─── VPC Service Controls ────────────────────────────────────
-
+# NOTE: Access Context Manager and VPC Service Perimeters require a GCP Organization.
+# Since this is a standalone account, these resources are commented out.
+# ─── VPC Service Controls (ORGO ONLY) ─────────────────────────
+/*
 resource "google_access_context_manager_access_policy" "access_policy" {
   parent = "organizations/123456789012" # Required parent for VPC SC
   title  = "agent-access-policy-${var.environment}"
@@ -203,6 +205,7 @@ resource "google_access_context_manager_service_perimeter" "agent_perimeter" {
     ]
   }
 }
+*/
 
 # ─── Outputs ─────────────────────────────────────────────────
 

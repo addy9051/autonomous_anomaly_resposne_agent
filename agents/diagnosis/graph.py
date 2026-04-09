@@ -16,9 +16,10 @@ import json
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langfuse.callback import CallbackHandler
 from langfuse.decorators import langfuse_context, observe
+
+from shared.llm import get_chat_model
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
@@ -73,9 +74,8 @@ async def gather_context(state: DiagnosisState) -> dict:
     Pulls metrics windows, recent deployments, and related alerts.
     """
     settings = get_settings()
-    llm = ChatOpenAI(
-        model=settings.llm.diagnosis_agent_model,
-        api_key=settings.llm.openai_api_key,
+    llm = get_chat_model(
+        model_name=settings.llm.diagnosis_agent_model,
         temperature=0.1,
         max_tokens=2048,
     )
@@ -145,9 +145,8 @@ async def dispatch_subagents(state: DiagnosisState) -> dict:
     In production, this uses CrewAI to coordinate Network, DB, and App agents.
     """
     settings = get_settings()
-    llm = ChatOpenAI(
-        model=settings.llm.diagnosis_agent_model,
-        api_key=settings.llm.openai_api_key,
+    llm = get_chat_model(
+        model_name=settings.llm.diagnosis_agent_model,
         temperature=0.1,
         max_tokens=1024,
     )
@@ -188,9 +187,8 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
     Produces a structured DiagnosisResult.
     """
     settings = get_settings()
-    llm = ChatOpenAI(
-        model=settings.llm.diagnosis_agent_model,
-        api_key=settings.llm.openai_api_key,
+    llm = get_chat_model(
+        model_name=settings.llm.diagnosis_agent_model,
         temperature=0.1,
         max_tokens=4096,
     )
@@ -285,20 +283,27 @@ class DiagnosisAgent:
                 }
 
                 settings = get_settings()
-                handler = CallbackHandler(
-                    public_key=settings.observability.langfuse_public_key,
-                    secret_key=settings.observability.langfuse_secret_key,
-                    host=settings.observability.langfuse_host,
-                    session_id=anomaly_event.event_id,
-                    user_id="sre-system",
-                    tags=["agent:diagnosis", f"env:{settings.app.app_env}"],
-                    metadata={
-                        "agent_version": "1.0.0",
-                        "prompt_version": "diag-rag-v3"
-                    }
-                )
+                handler = None
+                if settings.observability.langfuse_public_key:
+                    try:
+                        handler = CallbackHandler(
+                            public_key=settings.observability.langfuse_public_key,
+                            secret_key=settings.observability.langfuse_secret_key,
+                            host=settings.observability.langfuse_host,
+                            session_id=anomaly_event.event_id,
+                            user_id="sre-system",
+                            tags=["agent:diagnosis", f"env:{settings.app.app_env}"],
+                            metadata={
+                                "agent_version": "1.0.0",
+                                "prompt_version": "diag-rag-v3"
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning("langfuse_init_failed", error=str(e))
+                        handler = None
 
-                result = await self.graph.ainvoke(initial_state, config={"callbacks": [handler]})
+                callbacks = [handler] if handler else []
+                result = await self.graph.ainvoke(initial_state, config={"callbacks": callbacks})
                 diagnosis_dict = result.get("diagnosis_result") or {}
 
                 # Build DiagnosisResult

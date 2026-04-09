@@ -12,8 +12,9 @@ import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langfuse.callback import CallbackHandler
+
+from shared.llm import get_chat_model
 
 from agents.monitoring.prompts import MONITORING_HUMAN_PROMPT, MONITORING_SYSTEM_PROMPT
 from agents.monitoring.tools.monitoring_tools import ALL_MONITORING_TOOLS
@@ -38,11 +39,10 @@ class MonitoringAgent:
         self.settings = get_settings()
         self.confidence_threshold = self.settings.agent.anomaly_confidence_threshold
 
-        # Initialize LLM with tool binding
-        self.llm = ChatOpenAI(
-            model=self.settings.llm.monitoring_agent_model,
-            api_key=self.settings.llm.openai_api_key,
-            temperature=0.1,  # Low temperature for consistent analysis
+        # Initialize LLM with tool binding using factory
+        self.llm = get_chat_model(
+            model_name=self.settings.llm.monitoring_agent_model,
+            temperature=0.1,
             max_tokens=4096,
         )
         self.llm_with_tools = self.llm.bind_tools(ALL_MONITORING_TOOLS)
@@ -69,19 +69,26 @@ class MonitoringAgent:
             span.set_attribute("event.source", event.source)
             span.set_attribute("event.service", event.service_name)
 
-            handler = CallbackHandler(
-                public_key=self.settings.observability.langfuse_public_key,
-                secret_key=self.settings.observability.langfuse_secret_key,
-                host=self.settings.observability.langfuse_host,
-                session_id=event.event_id,
-                user_id="sre-system",
-                tags=["agent:monitoring", f"env:{self.settings.app.app_env}"],
-                metadata={
-                    "agent_version": "1.0.0",
-                    "prompt_version": "mon-react-v1",
-                    "affected_service": event.service_name
-                }
-            )
+            # Only initialize Langfuse if credentials are provided
+            handler = None
+            if self.settings.observability.langfuse_public_key:
+                try:
+                    handler = CallbackHandler(
+                        public_key=self.settings.observability.langfuse_public_key,
+                        secret_key=self.settings.observability.langfuse_secret_key,
+                        host=self.settings.observability.langfuse_host,
+                        session_id=event.event_id,
+                        user_id="sre-system",
+                        tags=["agent:monitoring", f"env:{self.settings.app.app_env}"],
+                        metadata={
+                            "agent_version": "1.0.0",
+                            "prompt_version": "mon-react-v1",
+                            "affected_service": event.service_name
+                        }
+                    )
+                except Exception as e:
+                    logger.warning("langfuse_init_failed", error=str(e))
+                    handler = None
 
             timer = Timer()
             with timer:
@@ -194,10 +201,28 @@ class MonitoringAgent:
 
             data = json.loads(json_str)
 
+            # Lenient parsing for AnomalyType
+            anomaly_type_str = str(data.get("anomaly_type", "latency_spike")).lower()
+            
+            # Handle delimited strings like "latency_spike|error_rate"
+            if "|" in anomaly_type_str:
+                anomaly_type_str = anomaly_type_str.split("|")[0].strip()
+            
+            # Handle "none" or empty strings
+            if anomaly_type_str in ["none", "", "null"]:
+                anomaly_type_str = "latency_spike"
+
+            # Validate against enum
+            try:
+                anomaly_type = AnomalyType(anomaly_type_str)
+            except ValueError:
+                logger.warning("invalid_anomaly_type", received=anomaly_type_str)
+                anomaly_type = AnomalyType.LATENCY_SPIKE
+
             return AnomalyEvent(
                 severity=Severity(data.get("severity", "medium")),
                 affected_services=data.get("affected_services", [event.service_name]),
-                anomaly_type=AnomalyType(data.get("anomaly_type", "latency_spike")),
+                anomaly_type=anomaly_type,
                 metrics_snapshot=MetricsSnapshot(**data.get("metrics_snapshot", {})),
                 reasoning=data.get("reasoning", content),
                 confidence=float(data.get("confidence", 0.5)),

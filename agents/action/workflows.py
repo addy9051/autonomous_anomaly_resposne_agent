@@ -140,9 +140,12 @@ async def trigger_workflow(
 
     try:
         url = f"{settings.integrations.n8n_base_url}{workflow['webhook_path']}"
+        headers = {}
+        if settings.integrations.n8n_api_key:
+            headers["X-N8N-API-KEY"] = settings.integrations.n8n_api_key
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=params)
+            response = await client.post(url, json=params, headers=headers)
             response.raise_for_status()
             result = response.json()
 

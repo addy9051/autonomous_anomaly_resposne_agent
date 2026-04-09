@@ -119,7 +119,7 @@ poetry run pytest tests/ -v
 | **Langfuse** | Optional | ✅ Self-Hosted | LLM Tracing & Observability |
 | **Slack** | Optional | ✅ | Notifications & approvals |
 | **PagerDuty** | Optional | 14-day trial | Incident data source |
-| **Google Cloud** | Optional | $300 credit | Vertex AI, GKE (production) |
+| **Google Cloud** | Optional | $300 credit | Vertex AI, GKE (Using ADC) |
 
 ---
 
@@ -180,6 +180,22 @@ poetry run mypy agents/ shared/ --ignore-missing-imports
 | 3–4 | 5–8 | Data pipeline, RAG pipeline, knowledge base |
 | 5–7 | 9–14 | All agents live, N8n workflows, Slack integration |
 | 8 | 15–16 | RL feedback loop, hardening, integration tests |
+
+---
+
+## 🔒 Security & Authentication
+
+This system follows the principle of least privilege and uses modern authentication standards to avoid hardcoded secrets.
+
+### Google Cloud (Vertex AI)
+We use **Application Default Credentials (ADC)**. Do **NOT** hardcode service account JSON keys in `.env`.
+
+- **Local Development**: Run the following command and follow the browser prompts:
+  ```bash
+  gcloud auth application-default login
+  ```
+- **GCP Production (GKE/Cloud Run)**: The system automatically uses the attached service account. Ensure the service account has the `Vertex AI User` role.
+- **Other Environments**: Use [Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation) to swap external credentials for short-lived Google Cloud tokens.
 
 ---
 

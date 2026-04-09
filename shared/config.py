@@ -25,10 +25,10 @@ class LLMConfig(BaseSettings):
     openai_model: str = "gpt-4o"
 
     # Google / Vertex AI
-    google_application_credentials: str = ""
+    google_application_credentials: str | None = None
     google_project_id: str = ""
     google_region: str = "us-central1"
-    vertex_ai_model: str = "gemini-1.5-pro"
+    vertex_ai_model: str = "gemini-2.5-flash-lite"
 
     # Anthropic
     anthropic_api_key: str = ""
@@ -51,13 +51,13 @@ class DataConfig(BaseSettings):
     postgres_user: str = "postgres"
     postgres_password: str = "agent_secret_2024"  # noqa: S105
 
-    # Supabase (alternative to local PG)
+    # Supabase (Cloud Alternative to local Postgres)
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_key: str = ""
     supabase_db_url: str = ""
 
-    # Redis
+    # Feature Store / State
     redis_url: str = "redis://localhost:6379/0"
 
     # Kafka
@@ -96,7 +96,7 @@ class IntegrationConfig(BaseSettings):
     """Third-party integration configuration."""
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
-    # Slack
+    # Slack (Supports both #channel-names and C012345678 IDs)
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
     slack_alert_channel: str = "#incident-alerts"
@@ -113,9 +113,9 @@ class IntegrationConfig(BaseSettings):
     # Prometheus
     prometheus_url: str = "http://localhost:9090"
 
-    # Grafana
+    # Grafana (Supports API Keys or modern Service Account Tokens)
     grafana_url: str = "http://localhost:3000"
-    grafana_api_key: str = ""
+    grafana_token: str = Field("", alias="grafana_api_key")
 
     # LangSmith
     langchain_tracing_v2: bool = True
