@@ -180,7 +180,7 @@ resource "google_sql_database_instance" "knowledge_base" {
     }
   }
 
-  deletion_protection = false # Set to true for production
+  deletion_protection = true # Set to true for production
   depends_on          = [google_project_service.apis]
 }
 
