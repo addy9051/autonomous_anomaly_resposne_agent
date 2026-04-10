@@ -53,7 +53,7 @@ async def trigger_pagerduty_incident(
         "Authorization": f"Token token={api_key}",
         "Accept": "application/vnd.pagerduty+json;version=2",
         "Content-Type": "application/json",
-        "From": "autonomous-agent@system.local",  # Required by PD API
+        "From": settings.integrations.pagerduty_user_email or "autonomous-agent@system.local",  # Required by PD API
     }
 
     # Format the incident payload

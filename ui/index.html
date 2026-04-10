@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRE Control Center | Autonomous Agent</title>
+    <!-- Modern Typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header Section -->
+        <header class="glass-header">
+            <div class="logo">
+                <span class="neon-dot"></span>
+                <h1>Autonomous SRE Control Center</h1>
+            </div>
+            <div class="header-actions">
+                <button id="trigger-demo" class="btn primary">Synthesize Telemetry Event</button>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <main class="dashboard-grid">
+            
+            <!-- System Health Overview -->
+            <section class="card glass-card">
+                <h2>System Pulse</h2>
+                <div class="metrics-row">
+                    <div class="metric">
+                        <h3>Active Agents</h3>
+                        <p id="metric-agents" class="value primary-glow">4</p>
+                    </div>
+                    <div class="metric">
+                        <h3>Model Policy Version</h3>
+                        <p id="metric-policy" class="value">v1.0.0</p>
+                    </div>
+                    <div class="metric">
+                        <h3>Autonomously Resolved</h3>
+                        <p id="metric-resolved" class="value">0</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tier 2 Actions Queue (Requires Human Override) -->
+            <section class="card glass-card approval-queue">
+                <h2>Awaiting SRE Approval (Tier 2)</h2>
+                <div id="approvals-container" class="queue-list">
+                    <div class="empty-state">No pending actions. System is stable.</div>
+                </div>
+            </section>
+
+            <!-- Live Incident Feed -->
+            <section class="card glass-card incident-feed span-full">
+                <h2>Live Incident Telemetry</h2>
+                <div class="table-container">
+                    <table id="incident-table">
+                        <thead>
+                            <tr>
+                                <th>Incident ID</th>
+                                <th>Severity</th>
+                                <th>Anomaly</th>
+                                <th>Root Cause</th>
+                                <th>Action Taken</th>
+                                <th>Status</th>
+                                <th>LLM Cost</th>
+                            </tr>
+                        </thead>
+                        <tbody id="incident-tbody">
+                            <tr class="empty-row"><td colspan="7">No incidents recorded yet.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

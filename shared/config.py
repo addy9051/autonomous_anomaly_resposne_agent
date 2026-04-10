@@ -113,6 +113,7 @@ class IntegrationConfig(BaseSettings):
     # PagerDuty
     pagerduty_api_key: str = ""
     pagerduty_service_id: str = ""
+    pagerduty_user_email: str = ""
 
     # N8n
     n8n_base_url: str = "http://localhost:5678"

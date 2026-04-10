@@ -43,6 +43,10 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
 
 # ─── App Setup ───────────────────────────────────────────────────
 
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
+import os
+
 app = FastAPI(
     title="Anomaly Response Agent System",
     description="24/7 Service Reliability & Anomaly-Response Multi-Agent System",
@@ -58,6 +62,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+ui_dir = os.path.join(os.path.dirname(__file__), "ui")
+os.makedirs(ui_dir, exist_ok=True)
+app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
+
 
 # ─── Request/Response Models ─────────────────────────────────────
 
@@ -68,6 +76,8 @@ class ProcessEventRequest(BaseModel):
     event_type: str = "metric"
     payload: dict[str, Any] = {}
 
+class ApproveActionRequest(BaseModel):
+    approved: bool = True
 
 class RunDemoRequest(BaseModel):
     num_events: int = 10
@@ -94,13 +104,9 @@ class HealthResponse(BaseModel):
 
 
 @app.get("/", tags=["Health"])
-async def root() -> dict[str, str]:
-    """Root endpoint."""
-    return {
-        "service": "Anomaly Response Agent System",
-        "version": "1.0.0",
-        "docs": "/docs",
-    }
+async def root() -> RedirectResponse:
+    """Root endpoint - Redirects to new UI Dashboard."""
+    return RedirectResponse(url="/ui/")
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
@@ -247,6 +253,39 @@ async def get_action_tiers() -> dict[str, Any]:
         for tier_name, tier in ACTION_TIERS.items()
     }
 
+
+@app.post("/api/v1/incidents/{incident_id}/approve", tags=["Actions"])
+async def approve_tier2_action(incident_id: str, request: ApproveActionRequest) -> dict[str, Any]:
+    """Approve a pending Tier 2 action from the dashboard."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+
+    incident = orchestrator.active_incidents.get(incident_id)
+    if not incident:
+        # Check resolved just to be safe
+        from shared.schemas import IncidentStatus
+        for inc in orchestrator.resolved_incidents:
+            if inc.incident_id == incident_id:
+                raise HTTPException(status_code=400, detail="Incident already resolved")
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    from shared.schemas import IncidentStatus
+    if incident.status != IncidentStatus.ACTION_PENDING:
+        raise HTTPException(status_code=400, detail=f"Incident is in status {incident.status.value}, expected ACTION_PENDING")
+
+    # Move incident to resolved execution status upon approval
+    incident.status = IncidentStatus.RESOLVED
+
+    if request.approved and incident.action_results:
+        action = incident.action_results[0]
+        action.human_approved = True
+        action.execution_status = "executed"
+
+    # Move to resolved map
+    del orchestrator.active_incidents[incident.incident_id]
+    orchestrator.resolved_incidents.append(incident)
+
+    return {"status": "success", "incident_id": incident_id, "approved": request.approved}
 
 # ─── Run ─────────────────────────────────────────────────────────
 
