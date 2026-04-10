@@ -65,6 +65,48 @@ class FeedbackLoopAgent:
             policy_version=self.policy_version,
         )
 
+    async def _init_redis(self) -> None:
+        if hasattr(self, "redis_client"):
+            return
+        # Lazy load redis
+        import redis.asyncio as redis
+        self.redis_client = redis.Redis.from_url(self.settings.data.redis_url)
+        await self.load_policy()
+
+    async def save_policy(self) -> None:
+        """Serialize and save the SGDClassifier and buffer to Redis."""
+        try:
+            import pickle
+            state = {
+                "model": self.model,
+                "scaler": self.scaler,
+                "is_fitted": self.is_fitted,
+                "experience_buffer": self.experience_buffer[-1000:], # keep max 1000 to avoid bloat
+                "action_rewards": self.action_rewards,
+                "policy_version": self.policy_version,
+            }
+            await self.redis_client.set("feedback_agent_policy", pickle.dumps(state))
+            logger.info("policy_saved_to_redis", version=self.policy_version)
+        except Exception as e:
+            logger.error("failed_to_save_policy", error=str(e))
+
+    async def load_policy(self) -> None:
+        """Load the policy state from Redis if it exists."""
+        try:
+            import pickle
+            state_bytes = await self.redis_client.get("feedback_agent_policy")
+            if state_bytes:
+                state = pickle.loads(state_bytes)
+                self.model = state.get("model", self.model)
+                self.scaler = state.get("scaler", self.scaler)
+                self.is_fitted = state.get("is_fitted", False)
+                self.experience_buffer = state.get("experience_buffer", [])
+                self.action_rewards = state.get("action_rewards", getattr(self, "action_rewards"))
+                self.policy_version = state.get("policy_version", self.policy_version)
+                logger.info("policy_loaded_from_redis", version=self.policy_version)
+        except Exception as e:
+            logger.error("failed_to_load_policy", error=str(e))
+
     async def record_outcome(self, incident: IncidentRecord) -> float:
         """
         Record the outcome of a resolved incident and compute reward.
@@ -75,6 +117,7 @@ class FeedbackLoopAgent:
         Returns:
             Computed reward value
         """
+        await self._init_redis()
         with tracer.start_as_current_span("feedback_agent.record_outcome") as span:
             reward = compute_reward(incident)
 
@@ -124,6 +167,7 @@ class FeedbackLoopAgent:
             # Periodically retrain (every 50 experiences)
             if len(self.experience_buffer) % 50 == 0 and len(self.experience_buffer) >= 50:
                 await self.retrain_policy()
+                await self.save_policy()
 
             return reward
 
@@ -138,6 +182,7 @@ class FeedbackLoopAgent:
         Returns:
             Dict with suggested action, confidence, and exploration flag
         """
+        await self._init_redis()
         rng = np.random.default_rng()
 
         # Epsilon-greedy exploration
