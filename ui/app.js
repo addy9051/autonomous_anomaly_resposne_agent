@@ -94,11 +94,19 @@ function renderIncidentsTable(incidents) {
             rcStr = inc.diagnosis_result.root_cause_category;
         }
 
+        let expertStr = '-';
+        if (inc.diagnosis_result && inc.diagnosis_result.sub_agent_reports) {
+            expertStr = Object.keys(inc.diagnosis_result.sub_agent_reports)
+                .map(exp => `<span class="badge expert-${exp}">${exp}</span>`)
+                .join(' ');
+        }
+
         tr.innerHTML = `
             <td style="font-family: monospace;">${inc.incident_id.substring(0, 8)}</td>
             <td><span class="badge ${severityClass.toLowerCase()}">${severityClass}</span></td>
             <td>${inc.anomaly_event?.anomaly_type || '-'}</td>
             <td>${rcStr}</td>
+            <td>${expertStr}</td>
             <td>${actionStr}</td>
             <td><span class="badge ${statusClass.toLowerCase()}">${statusClass.replace('_', ' ')}</span></td>
             <td>$${(inc.total_llm_cost_usd || 0).toFixed(4)}</td>

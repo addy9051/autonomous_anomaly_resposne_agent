@@ -32,6 +32,7 @@ class AnomalyType(StrEnum):
     FRAUD_SIGNAL = "fraud_signal"
     VOLUME_ANOMALY = "volume_anomaly"
     RESOURCE_SATURATION = "resource_saturation"
+    SECURITY = "security"
 
 
 class RootCauseCategory(StrEnum):
@@ -40,6 +41,7 @@ class RootCauseCategory(StrEnum):
     APPLICATION = "application"
     EXTERNAL = "external"
     INFRASTRUCTURE = "infrastructure"
+    SECURITY = "security"
     UNKNOWN = "unknown"
 
 

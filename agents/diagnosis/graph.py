@@ -46,6 +46,13 @@ tracer = get_tracer()
 # ─── State Definition ────────────────────────────────────────────
 
 
+def merge_reports(left: dict, right: dict) -> dict:
+    """Reducer to merge sub-agent reports across parallel nodes."""
+    new_reports = left.copy()
+    new_reports.update(right)
+    return new_reports
+
+
 class DiagnosisState(TypedDict):
     """State that flows through the diagnosis graph."""
     # Input
@@ -54,7 +61,8 @@ class DiagnosisState(TypedDict):
     # Intermediate
     context: str
     runbook_matches: list[dict[str, Any]]
-    sub_agent_reports: dict[str, dict[str, Any]]
+    required_experts: list[str]  # New: Determined by Supervisor
+    sub_agent_reports: Annotated[dict[str, dict[str, Any]], merge_reports]
 
     # Output
     diagnosis_result: dict[str, Any] | None
@@ -106,7 +114,6 @@ async def rag_runbook_lookup(state: DiagnosisState) -> dict:
     affected_services = anomaly.get("affected_services", [])
 
     # In development, use synthetic runbook matches
-    # In production, this would call the knowledge_base/retrieval/search.py API
     synthetic_runbooks = _get_synthetic_runbooks(anomaly_type, affected_services)
 
     logger.info(
@@ -121,45 +128,79 @@ async def rag_runbook_lookup(state: DiagnosisState) -> dict:
     }
 
 
-async def dispatch_subagents(state: DiagnosisState) -> dict:
+async def supervisor_node(state: DiagnosisState) -> dict:
     """
-    Node 3: Dispatch specialist sub-agents for parallel investigation.
-    In production, this uses CrewAI to coordinate Network, DB, and App agents.
+    Node 3: Supervisor - Triage incident and dispatch specialized experts in parallel.
     """
+    import asyncio
+    from agents.diagnosis.prompts import SUPERVISOR_PROMPT
+    from agents.diagnosis.experts import (
+        DatabaseExpert, NetworkExpert, SecurityExpert, ApplicationExpert
+    )
+    
     settings = get_settings()
     llm = get_chat_model(
         model_name=settings.llm.diagnosis_agent_model,
-        temperature=0.1,
-        max_tokens=1024,
+        temperature=0,
+        max_tokens=100,
     )
 
     anomaly = state["anomaly_event"]
-    anomaly_context = json.dumps(anomaly, indent=2, default=str)
+    
+    # 1. Triage
+    response = await llm.ainvoke([
+        SystemMessage(content=SUPERVISOR_PROMPT),
+        HumanMessage(content=f"Triage this incident:\n{json.dumps(anomaly, indent=2)}"),
+    ])
 
-    reports = {}
-    for agent_type, description in [
-        ("network", "DNS, CDN, BGP, firewall, load balancer analysis"),
-        ("database", "Slow queries, locks, connection pool, replication analysis"),
-        ("application", "Pod health, deployments, circuit breakers, error patterns"),
-    ]:
-        response = await llm.ainvoke([
-            SystemMessage(content=f"You are the {agent_type.title()} Sub-Agent. Investigate {description}."),
-            HumanMessage(content=f"Investigate this anomaly:\n{anomaly_context}"),
-        ])
+    try:
+        content = response.content
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0]
+        expert_keys = json.loads(content)
+        if not isinstance(expert_keys, list):
+            expert_keys = ["application_expert"]
+    except Exception:
+        expert_keys = ["application_expert"]
 
-        reports[agent_type] = {
-            "agent_type": agent_type,
-            "findings": response.content,
-            "severity": "medium",
-            "confidence": 0.75,
-            "evidence": {},
-        }
+    logger.info("supervisor_triage_complete", experts=expert_keys, event_id=anomaly.get("event_id"))
 
-    logger.info("subagents_complete", num_reports=len(reports), event_id=anomaly.get("event_id"))
+    # 2. Parallel Investigation
+    expert_map = {
+        "database_expert": DatabaseExpert(),
+        "network_expert": NetworkExpert(),
+        "security_expert": SecurityExpert(),
+        "application_expert": ApplicationExpert(),
+    }
+
+    from shared.utils import Timer
+    expert_timer = Timer()
+    
+    tasks = []
+    for key in expert_keys:
+        if key in expert_map:
+            tasks.append(expert_map[key].investigate(anomaly))
+    
+    # Default to application if list is empty
+    if not tasks:
+        tasks.append(expert_map["application_expert"].investigate(anomaly))
+
+    with expert_timer:
+        reports_list = await asyncio.gather(*tasks)
+    
+    logger.info("expert_investigations_complete", 
+                num_reports=len(reports_list), 
+                elapsed_ms=expert_timer.elapsed_ms,
+                event_id=anomaly.get("event_id"))
+    
+    reports_dict = {}
+    for r in reports_list:
+        reports_dict[r["agent_type"]] = r
 
     return {
-        "sub_agent_reports": reports,
-        "messages": [HumanMessage(content=f"Sub-agent reports received: {list(reports.keys())}")],
+        "required_experts": expert_keys,
+        "sub_agent_reports": reports_dict,
+        "messages": [HumanMessage(content=f"Supervisor dispatched and gathered reports from: {expert_keys}")],
     }
 
 
@@ -168,6 +209,7 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
     Node 4: Synthesize all evidence into a final root cause analysis.
     Produces a structured DiagnosisResult.
     """
+    from agents.diagnosis.prompts import DIAGNOSIS_SYSTEM_PROMPT, SYNTHESIS_PROMPT
     settings = get_settings()
     llm = get_chat_model(
         model_name=settings.llm.diagnosis_agent_model,
@@ -216,14 +258,14 @@ def build_diagnosis_graph() -> StateGraph:
     # Add nodes
     graph.add_node("gather_context", gather_context)
     graph.add_node("rag_runbook_lookup", rag_runbook_lookup)
-    graph.add_node("dispatch_subagents", dispatch_subagents)
+    graph.add_node("supervisor", supervisor_node)
     graph.add_node("synthesise_rca", synthesise_rca)
 
-    # Define edges (linear DAG)
+    # Define edges (Linearized flow with internal parallelism)
     graph.set_entry_point("gather_context")
     graph.add_edge("gather_context", "rag_runbook_lookup")
-    graph.add_edge("rag_runbook_lookup", "dispatch_subagents")
-    graph.add_edge("dispatch_subagents", "synthesise_rca")
+    graph.add_edge("rag_runbook_lookup", "supervisor")
+    graph.add_edge("supervisor", "synthesise_rca")
     graph.add_edge("synthesise_rca", END)
 
     return graph.compile()
@@ -259,6 +301,7 @@ class DiagnosisAgent:
                     "anomaly_event": anomaly_event.model_dump(mode="json"),
                     "context": "",
                     "runbook_matches": [],
+                    "required_experts": [],
                     "sub_agent_reports": {},
                     "diagnosis_result": None,
                     "messages": [],

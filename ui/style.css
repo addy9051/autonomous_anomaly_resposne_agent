@@ -150,4 +150,15 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 }
 
 .approval-actions { margin-top: 1rem; display: flex; gap: 0.5rem; }
+.badge.database { background-color: rgba(66, 153, 225, 0.2); color: #63b3ed; border: 1px solid rgba(66, 153, 225, 0.3); }
+.badge.network { background-color: rgba(72, 187, 120, 0.2); color: #68d391; border: 1px solid rgba(72, 187, 120, 0.3); }
+.badge.security { background-color: rgba(245, 101, 101, 0.2); color: #fc8181; border: 1px solid rgba(245, 101, 101, 0.3); }
+.badge.application { background-color: rgba(159, 122, 234, 0.2); color: #b794f4; border: 1px solid rgba(159, 122, 234, 0.3); }
+
+/* Expert Badges in Table */
+.badge.expert-database { background: #2b6cb0; color: white; }
+.badge.expert-network { background: #2f855a; color: white; }
+.badge.expert-security { background: #c53030; color: white; }
+.badge.expert-application { background: #6b46c1; color: white; }
+
 .code-block { background: rgba(0,0,0,0.3); padding: 0.5rem; border-radius: 4px; font-family: monospace; font-size: 0.75rem; color: #a5b4fc; margin-top: 0.5rem; word-break: break-all;}
