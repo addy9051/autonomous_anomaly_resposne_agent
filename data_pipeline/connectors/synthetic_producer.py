@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from shared.config import get_settings
 
 import numpy as np
 
 from shared.schemas import TelemetryEvent
 from shared.utils import get_logger
+from shared.pubsub import get_pubsub_client
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -224,9 +226,16 @@ class SyntheticTelemetryProducer:
                 yield self.generate_anomalous_event(anomaly_type)
             else:
                 if self.rng.random() < 0.6:
-                    yield self.generate_normal_transaction()
+                    event = self.generate_normal_transaction()
                 else:
-                    yield self.generate_normal_metrics()
+                    event = self.generate_normal_metrics()
+                yield event
+
+            # Optional: Publish to Pub/Sub if in production
+            settings = get_settings()
+            if settings.app.app_env in ["production", "staging"]:
+                client = get_pubsub_client()
+                client.publish_event("telemetry", event.model_dump(mode="json"))
 
             await asyncio.sleep(interval)
 

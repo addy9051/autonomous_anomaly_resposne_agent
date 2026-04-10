@@ -65,6 +65,10 @@ class DataConfig(BaseSettings):
     # Kafka
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_schema_registry_url: str = "http://localhost:8081"
+    
+    # Pub/Sub (Production replacement for Kafka)
+    pubsub_project_id: str = ""
+    pubsub_topic_prefix: str = "anomaly-events"
 
     @property
     def postgres_dsn(self) -> str:
@@ -183,6 +187,26 @@ def get_settings() -> Settings:
         os.environ["LANGFUSE_SECRET_KEY"] = settings.observability.langfuse_secret_key
     if settings.observability.langfuse_host:
         os.environ["LANGFUSE_HOST"] = settings.observability.langfuse_host
+
+    # --- Secret Manager CSI Driver Integration ---
+    # Automatically override settings if secrets are mounted as files in /mnt/secrets
+    secret_mount_path = Path("/mnt/secrets")
+    if secret_mount_path.exists():
+        # Map filenames to setting attributes
+        secret_map = {
+            "openai-api-key": ("llm", "openai_api_key"),
+            "pagerduty-api-key": ("integrations", "pagerduty_api_key"),
+            "slack-bot-token": ("integrations", "slack_bot_token"),
+            "n8n-api-key": ("integrations", "n8n_api_key"),
+            "postgres-password": ("data", "postgres_password"),
+        }
+        for filename, (section, attr) in secret_map.items():
+            file_path = secret_mount_path / filename
+            if file_path.exists():
+                secret_value = file_path.read_text().strip()
+                if secret_value:
+                    section_config = getattr(settings, section)
+                    setattr(section_config, attr, secret_value)
 
     # SILENCE: Ensure global context respects the enabled toggle
     if not settings.observability.langfuse_enabled:

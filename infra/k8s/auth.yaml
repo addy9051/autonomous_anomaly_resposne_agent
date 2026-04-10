@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-runtime-ksa
+  namespace: default
+  annotations:
+    iam.gke.io/gcp-service-account: "agent-runtime-dev@amex-autonomouse-expense-ai.iam.gserviceaccount.com"

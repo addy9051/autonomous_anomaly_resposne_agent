@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anomaly-agent-prod
+  labels:
+    app: anomaly-agent
+    env: prod
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: anomaly-agent
+  template:
+    metadata:
+      labels:
+        app: anomaly-agent
+    spec:
+      serviceAccountName: agent-runtime-ksa
+      containers:
+        # ─── Main Application Container ───
+        - name: agent-api
+          image: "us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:latest"
+          ports:
+            - containerPort: 8000
+          env:
+            - name: APP_ENV
+              value: "production"
+            - name: GCP_PROJECT_ID
+              value: "amex-autonomouse-expense-ai"
+            - name: GCP_REGION
+              value: "us-central1"
+            - name: POSTGRES_HOST
+              value: "127.0.0.1" # Connect via Cloud SQL Proxy sidecar
+            - name: POSTGRES_USER
+              value: "agent_runtime"
+            - name: PUBSUB_PROJECT_ID
+              value: "amex-autonomouse-expense-ai"
+            - name: PUBSUB_TOPIC_PREFIX
+              value: "anomaly-events"
+          volumeMounts:
+            - name: gcp-secrets
+              mountPath: "/mnt/secrets"
+              readOnly: true
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+
+        # ─── Cloud SQL Auth Proxy Sidecar ───
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.8.1
+          args:
+            - "--port=5432"
+            - "amex-autonomouse-expense-ai:us-central1:kb-instance-dev" # Instance connection name
+          securityContext:
+            runAsNonRoot: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+
+      volumes:
+        - name: gcp-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "agent-secrets-provider"

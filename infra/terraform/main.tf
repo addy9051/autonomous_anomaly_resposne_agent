@@ -59,6 +59,7 @@ resource "google_project_service" "apis" {
     "monitoring.googleapis.com",     # Cloud Monitoring
     "logging.googleapis.com",        # Cloud Logging
     "secretmanager.googleapis.com",  # Secret Manager
+    "sqladmin.googleapis.com",       # Cloud SQL Admin
   ])
 
   service            = each.value
@@ -141,11 +142,44 @@ resource "google_project_iam_member" "agent_roles" {
     "roles/secretmanager.secretAccessor",
     "roles/logging.logWriter",
     "roles/monitoring.metricWriter",
+    "roles/cloudsql.client",
   ])
 
   project = var.project_id
   role    = each.value
   member  = "serviceAccount:${google_service_account.agent_runtime.email}"
+}
+
+# ─── Cloud SQL (PostgreSQL) ──────────────────────────────────
+# Using a shared-core instance for the dev environment
+
+resource "google_sql_database_instance" "knowledge_base" {
+  name             = "kb-instance-${var.environment}"
+  database_version = "POSTGRES_15"
+  region           = var.region
+  
+  settings {
+    tier = "db-f1-micro"
+    
+    ip_configuration {
+      ipv4_enabled    = true
+      private_network = null # Set to VPC self_link for full private IP
+    }
+  }
+
+  deletion_protection = false # Set to true for production
+  depends_on          = [google_project_service.apis]
+}
+
+resource "google_sql_database" "agent_kb" {
+  name     = "agent_kb"
+  instance = google_sql_database_instance.knowledge_base.name
+}
+
+resource "google_sql_user" "agent_runtime" {
+  name     = "agent_runtime"
+  instance = google_sql_database_instance.knowledge_base.name
+  password = "password_managed_via_secret_manager"
 }
 
 # ─── Cloud Armor WAF Policies ────────────────────────────────

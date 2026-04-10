@@ -30,7 +30,11 @@ RUN poetry install --no-root --no-dev
 
 # Copy application code
 COPY . .
-RUN poetry install --no-dev
+RUN poetry install --no-dev && \
+    useradd -m agentuser && \
+    chown -R agentuser:agentuser /app
+
+USER agentuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
