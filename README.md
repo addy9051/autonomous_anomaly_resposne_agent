@@ -238,3 +238,39 @@ We use **Application Default Credentials (ADC)**. Do **NOT** hardcode service ac
 ## 📝 License
 
 Private — Internal Use Only
+
+---
+
+## 🚀 Recent Implementations & Architectural Evolution (v2)
+
+Significant enhancements have been made to the system's cognitive capabilities, security posture, and production readiness.
+
+### 1. Supervisor-Expert Diagnosis Model (LangGraph)
+The Diagnosis Agent has been refactored from a linear 4-node DAG to a more sophisticated **Supervisor-Expert model**. This architecture mimics a real-world SRE triage process:
+- **Triage Supervisor**: Analyzes the initial anomaly and dispatches specialized experts in parallel.
+- **Parallel Expert Investigations**:
+  - **DatabaseExpert**: Deep-dives into connection pools, slow queries, and deadlock traces.
+  - **NetworkExpert**: Inspects VPC flow logs, latency between microservices, and ingress bottlenecks.
+  - **SecurityAuditor**: Reviews recent IAM changes and looks for adversarial patterns in telemetry.
+  - **ApplicationExpert**: Analyzes heap dumps, garbage collection pauses, and stack traces.
+- **Result Synthesis**: The Supervisor combines expert findings into a high-confidence Root Cause Analysis (RCA).
+
+### 2. Production Security & Secret Management
+We have hardened the production environment on **GKE Autopilot** with a focus on zero-trust and secret safety:
+- **GCP Secret Manager CSI Driver**: Sensitive API keys (OpenAI, PagerDuty, Slack) are no longer passed as environment variables. They are securely mounted into the pod filesystem at `/mnt/secrets` and automatically rotated.
+- **Workload Identity (ADC)**: The system utilizes Google Cloud Workload Identity, allowing pods to authenticate to Vertex AI and Pub/Sub using IAM roles without needing service account JSON keys.
+- **Vulnerability Remediation**: Implementation of automated security gates and container hardening (addressing VULN-011 through VULN-018).
+
+### 3. Advanced Third-Party Integrations
+- **PagerDuty Integration**: The agent now fetches full incident context directly from PagerDuty, allowing it to correlate new anomalies with existing outages.
+- **Slack Interactive Approvals**: For "Tier 2" remediation actions (e.g., scaling replicas), the agent posts an interactive block to Slack, requiring an SRE's button-click approval before execution.
+- **Idempotent N8n Workflows**: All action workflows now support **idempotency keys** and **automatic rollbacks** if the remediation fails to resolve the metric deviation.
+
+### 4. Chaos Engineering & Resilience Testing
+A new suite of chaos experiments (`scripts/run_chaos_experiments.py`) has been added to validate system robustness:
+- **Distributed Amnesia**: Simulates Redis outages to ensure the Feedback Loop Agent fails gracefully.
+- **Stubborn Tool Faults**: Mocks 500 errors from automation endpoints to verify the agent's retry logic and escalation boundaries.
+- **Adversarial Injection**: Tests the system's resilience against "Prompt Injection" attacks embedded within telemetry log payloads.
+
+### 5. Specialized Agent Verification
+The `scripts/verify_specialized_agents.py` tool provides a benchmark for expert agents, ensuring their reasoning remains sharp and within the assigned domain boundaries (Data, Network, Security).

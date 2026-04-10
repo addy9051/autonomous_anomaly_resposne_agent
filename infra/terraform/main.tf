@@ -80,6 +80,10 @@ resource "google_container_cluster" "agents" {
     channel = "REGULAR"
   }
 
+  secret_manager_config {
+    enabled = true
+  }
+
   depends_on = [google_project_service.apis]
 }
 
@@ -148,6 +152,15 @@ resource "google_project_iam_member" "agent_roles" {
   project = var.project_id
   role    = each.value
   member  = "serviceAccount:${google_service_account.agent_runtime.email}"
+}
+
+# ─── Workload Identity Binding ──────────────────────────────
+# Allows the KSA in 'default' namespace to act as 'agent_runtime' GSA
+
+resource "google_service_account_iam_member" "workload_identity_user" {
+  service_account_id = google_service_account.agent_runtime.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[default/agent-runtime-ksa]"
 }
 
 # ─── Cloud SQL (PostgreSQL) ──────────────────────────────────
