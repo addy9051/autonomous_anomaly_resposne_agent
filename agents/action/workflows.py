@@ -129,6 +129,18 @@ async def trigger_workflow(
     if not workflow:
         return {"status": "error", "error": f"Unknown workflow: {workflow_name}"}
 
+    # If no N8N_API_KEY is provided, we simulate the execution gracefully since N8n requires subscription.
+    if not settings.integrations.n8n_api_key:
+        logger.info("n8n_mocked", workflow=workflow_name, reason="N8N_API_KEY is not configured", params=params)
+        return {
+            "status": "mocked",
+            "workflow": workflow_name,
+            "params": params,
+            "would_execute": workflow["description"],
+            "message": "N8n bypassed due to lack of API key"
+        }
+
+    # If explicitly asked to dry-run via CLI
     if dry_run:
         logger.info("dry_run_workflow", workflow=workflow_name, params=params)
         return {

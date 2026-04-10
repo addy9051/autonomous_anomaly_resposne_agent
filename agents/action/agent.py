@@ -210,17 +210,23 @@ class ActionAgent:
         """Page on-call for Tier 3 action — never execute autonomously."""
         logger.info("tier3_human_required", action=action.action)
 
+        from agents.action.pagerduty import trigger_pagerduty_incident
+        pd_result = await trigger_pagerduty_incident(action, diagnosis)
+
+        output = {
+            "message": f"⚠️ Human action required: {action.action}",
+            "recommended_params": action.params,
+            "rollback_steps": action.rollback_steps,
+            "estimated_impact": action.estimated_impact,
+            "pagerduty": pd_result,
+        }
+
         return ActionResult(
             incident_id=diagnosis.incident_id,
             action_taken=action.action,
             tier=ActionTier.TIER_3_HUMAN,
             execution_status="escalated",
-            output={
-                "message": f"⚠️ Human action required: {action.action}",
-                "recommended_params": action.params,
-                "rollback_steps": action.rollback_steps,
-                "estimated_impact": action.estimated_impact,
-            },
+            output=output,
             human_approved=None,
         )
 
