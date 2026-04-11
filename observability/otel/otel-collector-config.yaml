@@ -27,6 +27,11 @@ exporters:
     tls:
       insecure: true
 
+  otlp/phoenix:
+    endpoint: "arize-phoenix:4317"
+    tls:
+      insecure: true
+
   prometheus:
     endpoint: "0.0.0.0:8889"
 
@@ -41,7 +46,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch, resource]
-      exporters: [otlp/tempo, logging]
+      exporters: [otlp/tempo, otlp/phoenix, logging]
 
     metrics:
       receivers: [otlp]

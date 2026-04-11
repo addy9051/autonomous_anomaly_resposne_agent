@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: "Agent Operations"
+    orgId: 1
+    folder: "Agent Ops"
+    type: file
+    disableDeletion: false
+    editable: true
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

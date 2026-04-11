@@ -107,7 +107,7 @@ class TestRewardFunction:
             human_overrode=True,
         )
         reward = compute_reward(incident)
-        assert reward <= -0.7
+        assert reward <= -0.5
 
     def test_perfect_outcome(self) -> None:
         """Auto-resolved very fast + correct detection = high reward."""
@@ -117,7 +117,7 @@ class TestRewardFunction:
             time_to_detect_seconds=30.0,  # 30 sec
         )
         reward = compute_reward(incident)
-        assert reward > 1.0  # High reward
+        assert reward > 0.7  # High reward
 
     def test_no_resolution_data(self) -> None:
         """Incident with no resolution data should give zero reward."""

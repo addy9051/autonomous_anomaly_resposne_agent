@@ -5,64 +5,329 @@
   "annotations": {
     "list": []
   },
+  "description": "Comprehensive operational dashboard for the Autonomous Anomaly Response Agent system. Tracks SLO metrics, agent pipeline performance, LLM costs, and RL feedback loop health.",
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "id": null,
   "links": [],
   "panels": [
     {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "🎯 SLO Metrics",
+      "type": "row"
+    },
+    {
+      "id": 1,
       "title": "MTTA (Mean Time To Acknowledge)",
+      "description": "Average time from anomaly detection to agent acknowledgment",
       "type": "stat",
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "rate(agent_triage_latency_sum[5m]) / rate(agent_triage_latency_count[5m])"
+          "expr": "rate(agent_triage_latency_sum[5m]) / rate(agent_triage_latency_count[5m])",
+          "legendFormat": "MTTA"
         }
       ],
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto"
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "red", "value": 120 }
+            ]
+          },
+          "unit": "s",
+          "color": { "mode": "thresholds" }
+        }
       },
-      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 }
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 }
     },
     {
+      "id": 2,
+      "title": "MTTR (Mean Time To Resolve)",
+      "description": "Average time from anomaly detection to incident resolution",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "rate(agent_resolution_latency_sum[5m]) / rate(agent_resolution_latency_count[5m])",
+          "legendFormat": "MTTR"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 300 },
+              { "color": "red", "value": 900 }
+            ]
+          },
+          "unit": "s",
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 }
+    },
+    {
+      "id": 3,
       "title": "False Positive Rate",
+      "description": "Percentage of detected anomalies later classified as false positives",
       "type": "stat",
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum(rate(agent_action_false_positive_total[1h])) / sum(rate(agent_action_total[1h])) * 100"
+          "expr": "sum(rate(agent_action_false_positive_total[1h])) / sum(rate(agent_action_total[1h])) * 100",
+          "legendFormat": "FPR %"
         }
       ],
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto"
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 25 }
+            ]
+          },
+          "unit": "percent",
+          "color": { "mode": "thresholds" }
+        }
       },
-      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 }
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 1 }
     },
     {
-      "title": "LLM Token Budget",
+      "id": 4,
+      "title": "Auto-Resolution Rate",
+      "description": "Percentage of incidents resolved autonomously (Tier 1) without human intervention",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(agent_action_auto_resolved_total[1h])) / sum(rate(agent_action_total[1h])) * 100",
+          "legendFormat": "Auto-Resolved %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 40 },
+              { "color": "green", "value": 70 }
+            ]
+          },
+          "unit": "percent",
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 1 }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "id": 101,
+      "title": "⚡ Agent Pipeline Performance",
+      "type": "row"
+    },
+    {
+      "id": 5,
+      "title": "Per-Agent Latency (p50 / p95 / p99)",
+      "description": "End-to-end latency distribution for each agent stage",
       "type": "timeseries",
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum by (agent_type) (rate(llm_tokens_total[5m]))"
+          "expr": "histogram_quantile(0.50, sum by (le, agent_type) (rate(agent_execution_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{agent_type}} p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, agent_type) (rate(agent_execution_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{agent_type}} p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, agent_type) (rate(agent_execution_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{agent_type}} p99"
         }
       ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "lineWidth": 2
+          }
+        }
+      },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi" }
       },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "id": 6,
+      "title": "LLM Token Budget by Agent",
+      "description": "Token consumption rate broken down by agent type (monitoring, diagnosis, action, feedback)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (agent_type) (rate(llm_tokens_total[5m]))",
+          "legendFormat": "{{agent_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": { "mode": "normal" },
+            "lineWidth": 1
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum", "mean"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "id": 102,
+      "title": "🧠 Feedback Loop & Cost",
+      "type": "row"
+    },
+    {
+      "id": 7,
+      "title": "RL Reward Trend (VW Cumulative)",
+      "description": "Vowpal Wabbit contextual bandit cumulative reward over time — tracks whether the agent is learning",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(increase(vw_reward_total[1h]))",
+          "legendFormat": "Cumulative Reward"
+        },
+        {
+          "expr": "sum(rate(vw_reward_total[5m])) / sum(rate(vw_episodes_total[5m]))",
+          "legendFormat": "Avg Reward / Episode"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "lineWidth": 2,
+            "pointSize": 4
+          },
+          "color": { "mode": "continuous-GrYlRd" }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 }
+    },
+    {
+      "id": 8,
+      "title": "Per-Incident LLM Cost Distribution",
+      "description": "Distribution of LLM API costs per incident — helps identify runaway token usage",
+      "type": "histogram",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (le) (increase(incident_llm_cost_usd_bucket[1h]))",
+          "legendFormat": "Cost $",
+          "format": "heatmap"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "scheme",
+            "lineWidth": 1
+          },
+          "color": { "mode": "continuous-BlPu" }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 }
     }
   ],
-  "refresh": "5s",
-  "schemaVersion": 38,
-  "tags": ["agent-ops", "service-reliability"],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["agent-ops", "service-reliability", "slo", "llm-cost", "rl-feedback"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "agent_type",
+        "type": "custom",
+        "current": { "text": "All", "value": "$__all" },
+        "options": [
+          { "text": "All", "value": "$__all" },
+          { "text": "monitoring", "value": "monitoring" },
+          { "text": "diagnosis", "value": "diagnosis" },
+          { "text": "action", "value": "action" },
+          { "text": "feedback", "value": "feedback" }
+        ],
+        "includeAll": true,
+        "multi": true,
+        "label": "Agent Type"
+      }
+    ]
   },
   "time": {
     "from": "now-6h",
@@ -72,5 +337,5 @@
   "timezone": "browser",
   "title": "Autonomous Agent Operations",
   "uid": "agent-ops-01",
-  "version": 1
+  "version": 2
 }

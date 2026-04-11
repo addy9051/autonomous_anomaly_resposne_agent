@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
-# Langfuse decoupled
+
 
 from shared.config import get_settings
 
@@ -40,8 +40,7 @@ def get_chat_model(
     """
     settings = get_settings()
 
-    # Langfuse decoupled
-    pass
+
 
     model_lower = model_name.lower()
 

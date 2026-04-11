@@ -58,11 +58,11 @@ services:
 
   # ─── Redis (agent state + feature cache) ─────────────────────
   redis:
-    image: redis:7-alpine
+    image: redis/redis-stack-server:latest
     container_name: anomaly-redis
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+
     volumes:
       - redis-data:/data
     healthcheck:

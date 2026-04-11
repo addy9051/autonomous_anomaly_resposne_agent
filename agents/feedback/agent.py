@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import asyncio
 
 import numpy as np
-# Langfuse decoupled
+from langfuse.callback import CallbackHandler
 from vowpalwabbit import pyvw
 from google.cloud import storage
 import os

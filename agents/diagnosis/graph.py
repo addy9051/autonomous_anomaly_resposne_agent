@@ -15,8 +15,8 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any, TypedDict
 
-from langchain_core.messages import HumanMessage, SystemMessage
-# Langfuse decoupled
+from langfuse.callback import CallbackHandler
+from langgraph.checkpoint.redis import AsyncRedisSaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
@@ -27,6 +27,7 @@ from agents.diagnosis.prompts import (
 )
 from shared.config import get_settings
 from shared.llm import get_chat_model
+from shared.pii import sanitize_for_llm
 from shared.schemas import (
     ActionTier,
     AnomalyEvent,
@@ -88,7 +89,7 @@ async def gather_context(state: DiagnosisState) -> dict:
 
     anomaly = state["anomaly_event"]
     prompt = CONTEXT_GATHER_PROMPT.format(
-        anomaly_event=json.dumps(anomaly, indent=2, default=str)
+        anomaly_event=sanitize_for_llm(json.dumps(anomaly, indent=2, default=str))
     )
 
     response = await llm.ainvoke([
@@ -272,10 +273,10 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
     anomaly = state["anomaly_event"]
 
     prompt = SYNTHESIS_PROMPT.format(
-        anomaly_event=json.dumps(anomaly, indent=2, default=str),
-        context=state.get("context", "No additional context gathered."),
+        anomaly_event=sanitize_for_llm(json.dumps(anomaly, indent=2, default=str)),
+        context=sanitize_for_llm(state.get("context", "No additional context gathered.")),
         runbook_matches=json.dumps(state.get("runbook_matches", []), indent=2),
-        sub_agent_reports=json.dumps(state.get("sub_agent_reports", {}), indent=2, default=str),
+        sub_agent_reports=sanitize_for_llm(json.dumps(state.get("sub_agent_reports", {}), indent=2, default=str)),
     )
 
     response = await llm.ainvoke([
@@ -303,7 +304,7 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
 # ─── Graph Builder ───────────────────────────────────────────────
 
 
-def build_diagnosis_graph() -> StateGraph:
+def build_diagnosis_graph(checkpointer: Any = None) -> Any:
     """Build and compile the diagnosis LangGraph."""
     graph = StateGraph(DiagnosisState)
 
@@ -320,7 +321,7 @@ def build_diagnosis_graph() -> StateGraph:
     graph.add_edge("supervisor", "synthesise_rca")
     graph.add_edge("synthesise_rca", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 # ─── Diagnosis Agent Facade ──────────────────────────────────────
@@ -380,7 +381,18 @@ class DiagnosisAgent:
                         handler = None
 
                 callbacks = [handler] if handler else []
-                result = await self.graph.ainvoke(initial_state, config={"callbacks": callbacks})
+                
+                # Resilient LangGraph Execution (Redis Checkpointing)
+                async with AsyncRedisSaver.from_conn_string("redis://localhost:6379") as saver:
+                    app = build_diagnosis_graph(checkpointer=saver)
+                    
+                    config = {
+                        "configurable": {"thread_id": anomaly_event.event_id},
+                        "callbacks": callbacks
+                    }
+                    
+                    result = await app.ainvoke(initial_state, config=config)
+                    
                 diagnosis_dict = result.get("diagnosis_result") or {}
 
                 # Build DiagnosisResult

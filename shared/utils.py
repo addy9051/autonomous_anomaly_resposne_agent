@@ -88,6 +88,36 @@ def get_tracer() -> trace.Tracer:
     return trace.get_tracer(settings.observability.otel_service_name)
 
 
+# ─── Langfuse Observability ──────────────────────────────────────
+
+
+def get_langfuse_callbacks(session_id: str | None = None) -> list[Any]:
+    """
+    Get a pre-configured list containing the Langfuse CallbackHandler.
+    Returns an empty list if Langfuse is disabled or not fully configured.
+    """
+    settings = get_settings()
+    if not settings.observability.langfuse_enabled:
+        return []
+
+    if not (settings.observability.langfuse_secret_key and settings.observability.langfuse_public_key):
+        return []
+
+    try:
+        from langfuse.callback import CallbackHandler
+        
+        handler = CallbackHandler(
+            public_key=settings.observability.langfuse_public_key,
+            secret_key=settings.observability.langfuse_secret_key,
+            host=settings.observability.langfuse_host,
+            session_id=session_id
+        )
+        return [handler]
+    except ImportError:
+        logger = get_logger("langfuse_setup")
+        logger.warning("Langfuse package missing. Cannot initialize callbacks.")
+        return []
+
 # ─── Redis Client ────────────────────────────────────────────────
 
 

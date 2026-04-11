@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-# Langfuse decoupled
+from langfuse.callback import CallbackHandler
 
 from shared.config import get_settings
 from shared.schemas import SemanticReward

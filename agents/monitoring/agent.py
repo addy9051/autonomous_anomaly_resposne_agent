@@ -12,12 +12,13 @@ import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-# Langfuse decoupled
+from langfuse.callback import CallbackHandler
 
 from agents.monitoring.prompts import MONITORING_HUMAN_PROMPT, MONITORING_SYSTEM_PROMPT
 from agents.monitoring.tools.monitoring_tools import ALL_MONITORING_TOOLS
 from shared.config import get_settings
 from shared.llm import get_chat_model
+from shared.pii import sanitize_for_llm
 from shared.schemas import AnomalyEvent, AnomalyType, MetricsSnapshot, Severity, TelemetryEvent
 from shared.utils import LLMCostTracker, Timer, get_logger, get_tracer
 
@@ -129,9 +130,10 @@ class MonitoringAgent:
     ) -> AnomalyEvent | None:
         """Run the ReAct reasoning loop with tool calls."""
 
-        # Build the prompt
+        # Build the prompt (PII-masked before LLM call)
+        raw_event_json = json.dumps(event.model_dump(mode="json"), indent=2, default=str)
         human_msg = MONITORING_HUMAN_PROMPT.format(
-            telemetry_event=json.dumps(event.model_dump(mode="json"), indent=2, default=str)
+            telemetry_event=sanitize_for_llm(raw_event_json)
         )
 
         messages = [

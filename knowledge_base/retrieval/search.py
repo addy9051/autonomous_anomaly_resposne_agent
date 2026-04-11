@@ -15,12 +15,14 @@ from typing import Any
 
 import asyncpg
 from langchain_openai import OpenAIEmbeddings
+from opentelemetry import trace
 
 from shared.config import get_settings
 from shared.schemas import RunbookReference
-from shared.utils import get_logger
+from shared.utils import get_logger, get_tracer
 
 logger = get_logger("hybrid_search")
+tracer = get_tracer()
 
 
 class HybridSearchService:
@@ -56,7 +58,12 @@ class HybridSearchService:
         Returns:
             List of RunbookReference sorted by relevance
         """
-        k = top_k or self.top_k
+        import time
+        start_time = time.time()
+        
+        with tracer.start_as_current_span("rag_retrieval") as span:
+            span.set_attribute("rag.query", query)
+            k = top_k or self.top_k
 
         # Generate query embedding
         query_embedding = await self.embeddings.aembed_query(query)
@@ -72,29 +79,79 @@ class HybridSearchService:
             # 3. Reciprocal Rank Fusion
             fused = self._reciprocal_rank_fusion(vector_results, keyword_results, k=60)
 
-            # 4. Take top-k and build references
-            top_results = fused[:k]
-
-            references = []
-            for doc_id, score in top_results:
+            # 4. Take a larger pool of RRF results, fetch documents, and (optionally) rerank
+            pool_size = k * 3
+            top_fused = fused[:pool_size]
+            
+            docs_map = {}
+            for doc_id, rrf_score in top_fused:
                 doc = await self._get_document(conn, doc_id)
                 if doc:
+                    docs_map[doc_id] = {"doc": doc, "initial_score": rrf_score}
+            
+            references = []
+            
+            if self.settings.llms.cohere_api_key and docs_map:
+                # Execute Cross-Encoder Reranking
+                import cohere
+                co = cohere.ClientV2(self.settings.llms.cohere_api_key)
+                
+                # We must keep order aligned with doc_ids for the re-mapping
+                doc_ids_list = list(docs_map.keys())
+                documents_text = [docs_map[did]["doc"]["content"] for did in doc_ids_list]
+                
+                # Execute Cohere API
+                rerank_response = co.rerank(
+                    model="rerank-english-v3.0",
+                    query=query,
+                    documents=documents_text,
+                    top_n=k
+                )
+                
+                # Build references from reranked results
+                for result in rerank_response.results:
+                    did = doc_ids_list[result.index]
+                    doc = docs_map[did]["doc"]
                     references.append(RunbookReference(
                         runbook_id=f"runbook://{doc['source']}/{doc['doc_id']}",
                         title=doc["title"],
-                        similarity_score=round(score, 4),
+                        similarity_score=round(result.relevance_score, 4),
                         relevant_steps=self._extract_steps(doc["content"]),
                     ))
+            else:
+                # No API key provided, fallback to pure RRF scoring
+                for doc_id, rrf_score in top_fused[:k]:
+                    if doc_id in docs_map:
+                        doc = docs_map[doc_id]["doc"]
+                        references.append(RunbookReference(
+                            runbook_id=f"runbook://{doc['source']}/{doc['doc_id']}",
+                            title=doc["title"],
+                            similarity_score=round(rrf_score, 4),
+                            relevant_steps=self._extract_steps(doc["content"]),
+                        ))
 
             logger.info(
                 "search_complete",
                 query=query[:100],
                 num_results=len(references),
                 top_score=references[0].similarity_score if references else 0,
+                reranked_via_cohere=bool(self.settings.llms.cohere_api_key)
             )
 
+            span.set_attribute("rag.num_results", len(references))
+            if references:
+                span.set_attribute("rag.top_score", references[0].similarity_score)
+                
+            latency_ms = (time.time() - start_time) * 1000
+            span.set_attribute("rag.latency_ms", latency_ms)
+            
             return references
 
+        except Exception as e:
+            logger.error("hybrid_search_failed", error=str(e))
+            span.record_exception(e)
+            span.set_status(trace.Status(trace.StatusCode.ERROR))
+            return []
         finally:
             await conn.close()
 

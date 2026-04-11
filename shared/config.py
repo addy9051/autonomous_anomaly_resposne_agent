@@ -26,6 +26,9 @@ class LLMConfig(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o"
 
+    # Cohere (For cross-encoder reranking)
+    cohere_api_key: str = ""
+
     # Google / Vertex AI
     google_application_credentials: str | None = None
     google_project_id: str = ""
