@@ -56,8 +56,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://0.0.0.0:3000",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -126,9 +130,32 @@ async def health_check() -> HealthResponse:
     )
 
 
+@app.get("/api/v1/health/detailed", tags=["Health"])
+async def detailed_health() -> dict[str, Any]:
+    """Detailed health for UI diagnostics."""
+    if not orchestrator:
+        return {"status": "uninitialized", "error": "Orchestrator not found"}
+    
+    return {
+        "status": "healthy",
+        "orchestrator": {
+            "active_count": len(orchestrator.active_incidents),
+            "resolved_count": len(orchestrator.resolved_incidents),
+            "telemetry_buffer_size": len(orchestrator.telemetry_history),
+        },
+        "agents": {
+            "monitoring": "connected",
+            "diagnosis": "connected",
+            "action": "connected",
+            "feedback": "connected",
+        }
+    }
+
+
 @app.post("/api/v1/events/process", tags=["Events"])
 async def process_event(request: ProcessEventRequest) -> dict[str, Any]:
     """Submit a single telemetry event for processing."""
+    print(f"DEBUG: Processing inbound UI event from {request.source}")
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
