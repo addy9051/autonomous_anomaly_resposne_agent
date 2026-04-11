@@ -11,9 +11,9 @@ Supports both:
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 from typing import Any
+from collections import deque
 
 from agents.action.agent import ActionAgent
 from agents.diagnosis.graph import DiagnosisAgent
@@ -52,6 +52,9 @@ class AgentOrchestrator:
         # Track active incidents
         self.active_incidents: dict[str, IncidentRecord] = {}
         self.resolved_incidents: list[IncidentRecord] = []
+        
+        # Real-time telemetry pulse buffer (last 100 events)
+        self.telemetry_history: deque[TelemetryEvent] = deque(maxlen=100)
 
         logger.info("orchestrator_initialized")
 
@@ -64,6 +67,9 @@ class AgentOrchestrator:
         Returns:
             IncidentRecord if an anomaly was detected and processed, None otherwise.
         """
+        # Buffer every incoming event for the real-time UI pulse
+        self.telemetry_history.append(event)
+
         total_timer = Timer()
         with total_timer:
             # ── Step 1: Feature Extraction ──

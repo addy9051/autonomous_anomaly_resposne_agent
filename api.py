@@ -57,7 +57,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -189,20 +189,27 @@ async def start_stream(request: StreamRequest) -> dict[str, Any]:
     }
 
 
-@app.get("/api/v1/incidents", tags=["Incidents"])
-async def list_incidents(limit: int = 50, status: str | None = None) -> dict[str, Any]:
-    """List recent incidents."""
+@app.get("/api/v1/telemetry/recent", tags=["Monitoring"])
+async def get_recent_telemetry() -> dict[str, Any]:
+    """Get the last 100 telemetry events for real-time pulsing."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
-    incidents = orchestrator.resolved_incidents[-limit:]
+    return {
+        "count": len(orchestrator.telemetry_history),
+        "events": [e.model_dump(mode="json") for e in orchestrator.telemetry_history],
+    }
 
-    if status:
-        incidents = [i for i in incidents if i.status.value == status]
+
+@app.get("/api/v1/incidents/active", tags=["Incidents"])
+async def list_active_incidents() -> dict[str, Any]:
+    """List incidents currently being processed (for state mapping)."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
     return {
-        "total": len(incidents),
-        "incidents": [inc.model_dump(mode="json") for inc in incidents],
+        "total": len(orchestrator.active_incidents),
+        "incidents": [inc.model_dump(mode="json") for inc in orchestrator.active_incidents.values()],
     }
 
 
@@ -254,6 +261,21 @@ async def get_action_tiers() -> dict[str, Any]:
     }
 
 
+@app.get("/api/v1/feedback/rewards", tags=["Feedback"])
+async def get_reward_history(limit: int = 100) -> dict[str, Any]:
+    """Get the history of RL rewards for plotting performance curves."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+
+    # Access experience buffer from feedback agent
+    buffer = orchestrator.feedback_agent.experience_buffer[-limit:]
+
+    return {
+        "total": len(buffer),
+        "history": buffer
+    }
+
+
 @app.post("/api/v1/incidents/{incident_id}/approve", tags=["Actions"])
 async def approve_tier2_action(incident_id: str, request: ApproveActionRequest) -> dict[str, Any]:
     """Approve a pending Tier 2 action from the dashboard."""
@@ -286,6 +308,23 @@ async def approve_tier2_action(incident_id: str, request: ApproveActionRequest) 
     orchestrator.resolved_incidents.append(incident)
 
     return {"status": "success", "incident_id": incident_id, "approved": request.approved}
+
+
+@app.get("/api/v1/incidents", tags=["Incidents"])
+async def list_incidents(limit: int = 50, status: str | None = None) -> dict[str, Any]:
+    """List recent incidents."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+
+    incidents = orchestrator.resolved_incidents[-limit:]
+
+    if status:
+        incidents = [i for i in incidents if i.status.value == status]
+
+    return {
+        "total": len(incidents),
+        "incidents": [inc.model_dump(mode="json") for inc in incidents],
+    }
 
 
 # ─── Knowledge Base Endpoints ────────────────────────────────────
