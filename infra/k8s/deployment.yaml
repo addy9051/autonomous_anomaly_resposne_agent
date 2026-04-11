@@ -18,7 +18,7 @@ spec:
         app.kubernetes.io/name: anomaly-agent
         app.kubernetes.io/component: trainer
     spec:
-      serviceAccountName: default
+      serviceAccountName: agent-runtime-ksa
       containers:
         - name: anomaly-agent
           image: "us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:latest"
@@ -102,7 +102,7 @@ spec:
         app.kubernetes.io/name: anomaly-agent
         app.kubernetes.io/component: predictor
     spec:
-      serviceAccountName: default
+      serviceAccountName: agent-runtime-ksa
       containers:
         - name: anomaly-agent
           image: "us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:latest"

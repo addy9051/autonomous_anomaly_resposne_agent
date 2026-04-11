@@ -311,3 +311,37 @@ To ensure low-latency response without losing learning velocity:
 - **GKE Autopilot**: Serverless Kubernetes managed via Terraform.
 - **Secret Manager CSI**: Secure, volume-mounted secrets for OpenAI, Slack, and PagerDuty keys.
 - **Chaos Resilience**: Automated chaos suites validate system recovery during Redis amnesia and tool-fault scenarios.
+
+### 4. Enterprise Scale & GitOps (Phase 9)
+To enforce strict deployment controls, cost ceilings, and reliable processing, the system has adopted advanced enterprise patterns:
+
+- **GitOps Deployment (ArgoCD & Argo Rollouts)**: The entire cluster is managed declaratively via ArgoCD. Canary releases automatically shift traffic (20% → 50% → 100%) to safely test new agent image versions without endangering the entire fleet.
+- **Dynamic Autoscaling**: Prometheus ServiceMonitors scrape custom LLM usage metrics, driving Horizontal Pod Autoscalers (HPA) to scale predictor pods based on concurrent telemetry volume.
+- **Fail-Open Redis Idempotency**: Distributed locks (`SETNX`) guarantee that duplicated telemetry events across Kafka streams only trigger a single incident investigation, natively dropping redundant triggers.
+- **Cost Boundary Enforcement**: The `LLMCostTracker` strictly enforces token budgets per incident. If a context boundary is breached, a `BudgetExceededError` halts LLM execution and escalates the incident to human SREs.
+- **RL Model A/B Testing**: Event traffic is deterministically hashed by `incident_id` to route 50% of decisions to a reliable "Control" policy and 50% to an aggressive "Experimental" policy, empowering safe real-time production testing.
+
+#### Cloud-Native Scaling & Deployment Architecture
+```mermaid
+graph TD
+    subgraph "GitOps Lifecycle"
+        Git[GitHub Repo] --> |Declarative Sync| ArgoCD[ArgoCD Controller]
+        ArgoCD --> |Traffic Shaping| Rollout[Canary Rollout]
+    end
+
+    subgraph "Event Idempotency Layer"
+        Kafka[Pub/Sub Kafka Stream] --> |Duplicate Events| EventLoop[Orchestrator Event Loop]
+        EventLoop --> |SETNX Check| Redis[(Redis Lock)]
+        Redis -- Duplicate? Drop --> Null[Discard]
+        Redis -- Unique? Process --> Pipeline[Agent DAG]
+    end
+
+    subgraph "Policy Execution & Scaling"
+        HPA[HPA] --> |Auto-scales replicas| Pipeline
+        Prometheus[ServiceMonitor] -.-> |Scrapes Load Metrics| Pipeline
+        
+        Pipeline -- "Compute Hashed ID" --> Router{A/B Router}
+        Router --> |Control| M1[Vowpal Model 1]
+        Router --> |Experimental| M2[Vowpal Model 2]
+    end
+```
