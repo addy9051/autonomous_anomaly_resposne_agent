@@ -4,33 +4,47 @@
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue)
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-green)
-![CrewAI](https://img.shields.io/badge/CrewAI-0.80+-orange)
-![Docker](https://img.shields.io/badge/Docker-Compose-blue)
+![GKE](https://img.shields.io/badge/GKE-Autopilot-blue)
+![VW](https://img.shields.io/badge/RL-VowpalWabbit-orange)
 ![License](https://img.shields.io/badge/License-Private-red)
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture (Distributed v3)
 
-```
-┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│   🔭 Monitoring  │ ──▶  │   🔬 Diagnosis   │ ──▶  │   ⚙️ Action     │ ──▶  │   🔄 Feedback    │
-│     Agent        │      │     Agent        │      │     Agent       │      │   Loop Agent     │
-│                  │      │                  │      │                 │      │                  │
-│ LangChain ReAct  │      │ LangGraph DAG    │      │ N8n Workflows   │      │ Contextual       │
-│ Prometheus Tools │      │ CrewAI Sub-Agents│      │ Slack Approvals │      │ Bandit RL        │
-│ Isolation Forest │      │ RAG (pgvector)   │      │ 3-Tier Actions  │      │ Reward Shaping   │
-└─────────────────┘      └─────────────────┘      └─────────────────┘      └─────────────────┘
+```mermaid
+graph TD
+    subgraph "Telemetry Source"
+        P[Synthetic Telemetry] --> PS[Google Pub/Sub]
+    end
+
+    subgraph "GKE Autopilot Cluster"
+        direction LR
+        M[Monitoring Agent] --> D[Diagnosis Agent]
+        D --> A[Action Agent]
+        A --> F[Feedback Loop]
+    end
+
+    subgraph "Distributed Brain (VW)"
+        T[Trainer Pod] -- Uploads Binary --> GCS[Google Cloud Storage]
+        GCS -- Periodic Reload --> PR1[Predictor Pod 1]
+        GCS -- Periodic Reload --> PR2[Predictor Pod 2]
+    end
+
+    subgraph "Knowledge & State"
+        D -- RAG --> PG[Cloud SQL pgvector]
+        F -- Status --> R[Redis State]
+    end
 ```
 
 ### Agents
 
-| Agent | Framework | Purpose | Key Features |
-|-------|-----------|---------|--------------|
-| **Monitoring** | LangChain + ReAct | Anomaly detection from telemetry | Isolation Forest, z-score, 5 custom tools |
-| **Diagnosis** | LangGraph + CrewAI | Root cause analysis | 4-node DAG, 3 sub-agents, RAG runbook search |
-| **Action** | N8n + Slack | Tiered remediation | Tier 1 auto, Tier 2 approval, Tier 3 human |
-| **Feedback** | Contextual Bandit | Continuous improvement | Reward shaping, policy retraining, A/B testing |
+| Agent | Framework | Purpose | Core Technology |
+|-------|-----------|---------|-----------------|
+| **Monitoring** | LangChain + ReAct | Anomaly detection from telemetry | Isolation Forest, 5 custom SRE tools |
+| **Diagnosis** | LangGraph (Supervisor) | Multi-expert Root Cause Analysis | Parallel DB, Network, Sec Experts |
+| **Action** | N8n + Slack | Tiered remediation & approvals | Slack Interactive Blocks, Tier 2 Approval |
+| **Feedback** | Vowpal Wabbit | Distributed Online Learning | Contextual Bandit (cb_explore_adf) |
 
 ---
 
@@ -80,10 +94,11 @@ This starts: Kafka, Redis, PostgreSQL/pgvector, N8n, Prometheus, Grafana, Loki, 
 
 ```bash
 # Quick demo (5 events, 2 anomalies)
-poetry run python main.py --mode demo
+# Updated to orchestrator.py
+poetry run python orchestrator.py --mode demo
 
 # Streaming mode (60 seconds of synthetic telemetry)
-poetry run python main.py --mode stream --duration 60
+poetry run python orchestrator.py --mode stream --duration 60
 
 # Start the REST API
 poetry run uvicorn api:app --host 0.0.0.0 --port 8000 --reload
@@ -115,7 +130,7 @@ poetry run pytest tests/ -v
 ├── observability/        # Prometheus, Grafana, Tempo, OTel configs
 ├── tests/                # Unit, integration, LLM evals
 ├── shared/               # Pydantic schemas, config, utilities
-├── main.py               # CLI orchestrator
+├── orchestrator.py       # CLI orchestrator (formerly main.py)
 ├── api.py                # FastAPI REST API
 └── docker-compose.yml    # Full local dev stack
 ```
@@ -204,17 +219,16 @@ This project utilizes highly automated GitHub Actions for Continuous Integration
 - **Continuous Deployment (CD)**:
   1. The pipeline authenticates securely using a CI/CD Google Service Account.
   2. A streamlined Docker image is built remotely and pushed to **Google Artifact Registry**.
-  3. The Kubernetes manifest (`infra/k8s/deployment.yaml`) is dynamically updated with the precise Git commit SHA tag.
-  4. The manifest is immediately applied to the **GKE Autopilot** cluster.
-  5. The pipeline monitors `kubectl rollout status` to guarantee zero-downtime Pod deployment.
+  3. The Kubernetes manifest (`infra/k8s/deployment.yaml`) is applied to **GKE Autopilot**, spinning up independent **Trainer** and **Predictor** pods.
+  4. The pipeline monitors `kubectl rollout status` to guarantee zero-downtime rollout with optimized health probes.
 
 To control the Kubernetes deployment manually:
 ```bash
 # Apply standard infrastructure
 kubectl apply -f infra/k8s/deployment.yaml
 
-# Manage scaling instantly (Autopilot drops resources to 0 when idle)
-kubectl scale deployment anomaly-agent --replicas=1
+# Manage scaling instantly
+kubectl scale deployment anomaly-agent-predictor --replicas=3
 ```
 
 ---
@@ -274,3 +288,26 @@ A new suite of chaos experiments (`scripts/run_chaos_experiments.py`) has been a
 
 ### 5. Specialized Agent Verification
 The `scripts/verify_specialized_agents.py` tool provides a benchmark for expert agents, ensuring their reasoning remains sharp and within the assigned domain boundaries (Data, Network, Security).
+
+---
+
+## 🚀 Distributed Intelligence & Production Hardening (Phase 8)
+
+The system has now transitioned to a **Distributed v3 Architecture**, moving cognitive learning to the edge and scaling predictions horizontally.
+
+### 1. High-Throughput RL: Vowpal Wabbit
+We have overhauled the feedback loop using **Vowpal Wabbit (VW)** for industry-grade contextual bandits:
+- **cb_explore_adf**: Sophisticated action-dependent feature learning.
+- **Hybrid Reward Function**: Logic-aware rewards combining system metrics with **LLM-as-a-Judge** qualitative analysis.
+- **Offline Replay**: Continuous simulation scripts (`scripts/verify_rl_learning.py`) for policy validation.
+
+### 2. Horizontal Scaling: Trainer-Predictor Split
+To ensure low-latency response without losing learning velocity:
+- **The Trainer**: A singleton pod that processes rewards and uploads binary model weights to **Google Cloud Storage (GCS)**.
+- **The Predictors**: Stateless replicas that periodically poll GCS and hot-reload weights into the live decision engine.
+- **GKE Stability**: Refined health probes and container isolation ensure 99.9% availability during model updates.
+
+### 3. Production Hardening
+- **GKE Autopilot**: Serverless Kubernetes managed via Terraform.
+- **Secret Manager CSI**: Secure, volume-mounted secrets for OpenAI, Slack, and PagerDuty keys.
+- **Chaos Resilience**: Automated chaos suites validate system recovery during Redis amnesia and tool-fault scenarios.

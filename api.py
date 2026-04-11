@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from agents.action.tiers import ACTION_TIERS, get_tier_description
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
-from main import AgentOrchestrator
+from orchestrator import AgentOrchestrator
 from shared.config import get_settings
 from shared.schemas import TelemetryEvent
 from shared.utils import setup_logging

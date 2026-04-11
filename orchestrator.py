@@ -18,6 +18,7 @@ from typing import Any
 from agents.action.agent import ActionAgent
 from agents.diagnosis.graph import DiagnosisAgent
 from agents.feedback.agent import FeedbackLoopAgent
+from agents.feedback.reward_agent import RewardAgent
 from agents.monitoring.agent import MonitoringAgent
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from data_pipeline.flink_jobs.anomaly_features import AlertDeduplicator, RollingWindowAggregator
@@ -44,6 +45,7 @@ class AgentOrchestrator:
         self.diagnosis_agent = DiagnosisAgent()
         self.action_agent = ActionAgent()
         self.feedback_agent = FeedbackLoopAgent()
+        self.reward_agent = RewardAgent()
         self.feature_aggregator = RollingWindowAggregator()
         self.alert_dedup = AlertDeduplicator()
 
@@ -124,17 +126,24 @@ class AgentOrchestrator:
                 datetime.utcnow() - incident.created_at
             ).total_seconds()
 
-            # ── Step 5: Feedback Loop — Record Outcome ──
+            # ── Step 5: Feedback Loop — Record Outcome (Phase 7 Hybrid) ──
+            # First, use LLM-as-a-Judge to evaluate the qualitative resolution
+            semantic_reward = await self.reward_agent.evaluate(incident, cost_tracker)
+            
+            # Sync cost tracker after evaluation
             incident.total_llm_tokens_used = cost_tracker.total_tokens
             incident.total_llm_cost_usd = cost_tracker.total_cost
 
-            reward = await self.feedback_agent.record_outcome(incident)
+            # Record final outcome and compute hybrid reward
+            reward = await self.feedback_agent.record_outcome(incident, semantic_reward)
+            
             logger.info(
                 "feedback_recorded",
                 incident_id=incident.incident_id,
                 reward=reward,
                 tokens_used=cost_tracker.total_tokens,
                 cost_usd=round(cost_tracker.total_cost, 4),
+                justification=semantic_reward.justification[:100] if semantic_reward else "N/A"
             )
 
             # Move to resolved

@@ -16,7 +16,7 @@ import json
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langfuse.callback import CallbackHandler
+# Langfuse decoupled
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 

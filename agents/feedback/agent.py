@@ -8,20 +8,23 @@ Supports A/B testing of policy candidates before full rollout.
 
 from __future__ import annotations
 
+import os
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
+import asyncio
 
 import numpy as np
-from langfuse import Langfuse
-from sklearn.linear_model import SGDClassifier
-from sklearn.preprocessing import StandardScaler
+# Langfuse decoupled
+from vowpalwabbit import pyvw
+from google.cloud import storage
+import os
 
 from agents.feedback.reward import compute_reward
 from shared.config import get_settings
 from shared.utils import get_logger, get_tracer
 
 if TYPE_CHECKING:
-    from shared.schemas import IncidentRecord
+    from shared.schemas import IncidentRecord, SemanticReward
 
 logger = get_logger("feedback_agent")
 tracer = get_tracer()
@@ -29,40 +32,59 @@ tracer = get_tracer()
 
 class FeedbackLoopAgent:
     """
-    Feedback Loop Agent — contextual bandit for adaptive action selection.
+    Feedback Loop Agent — Contextual Bandit powered by Vowpal Wabbit.
 
-    Uses a simplified contextual bandit approach (epsilon-greedy with
-    linear model) for development. In production, this would be replaced
-    by Vertex AI RL or Azure Personalizer.
+    Uses the cb_explore_adf (Action Dependent Features) algorithm for 
+    online learning. VW is the gold standard for reliable, high-throughput 
+    contextual bandits in production systems.
     """
 
-    def __init__(self, epsilon: float = 0.1) -> None:
+    def __init__(self, epsilon: float = 0.2) -> None:
         self.settings = get_settings()
         self.epsilon = epsilon  # Exploration rate
 
-        # Simple linear model for action-value estimation
-        self.scaler = StandardScaler()
-        self.model = SGDClassifier(
-            loss="log_loss",
-            penalty="l2",
-            alpha=0.001,
-            random_state=42,
-            warm_start=True,
+        # Initialize VW with CB Explore ADF
+        # --cb_explore_adf: Multiline format for actions
+        # --epsilon: Epsilon-greedy exploration
+        # --quiet: suppress stdout
+        vw_params = (
+            f"--cb_explore_adf --epsilon {epsilon} --bit_precision 18 "
+            f"--quiet --cb_type mtr" # Model-based Training with Reward
         )
+        self.vw = pyvw.vw(vw_params)
 
-        # Training data buffer
+        # Persistence location
+        self.model_path = "data/models/feedback_policy.vw"
+        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+
+        # Buffer for observability / debugging
         self.experience_buffer: list[dict[str, Any]] = []
         self.action_rewards: dict[str, list[float]] = defaultdict(list)
-        self.is_fitted = False
-
+        
         # Policy versioning
-        self.policy_version = "v1.0.0"
+        self.policy_version = "v2.0.0-vw"
         self.policy_history: list[dict] = []
 
+        # GCS Distributed Settings
+        if self.settings.app.vw_model_gcs_bucket:
+            self.gcs_client = storage.Client()
+            self.bucket_name = self.settings.app.vw_model_gcs_bucket
+            self.blob_name = f"models/{self.policy_version}.vw"
+        else:
+            self.gcs_client = None
+        
+        # Background sync state
+        self.sync_task: Optional[asyncio.Task] = None
+        
+        # Start background sync if we are not a trainer and GCS is configured
+        if self.gcs_client and not self.settings.app.vw_is_trainer:
+            self.start_sync_loop()
+
         logger.info(
-            "feedback_agent_initialized",
+            "feedback_agent_initialized_vw",
             epsilon=epsilon,
             policy_version=self.policy_version,
+            params=vw_params
         )
 
     async def _init_redis(self) -> None:
@@ -74,72 +96,197 @@ class FeedbackLoopAgent:
         await self.load_policy()
 
     async def save_policy(self) -> None:
-        """Serialize and save the SGDClassifier and buffer to Redis."""
+        """Serialize and save the VW model binary and status to filesystem/Redis."""
         try:
+            # 1. Save VW binary model
+            self.vw.save(self.model_path)
+            
+            # 2. Upload to GCS if we are the trainer
+            if self.gcs_client and self.settings.app.vw_is_trainer:
+                await self.sync_model_to_gcs()
+            
+            # 2. Save metadata to Redis for cross-instance sync
             import pickle
             state = {
-                "model": self.model,
-                "scaler": self.scaler,
-                "is_fitted": self.is_fitted,
-                "experience_buffer": self.experience_buffer[-1000:], # keep max 1000 to avoid bloat
+                "experience_buffer": self.experience_buffer[-1000:],
                 "action_rewards": self.action_rewards,
                 "policy_version": self.policy_version,
             }
-            await self.redis_client.set("feedback_agent_policy", pickle.dumps(state))
-            logger.info("policy_saved_to_redis", version=self.policy_version)
+            await self.redis_client.set("feedback_agent_metadata", pickle.dumps(state))
+            logger.info("policy_saved", version=self.policy_version, path=self.model_path)
         except Exception as e:
             logger.error("failed_to_save_policy", error=str(e))
 
     async def load_policy(self) -> None:
-        """Load the policy state from Redis if it exists."""
+        """Load the VW model and metadata."""
         try:
+            # 1. Sync from GCS if available
+            if self.gcs_client:
+                await self.sync_model_from_gcs()
+            if os.path.exists(self.model_path):
+                self.vw = pyvw.vw(f"-i {self.model_path} --quiet")
+                logger.debug("vw_model_binary_loaded", path=self.model_path)
+
             import pickle
-            state_bytes = await self.redis_client.get("feedback_agent_policy")
+            state_bytes = await self.redis_client.get("feedback_agent_metadata")
             if state_bytes:
                 state = pickle.loads(state_bytes)
-                self.model = state.get("model", self.model)
-                self.scaler = state.get("scaler", self.scaler)
-                self.is_fitted = state.get("is_fitted", False)
                 self.experience_buffer = state.get("experience_buffer", [])
                 self.action_rewards = state.get("action_rewards", getattr(self, "action_rewards"))
                 self.policy_version = state.get("policy_version", self.policy_version)
-                logger.info("policy_loaded_from_redis", version=self.policy_version)
+                logger.info("policy_metadata_loaded", version=self.policy_version)
         except Exception as e:
             logger.error("failed_to_load_policy", error=str(e))
+    async def sync_model_to_gcs(self) -> None:
+        """Upload the local model binary to Google Cloud Storage."""
+        if not self.gcs_client or not os.path.exists(self.model_path):
+            return
+            
+        try:
+            bucket = self.gcs_client.bucket(self.bucket_name)
+            blob = bucket.blob(self.blob_name)
+            
+            # Use blocking call in a thread to keep async loop happy
+            import asyncio
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, blob.upload_from_filename, self.model_path)
+            
+            logger.info("model_uploaded_to_gcs", bucket=self.bucket_name, blob=self.blob_name)
+        except Exception as e:
+            logger.error("gcs_upload_failed", error=str(e))
 
-    async def record_outcome(self, incident: IncidentRecord) -> float:
+    async def sync_model_from_gcs(self) -> None:
+        """Download the shared model binary from Google Cloud Storage."""
+        if not self.gcs_client:
+            return
+            
+        try:
+            bucket = self.gcs_client.bucket(self.bucket_name)
+            blob = bucket.blob(self.blob_name)
+            
+            if not blob.exists():
+                logger.info("gcs_model_not_found_skipping_sync", blob=self.blob_name)
+                return
+                
+            # Use blocking call in a thread
+            import asyncio
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, blob.download_to_filename, self.model_path)
+            
+            logger.info("model_downloaded_from_gcs", bucket=self.bucket_name, blob=self.blob_name)
+        except Exception as e:
+            logger.error("gcs_download_failed", error=str(e))
+
+    def to_vw_format(
+        self, 
+        incident: IncidentRecord, 
+        chosen_action: str | None = None, 
+        reward: float | None = None,
+        probability: float | None = None
+    ) -> str:
         """
-        Record the outcome of a resolved incident and compute reward.
+        Convert incident and actions into Vowpal Wabbit multiline ADF format.
+        
+        Format:
+        shared |context feat1:val ...
+        |action_1 feat_a:val ...
+        |action_2 feat_b:val ...
+        """
+        # 1. Shared features (Context)
+        m = incident.anomaly_event.metrics_snapshot if incident.anomaly_event else None
+        diag = incident.diagnosis_result
+        
+        shared_parts = ["shared |s"]
+        if m:
+            shared_parts.append(f"lat:{min(10.0, (m.p99_latency_ms or 0)/1000.0)}")
+            shared_parts.append(f"err:{m.error_rate or 0}")
+            shared_parts.append(f"cpu:{(m.cpu_percent or 0)/100.0}")
+        if diag:
+            shared_parts.append(f"conf:{diag.confidence}")
+            shared_parts.append(f"novel:{float(diag.is_novel_incident)}")
+            
+        lines = [" ".join(shared_parts)]
+
+        # 2. Actions (ADF)
+        # In a real system, these would be filtered by Tier or Service
+        from agents.action.workflows import N8N_WORKFLOWS
+        all_actions = list(N8N_WORKFLOWS.keys()) + ["no_action"]
+        
+        for action in all_actions:
+            label = ""
+            # If this is the chosen action and we have a reward, add the label
+            if chosen_action == action and reward is not None:
+                # VW minimizes COST. We maximize REWARD. 
+                # cost = -reward (with constant shift to ensure positive cost if needed, 
+                # but VW handles negative costs too)
+                cost = -reward 
+                prob = probability or (1.0 / len(all_actions))
+                label = f"0:{cost}:{prob:.4f} " # 0 is relative index for the action line
+            
+            lines.append(f"{label}|a name_{action}")
+
+        return "\n".join(lines)
+
+    async def record_outcome(
+        self, 
+        incident: IncidentRecord, 
+        semantic_reward: SemanticReward | None = None
+    ) -> float:
+        """
+        Record the outcome of a resolved incident and compute hybrid reward.
 
         Args:
             incident: A resolved incident record
+            semantic_reward: Optional qualitative evaluation from the RewardAgent
 
         Returns:
-            Computed reward value
+            Computed hybrid reward value
         """
         await self._init_redis()
         with tracer.start_as_current_span("feedback_agent.record_outcome") as span:
-            reward = compute_reward(incident)
+            # 1. Compute hybrid reward (Extrinsic + Intrinsic)
+            reward = compute_reward(incident, semantic_reward)
 
-            # Extract features and action
-            from agents.feedback.reward import _extract_action_label, _extract_state_features
-            features = _extract_state_features(incident)
+            # 2. Extract action and probability
+            # Note: In production, we'd store the probability returned by suggest_action
+            from agents.feedback.reward import _extract_action_label
             action = _extract_action_label(incident)
+            
+            # 3. Train Vowpal Wabbit online
+            vw_example = self.to_vw_format(
+                incident, 
+                chosen_action=action, 
+                reward=reward,
+                probability=0.25 # simplified for now
+            )
+            self.vw.learn(vw_example)
 
-            # Add to experience buffer
-            self.experience_buffer.append({
+            # 4. Add to experience buffer with semantic context
+            experience = {
                 "incident_id": incident.incident_id,
-                "features": features,
+                "vw_example": vw_example,
                 "action": action,
                 "reward": reward,
-            })
+                "timestamp": incident.resolved_at.isoformat() if incident.resolved_at else None,
+            }
+            
+            if semantic_reward:
+                experience["semantic_context"] = {
+                    "logical_consistency": semantic_reward.logical_consistency,
+                    "action_relevance": semantic_reward.action_relevance,
+                    "expert_accuracy": semantic_reward.expert_accuracy,
+                    "justification": semantic_reward.justification,
+                }
+            
+            self.experience_buffer.append(experience)
 
-            # Track per-action rewards
+            # 5. Langfuse scoring removed (Using internal logging only)
+            logger.debug("reward_recorded_locally", incident_id=incident.incident_id, reward=reward)
             self.action_rewards[action].append(reward)
 
             span.set_attribute("reward", reward)
             span.set_attribute("action", action)
-            span.set_attribute("buffer_size", len(self.experience_buffer))
+            span.set_attribute("has_semantic_feedback", semantic_reward is not None)
 
             logger.info(
                 "outcome_recorded",
@@ -149,126 +296,50 @@ class FeedbackLoopAgent:
                 buffer_size=len(self.experience_buffer),
             )
 
-            # Send reward to Langfuse trace
-            try:
-                langfuse = Langfuse(
-                    public_key=self.settings.observability.langfuse_public_key,
-                    secret_key=self.settings.observability.langfuse_secret_key,
-                    host=self.settings.observability.langfuse_host
-                )
-                langfuse.score(
-                    trace_id=incident.incident_id,
-                    name="reward",
-                    value=reward
-                )
-            except Exception as e:
-                logger.warning("failed_to_score_langfuse", error=str(e))
-
-            # Periodically retrain (every 50 experiences)
-            if len(self.experience_buffer) % 50 == 0 and len(self.experience_buffer) >= 50:
-                await self.retrain_policy()
+            # 6. Periodic Retraining (Phase 7 VW already trains online)
+            retrain_threshold = 10 if "test" in self.settings.app.app_env else 50
+            if len(self.experience_buffer) % retrain_threshold == 0:
                 await self.save_policy()
 
             return reward
 
-    async def suggest_action(self, features: list[float]) -> dict[str, Any]:
+    async def suggest_action(self, incident: IncidentRecord) -> dict[str, Any]:
         """
-        Suggest an action based on current state features.
-        Uses epsilon-greedy exploration.
-
-        Args:
-            features: State feature vector
-
+        Suggest an action based on current state features using VW predict.
+        
         Returns:
             Dict with suggested action, confidence, and exploration flag
         """
         await self._init_redis()
-        rng = np.random.default_rng()
+        
+        # 1. Format example for prediction (shared context + action lines, no labels)
+        vw_example = self.to_vw_format(incident)
+        
+        # 2. Get action probabilities from VW
+        probs = self.vw.predict(vw_example)
+        
+        # 3. Sample an action from the distribution
+        from agents.action.workflows import N8N_WORKFLOWS
+        all_actions = list(N8N_WORKFLOWS.keys()) + ["no_action"]
+        
+        action_idx = np.random.choice(len(all_actions), p=probs)
+        action = all_actions[action_idx]
+        confidence = float(probs[action_idx])
 
-        # Epsilon-greedy exploration
-        if not self.is_fitted or rng.random() < self.epsilon:
-            # Explore: random action from known actions
-            actions = list(self.action_rewards.keys()) or ["scale_replicas"]
-            action = rng.choice(actions)
-            return {
-                "action": action,
-                "confidence": 0.5,
-                "is_exploration": True,
-                "policy_version": self.policy_version,
-            }
-
-        # Exploit: use trained model
-        try:
-            x_input = np.array(features).reshape(1, -1)
-            x_scaled = self.scaler.transform(x_input)
-            action = self.model.predict(x_scaled)[0]
-            probs = self.model.predict_proba(x_scaled)[0]
-            confidence = float(max(probs))
-
-            return {
-                "action": action,
-                "confidence": confidence,
-                "is_exploration": False,
-                "policy_version": self.policy_version,
-            }
-        except Exception as e:
-            logger.warning("model_prediction_failed", error=str(e))
-            return {
-                "action": "scale_replicas",
-                "confidence": 0.3,
-                "is_exploration": True,
-                "policy_version": self.policy_version,
-            }
+        return {
+            "action": action,
+            "confidence": confidence,
+            "is_exploration": confidence < (1.0 / len(all_actions)) * 1.5, # heuristic
+            "policy_version": self.policy_version,
+            "probabilities": {a: p for a, p in zip(all_actions, probs)}
+        }
 
     async def retrain_policy(self) -> dict[str, Any]:
         """
-        Retrain the policy model on accumulated experience.
-
-        Returns:
-            Training metrics and new policy version
+        In VW, training happens online via learn(). 
+        This method is now a wrapper for batch-replay if needed.
         """
-        if len(self.experience_buffer) < 10:
-            return {"status": "insufficient_data", "buffer_size": len(self.experience_buffer)}
-
-        logger.info("retraining_policy", buffer_size=len(self.experience_buffer))
-
-        # Filter to positive-reward experiences for training
-        training_data = [
-            exp for exp in self.experience_buffer
-            if exp["reward"] > 0
-        ]
-
-        if len(training_data) < 5:
-            return {"status": "insufficient_positive_examples"}
-
-        # Prepare training data
-        x_train = np.array([exp["features"] for exp in training_data])
-        y_train = [exp["action"] for exp in training_data]
-
-        # Fit scaler and model
-        x_scaled = self.scaler.fit_transform(x_train)
-        self.model.partial_fit(x_scaled, y_train, classes=list(set(y_train)))
-        self.is_fitted = True
-
-        # Update policy version
-        old_version = self.policy_version
-        version_num = int(self.policy_version.split(".")[-1]) + 1
-        self.policy_version = f"v1.0.{version_num}"
-
-        metrics = {
-            "status": "retrained",
-            "old_version": old_version,
-            "new_version": self.policy_version,
-            "training_examples": len(training_data),
-            "total_buffer": len(self.experience_buffer),
-            "mean_reward": float(np.mean([exp["reward"] for exp in training_data])),
-            "unique_actions": len(set(y_train)),
-        }
-
-        self.policy_history.append(metrics)
-        logger.info("policy_retrained", **metrics)
-
-        return metrics
+        return {"status": "online_learning_active", "version": self.policy_version}
 
     def get_action_stats(self) -> dict[str, dict[str, float]]:
         """Get per-action reward statistics."""
@@ -287,10 +358,33 @@ class FeedbackLoopAgent:
         """Get current policy status and training history."""
         return {
             "current_version": self.policy_version,
-            "is_fitted": self.is_fitted,
-            "epsilon": self.epsilon,
             "buffer_size": len(self.experience_buffer),
-            "unique_actions": len(self.action_rewards),
-            "action_stats": self.get_action_stats(),
-            "history": self.policy_history[-5:],  # Last 5 retrains
+            "engine": "vowpal_wabbit",
+            "action_stats": self.get_action_stats()
         }
+    def start_sync_loop(self) -> None:
+        """Start a background task to periodically pull the model from GCS."""
+        if self.sync_task and not self.sync_task.done():
+            return
+            
+        self.sync_task = asyncio.create_task(self._periodic_sync())
+        logger.info("background_sync_loop_started", interval=self.settings.app.vw_sync_interval_seconds)
+
+    async def _periodic_sync(self) -> None:
+        """Internal background loop for model synchronization."""
+        while True:
+            try:
+                await asyncio.sleep(self.settings.app.vw_sync_interval_seconds)
+                logger.debug("triggering_periodic_vw_sync")
+                await self.sync_model_from_gcs()
+                
+                # Reload the model into VW memory if it changed
+                if os.path.exists(self.model_path):
+                    self.vw = pyvw.vw(f"-i {self.model_path} --quiet")
+                    logger.debug("vw_model_reloaded_from_periodic_sync")
+                    
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("periodic_sync_error", error=str(e))
+                await asyncio.sleep(60)

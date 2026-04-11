@@ -7,7 +7,11 @@ to GCP Pub/Sub topics.
 
 import json
 from typing import Any
-from google.cloud import pubsub_v1
+try:
+    from google.cloud import pubsub_v1
+except ImportError:
+    # Handle missing GCP libraries in local/bare environments
+    pubsub_v1 = None
 from shared.config import get_settings
 from shared.utils import get_logger
 
@@ -22,7 +26,11 @@ class PubSubClient:
         if not self.project_id:
             logger.warning("pubsub_client_missing_project_id")
             
-        self.publisher = pubsub_v1.PublisherClient()
+        if pubsub_v1:
+            self.publisher = pubsub_v1.PublisherClient()
+        else:
+            self.publisher = None
+            logger.warning("pubsub_client_mock_initialized", reason="google-cloud-pubsub not installed")
         self.topic_prefix = settings.data.pubsub_topic_prefix
         
     def publish_event(self, topic_name: str, data: dict[str, Any]) -> str:
@@ -44,6 +52,10 @@ class PubSubClient:
         full_topic_path = f"projects/{self.project_id}/topics/{self.topic_prefix}-{topic_name}"
         
         try:
+            if not self.publisher:
+                logger.debug("pubsub_mock_publish", topic=topic_name)
+                return "mock-message-id"
+                
             message_bytes = json.dumps(data, default=str).encode("utf-8")
             future = self.publisher.publish(full_topic_path, message_bytes)
             message_id = future.result()

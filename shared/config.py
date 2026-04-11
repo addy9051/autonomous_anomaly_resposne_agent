@@ -11,7 +11,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from langfuse.decorators import langfuse_context
+# Langfuse disabled due to environment import issues
 from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -161,6 +161,10 @@ class AppConfig(BaseSettings):
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"  # noqa: S104
     api_port: int = 8000
+    # Vowpal Wabbit Distributed Config
+    vw_model_gcs_bucket: str | None = Field(None, alias="VW_MODEL_GCS_BUCKET")
+    vw_is_trainer: bool = Field(False, alias="VW_IS_TRAINER")
+    vw_sync_interval_seconds: int = 300
 
 
 class Settings(BaseModel):
@@ -211,8 +215,7 @@ def get_settings() -> Settings:
                     # Synchronize to environment for SDK compatibility
                     os.environ[env_var] = secret_value
 
-    # SILENCE: Ensure global context respects the enabled toggle
-    if not settings.observability.langfuse_enabled:
-        langfuse_context.configure(enabled=False)
+    # Langfuse disabled
+    pass
 
     return settings

@@ -15,7 +15,7 @@ import json
 from datetime import datetime
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langfuse.callback import CallbackHandler
+# Langfuse decoupled
 
 from agents.action.tiers import classify_action
 from agents.action.workflows import trigger_workflow

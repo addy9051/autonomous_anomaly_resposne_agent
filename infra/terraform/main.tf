@@ -80,10 +80,6 @@ resource "google_container_cluster" "agents" {
     channel = "REGULAR"
   }
 
-  secret_manager_config {
-    enabled = true
-  }
-
   depends_on = [google_project_service.apis]
 }
 
@@ -99,6 +95,28 @@ resource "google_pubsub_topic" "action_results" {
 
 resource "google_pubsub_topic" "feedback_events" {
   name = "feedback-events-${var.environment}"
+}
+
+# ─── Vowpal Wabbit Model Store (GCS) ───────────────────────
+
+resource "google_storage_bucket" "vw_model_store" {
+  name                        = "vw-models-${var.project_id}-${var.environment}"
+  location                    = var.region
+  force_destroy               = true
+  uniform_bucket_level_access = true
+
+  versioning {
+    enabled = true
+  }
+
+  lifecycle_rule {
+    condition {
+      num_newer_versions = 5
+    }
+    action {
+      type = "Delete"
+    }
+  }
 }
 
 # ─── Pub/Sub Subscriptions ───────────────────────────────────
@@ -147,6 +165,7 @@ resource "google_project_iam_member" "agent_roles" {
     "roles/logging.logWriter",
     "roles/monitoring.metricWriter",
     "roles/cloudsql.client",
+    "roles/storage.objectAdmin",
   ])
 
   project = var.project_id

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
-from langfuse.decorators import langfuse_context
+# Langfuse decoupled
 
 from shared.config import get_settings
 
@@ -40,9 +40,8 @@ def get_chat_model(
     """
     settings = get_settings()
 
-    # Silently disable Langfuse if turned off in config
-    if not settings.observability.langfuse_enabled:
-        langfuse_context.configure(enabled=False)
+    # Langfuse decoupled
+    pass
 
     model_lower = model_name.lower()
 

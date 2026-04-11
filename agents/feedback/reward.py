@@ -13,10 +13,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from shared.schemas import RootCauseCategory, IncidentStatus
 from shared.utils import get_logger
 
 if TYPE_CHECKING:
-    from shared.schemas import IncidentRecord
+    from shared.schemas import IncidentRecord, SemanticReward
 
 logger = get_logger("reward_function")
 
@@ -25,68 +26,59 @@ BASELINE_TTM_SECONDS = 2700.0   # 45 minutes baseline MTTR
 BASELINE_TTD_SECONDS = 900.0    # 15 minutes baseline MTTA
 
 
-def compute_reward(incident: IncidentRecord) -> float:
+def compute_reward(incident: IncidentRecord, semantic_reward: SemanticReward | None = None) -> float:
     """
-    Compute reward for a resolved incident.
+    Compute a hybrid reward for a resolved incident.
 
     Reward signal components:
-    - MTTR improvement: +1.0 if fully resolved faster than baseline
-    - False positive: -0.5 penalty
-    - Human override: -0.3 penalty (agent was wrong)
-    - Auto-resolved: +0.2 bonus (no human intervention needed)
-    - Novel incident handling: +0.15 if correctly identified as novel
+    - Extrinsic (60%): MTTR improvement, status success, resolution speed.
+    - Intrinsic (40%): Qualitative score from the RewardAgent (LLM-as-a-Judge).
 
     Returns:
-        Reward value (typically between -1.0 and +1.5)
+        Hybrid reward value (-1.0 to +1.5)
     """
-    r = 0.0
+    extrinsic_r = 0.0
 
     # ── MTTR improvement reward ──
     if incident.auto_resolved and incident.time_to_mitigate_seconds:
         improvement = 1.0 - (incident.time_to_mitigate_seconds / BASELINE_TTM_SECONDS)
-        r += max(0.0, improvement)  # Only reward improvement, don't penalize for being slower
-
-        logger.debug(
-            "reward_mttr",
-            ttm=incident.time_to_mitigate_seconds,
-            baseline=BASELINE_TTM_SECONDS,
-            improvement=improvement,
-        )
-
-    # ── Auto-resolution bonus ──
+        extrinsic_r += max(0.0, improvement)
+    
+    # Status-based base rewards
     if incident.auto_resolved:
-        r += 0.2
-
-    # ── False positive penalty ──
+        extrinsic_r += 0.2
     if incident.false_positive:
-        r -= 0.5
-        logger.debug("reward_false_positive_penalty")
-
-    # ── Human override penalty ──
+        extrinsic_r -= 0.6
     if incident.human_overrode:
-        r -= 0.3
-        logger.debug("reward_human_override_penalty")
+        extrinsic_r -= 0.4
 
-    # ── Correct detection bonus ──
-    if incident.time_to_detect_seconds and incident.time_to_detect_seconds < BASELINE_TTD_SECONDS:
-        detection_improvement = 1.0 - (incident.time_to_detect_seconds / BASELINE_TTD_SECONDS)
-        r += detection_improvement * 0.3  # Smaller weight for detection
-        logger.debug(
-            "reward_detection",
-            ttd=incident.time_to_detect_seconds,
-            improvement=detection_improvement,
+    # ── Intrinsic semantic assessment (Phase 7) ──
+    intrinsic_r = 0.0
+    if semantic_reward:
+        # Scale 0.0-1.0 score to a more impactful -1.0 to +1.0 signal
+        intrinsic_r = (semantic_reward.overall_quality_score * 2.0) - 1.0
+        logger.info(
+            "intrinsic_reward_added",
+            score=semantic_reward.overall_quality_score,
+            scaled_reward=intrinsic_r,
+            justification=semantic_reward.justification[:100]
         )
+    else:
+        # If no semantic reward, we default to no intrinsic signal (neutral 0.0)
+        intrinsic_r = 0.0
+
+    # Weighted Hybrid Blend
+    total_reward = (extrinsic_r * 0.6) + (intrinsic_r * 0.4)
 
     logger.info(
-        "reward_computed",
+        "hybrid_reward_computed",
         incident_id=incident.incident_id,
-        total_reward=round(r, 4),
-        auto_resolved=incident.auto_resolved,
-        false_positive=incident.false_positive,
-        human_overrode=incident.human_overrode,
+        extrinsic=round(extrinsic_r, 4),
+        intrinsic=round(intrinsic_r, 4),
+        total=round(total_reward, 4),
     )
 
-    return round(r, 4)
+    return round(total_reward, 4)
 
 
 def compute_batch_rewards(incidents: list[IncidentRecord]) -> list[dict]:
@@ -108,33 +100,46 @@ def compute_batch_rewards(incidents: list[IncidentRecord]) -> list[dict]:
 
 
 def _extract_state_features(incident: IncidentRecord) -> list[float]:
-    """Extract feature vector from incident state for RL model."""
+    """
+    Extract a comprehensive feature vector for RL model training.
+    
+    Includes normalized metrics, diagnosis metadata, and cost dimensions.
+    """
     features = []
 
-    # Anomaly features
+    # 1. Anomaly dimensions (7 features)
     if incident.anomaly_event:
-        metrics = incident.anomaly_event.metrics_snapshot
+        m = incident.anomaly_event.metrics_snapshot
         features.extend([
-            metrics.p99_latency_ms or 0.0,
-            metrics.error_rate or 0.0,
-            metrics.cpu_percent or 0.0,
-            metrics.memory_percent or 0.0,
-            metrics.kafka_consumer_lag or 0.0,
-            metrics.fraud_score_mean or 0.0,
+            min(1.0, (m.p99_latency_ms or 0.0) / 10000.0), # Latency capped at 10s
+            min(1.0, (m.error_rate or 0.0)),
+            (m.cpu_percent or 0.0) / 100.0,
+            (m.memory_percent or 0.0) / 100.0,
+            min(1.0, (m.kafka_consumer_lag or 0.0) / 50000.0),
+            (m.fraud_score_mean or 0.0),
             incident.anomaly_event.confidence,
         ])
     else:
         features.extend([0.0] * 7)
 
-    # Diagnosis features
+    # 2. Diagnosis dimensions (4 features)
     if incident.diagnosis_result:
         features.extend([
             incident.diagnosis_result.confidence,
             float(incident.diagnosis_result.is_novel_incident),
-            len(incident.diagnosis_result.recommended_actions),
+            min(1.0, len(incident.diagnosis_result.recommended_actions) / 5.0),
+            # Numeric encoding of root cause category (Phase 7 expansion)
+            float(list(RootCauseCategory).index(incident.diagnosis_result.root_cause_category)) / 10.0
         ])
     else:
-        features.extend([0.0] * 3)
+        features.extend([0.0] * 4)
+
+    # 3. Cost & Context (3 features)
+    features.extend([
+        min(1.0, incident.total_llm_tokens_used / 100000.0),
+        min(1.0, (incident.time_to_detect_seconds or 0.0) / 1800.0), # Capped at 30 mins
+        float(incident.status == IncidentStatus.RESOLVED)
+    ])
 
     return features
 

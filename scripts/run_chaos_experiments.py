@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
-from main import AgentOrchestrator
+from orchestrator import AgentOrchestrator
 from shared.config import get_settings
 from shared.schemas import TelemetryEvent
 from shared.utils import get_logger

@@ -12,7 +12,7 @@ import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langfuse.callback import CallbackHandler
+# Langfuse decoupled
 
 from agents.monitoring.prompts import MONITORING_HUMAN_PROMPT, MONITORING_SYSTEM_PROMPT
 from agents.monitoring.tools.monitoring_tools import ALL_MONITORING_TOOLS

@@ -221,3 +221,31 @@ class TelemetryEvent(BaseModel):
     service_name: str
     event_type: str  # "transaction", "metric", "trace", "alert"
     payload: dict[str, Any] = Field(default_factory=dict)
+# ─── Feedback Agent (Phase 7) ───────────────────────────────────
+
+
+class SemanticReward(BaseModel):
+    """
+    Qualitative evaluation of an incident resolution by the Reward Agent.
+    Acts as an 'LLM-as-a-Judge' signal for Reinforcement Learning.
+    """
+    logical_consistency: float = Field(
+        ge=0.0, le=1.0, 
+        description="Did the RCA follow logically from the observed metrics?"
+    )
+    action_relevance: float = Field(
+        ge=0.0, le=1.0, 
+        description="Was the action taken appropriate given the identified root cause?"
+    )
+    expert_accuracy: float = Field(
+        ge=0.0, le=1.0, 
+        description="Were the specialized expert reports accurate and deep?"
+    )
+    overall_quality_score: float = Field(
+        ge=0.0, le=1.0, 
+        description="Final normalized quality score (0-1) across all dimensions"
+    )
+    justification: str = Field(
+        ..., 
+        description="Detailed explanation for the assigned qualitative scores"
+    )
