@@ -287,6 +287,57 @@ async def approve_tier2_action(incident_id: str, request: ApproveActionRequest) 
 
     return {"status": "success", "incident_id": incident_id, "approved": request.approved}
 
+
+# ─── Knowledge Base Endpoints ────────────────────────────────────
+
+
+class KBSearchRequest(BaseModel):
+    q: str = "latency spike"
+    service: str | None = None
+    top_k: int = 5
+
+
+@app.post("/api/v1/knowledge/seed", tags=["Knowledge Base"])
+async def seed_knowledge_base() -> dict[str, Any]:
+    """Ingest sample runbooks into the pgvector knowledge base."""
+    from knowledge_base.ingestion.pipeline import RunbookIngestionPipeline
+
+    pipeline = RunbookIngestionPipeline()
+    total_chunks = await pipeline.ingest_sample_runbooks()
+
+    return {
+        "status": "success",
+        "total_chunks": total_chunks,
+        "embedding_model": "text-embedding-3-small",
+        "embedding_dimensions": 768,
+    }
+
+
+@app.get("/api/v1/knowledge/search", tags=["Knowledge Base"])
+async def search_knowledge_base(q: str = "latency spike", service: str | None = None, top_k: int = 5) -> dict[str, Any]:
+    """Search the runbook knowledge base via hybrid RAG."""
+    from knowledge_base.retrieval.search import HybridSearchService
+
+    search = HybridSearchService()
+    service_tags = [service] if service else None
+    results = await search.search(query=q, service_tags=service_tags, top_k=top_k)
+
+    return {
+        "query": q,
+        "num_results": len(results),
+        "results": [ref.model_dump(mode="json") for ref in results],
+    }
+
+
+@app.get("/api/v1/knowledge/health", tags=["Knowledge Base"])
+async def knowledge_base_health() -> dict[str, Any]:
+    """Check knowledge base connectivity and document count."""
+    from knowledge_base.retrieval.search import HybridSearchService
+
+    search = HybridSearchService()
+    return await search.healthcheck()
+
+
 # ─── Run ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

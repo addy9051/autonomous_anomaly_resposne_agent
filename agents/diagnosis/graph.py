@@ -107,24 +107,76 @@ async def gather_context(state: DiagnosisState) -> dict:
 async def rag_runbook_lookup(state: DiagnosisState) -> dict:
     """
     Node 2: Search the runbook knowledge base via RAG.
-    Uses hybrid search (vector + BM25) with cross-encoder reranking.
+    Uses hybrid search (vector + BM25) with reciprocal rank fusion.
+    Falls back to synthetic runbooks if the knowledge base is unavailable.
     """
     anomaly = state["anomaly_event"]
     anomaly_type = anomaly.get("anomaly_type", "unknown")
     affected_services = anomaly.get("affected_services", [])
+    reasoning = anomaly.get("reasoning", "")
 
-    # In development, use synthetic runbook matches
-    synthetic_runbooks = _get_synthetic_runbooks(anomaly_type, affected_services)
+    # Build a natural-language query for semantic search
+    query = (
+        f"{anomaly_type.replace('_', ' ')} incident affecting {', '.join(affected_services)}. "
+        f"{reasoning[:200]}"
+    )
+
+    runbooks: list[dict] = []
+    source = "synthetic"
+
+    try:
+        from knowledge_base.retrieval.search import HybridSearchService
+
+        search = HybridSearchService()
+        health = await search.healthcheck()
+
+        if health["status"] == "healthy" and health["document_count"] > 0:
+            references = await search.search(
+                query=query,
+                service_tags=affected_services if affected_services else None,
+            )
+            if references:
+                runbooks = [ref.model_dump(mode="json") for ref in references]
+                source = health.get("dsn_target", "pgvector")
+                logger.info(
+                    "rag_search_success",
+                    num_results=len(runbooks),
+                    top_score=runbooks[0]["similarity_score"] if runbooks else 0,
+                    source=source,
+                    event_id=anomaly.get("event_id"),
+                )
+            else:
+                logger.info("rag_search_empty", event_id=anomaly.get("event_id"))
+        else:
+            logger.info(
+                "rag_kb_unavailable",
+                health_status=health.get("status"),
+                doc_count=health.get("document_count", 0),
+                event_id=anomaly.get("event_id"),
+            )
+    except Exception as e:
+        logger.warning("rag_search_failed", error=str(e), event_id=anomaly.get("event_id"))
+
+    # Fallback to synthetic runbooks if real search returned nothing
+    if not runbooks:
+        runbooks = _get_synthetic_runbooks(anomaly_type, affected_services)
+        source = "synthetic"
+        logger.info(
+            "rag_fallback_to_synthetic",
+            num_matches=len(runbooks),
+            event_id=anomaly.get("event_id"),
+        )
 
     logger.info(
         "runbook_lookup_complete",
-        num_matches=len(synthetic_runbooks),
+        num_matches=len(runbooks),
+        source=source,
         event_id=anomaly.get("event_id"),
     )
 
     return {
-        "runbook_matches": synthetic_runbooks,
-        "messages": [HumanMessage(content=f"Found {len(synthetic_runbooks)} matching runbooks")],
+        "runbook_matches": runbooks,
+        "messages": [HumanMessage(content=f"Found {len(runbooks)} matching runbooks (source: {source})")],
     }
 
 

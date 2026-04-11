@@ -84,6 +84,13 @@ class DataConfig(BaseSettings):
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
+    @property
+    def rag_dsn(self) -> str:
+        """DSN for the RAG knowledge base — prefers Supabase Cloud, falls back to local."""
+        if self.supabase_db_url and self.supabase_db_url != "postgresql://postgres:password@localhost:5432/agent_kb":
+            return self.supabase_db_url
+        return self.postgres_dsn
+
 
 class AgentConfig(BaseSettings):
     """Agent behavior configuration."""

@@ -1,12 +1,14 @@
 -- ═══════════════════════════════════════════════════════════════
---  pgvector Schema Migration — Knowledge Base
---  Creates tables for runbook embeddings and incident history
+--  Supabase Cloud pgvector Schema Migration — Knowledge Base
+--  
+--  HOW TO RUN:
+--  1. Go to your Supabase Dashboard → SQL Editor
+--  2. Paste this entire file and click "Run"
+--  3. Then seed: python scripts/seed_knowledge_base.py
 -- ═══════════════════════════════════════════════════════════════
 
--- Enable vector extension
+-- Enable required extensions (Supabase has these available)
 CREATE EXTENSION IF NOT EXISTS vector;
-
--- Enable full-text search
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ─── Runbook Documents ──────────────────────────────────────────
@@ -15,11 +17,11 @@ CREATE TABLE IF NOT EXISTS documents (
     id              SERIAL PRIMARY KEY,
     doc_id          TEXT UNIQUE NOT NULL,
     title           TEXT NOT NULL,
-    source          TEXT NOT NULL DEFAULT 'manual',        -- confluence, notion, manual
+    source          TEXT NOT NULL DEFAULT 'manual',
     content         TEXT NOT NULL,
     chunk_index     INTEGER NOT NULL DEFAULT 0,
     total_chunks    INTEGER NOT NULL DEFAULT 1,
-    embedding       vector(768),                          -- 768 dims: text-embedding-3-small Matryoshka truncation
+    embedding       vector(768),                  -- 768 dims: text-embedding-3-small with Matryoshka truncation
     metadata        JSONB DEFAULT '{}',
     service_tags    TEXT[] DEFAULT '{}',
     severity_relevance TEXT[] DEFAULT '{}',
@@ -37,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source);
 CREATE INDEX IF NOT EXISTS idx_documents_service_tags ON documents USING GIN(service_tags);
 CREATE INDEX IF NOT EXISTS idx_documents_severity ON documents USING GIN(severity_relevance);
 
--- Full-text search index
+-- Trigram indexes for keyword search
 CREATE INDEX IF NOT EXISTS idx_documents_content_trgm
     ON documents USING GIN(content gin_trgm_ops);
 
@@ -55,23 +57,19 @@ CREATE TABLE IF NOT EXISTS incidents (
     updated_at              TIMESTAMPTZ DEFAULT NOW(),
     resolved_at             TIMESTAMPTZ,
 
-    -- Anomaly event data
     anomaly_event           JSONB,
     severity                TEXT,
     anomaly_type            TEXT,
     affected_services       TEXT[],
 
-    -- Diagnosis data
     diagnosis_result        JSONB,
     root_cause              TEXT,
     root_cause_category     TEXT,
     confidence              FLOAT,
 
-    -- Action data
     action_results          JSONB DEFAULT '[]',
     actions_taken           TEXT[],
 
-    -- Resolution metadata
     time_to_detect_seconds  FLOAT,
     time_to_mitigate_seconds FLOAT,
     auto_resolved           BOOLEAN DEFAULT FALSE,
@@ -79,11 +77,9 @@ CREATE TABLE IF NOT EXISTS incidents (
     human_overrode          BOOLEAN DEFAULT FALSE,
     human_feedback          TEXT,
 
-    -- Cost tracking
     total_llm_tokens_used   INTEGER DEFAULT 0,
     total_llm_cost_usd      FLOAT DEFAULT 0.0,
 
-    -- RL training data
     reward                  FLOAT,
     state_features          FLOAT[],
     action_label            TEXT
@@ -93,7 +89,6 @@ CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
 CREATE INDEX IF NOT EXISTS idx_incidents_created ON incidents(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
 CREATE INDEX IF NOT EXISTS idx_incidents_root_cause ON incidents(root_cause_category);
-CREATE INDEX IF NOT EXISTS idx_incidents_auto_resolved ON incidents(auto_resolved);
 
 
 -- ─── Agent Audit Log ────────────────────────────────────────────
@@ -119,7 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_incident ON agent_audit_log(incident_id);
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON agent_audit_log(timestamp DESC);
 
 
--- ─── Feedback / RL Training Data ────────────────────────────────
+-- ─── RL Training Data ───────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS rl_training_data (
     id              SERIAL PRIMARY KEY,

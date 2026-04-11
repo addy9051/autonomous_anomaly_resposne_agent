@@ -32,6 +32,7 @@ class HybridSearchService:
         self.settings = get_settings()
         self.embeddings = OpenAIEmbeddings(
             model="text-embedding-3-small",
+            dimensions=768,
             api_key=self.settings.llm.openai_api_key,
         )
         self.top_k = self.settings.agent.rag_top_k
@@ -60,7 +61,7 @@ class HybridSearchService:
         # Generate query embedding
         query_embedding = await self.embeddings.aembed_query(query)
 
-        conn = await asyncpg.connect(self.settings.data.postgres_dsn)
+        conn = await asyncpg.connect(self.settings.data.rag_dsn, statement_cache_size=0)
         try:
             # 1. Dense vector search
             vector_results = await self._vector_search(conn, query_embedding, service_tags, k * 2)
@@ -214,3 +215,24 @@ class HybridSearchService:
             ):
                 steps.append(stripped)
         return steps[:10]  # Limit to 10 steps
+
+    async def healthcheck(self) -> dict[str, Any]:
+        """Check if the pgvector database is reachable and has ingested documents."""
+        try:
+            conn = await asyncpg.connect(self.settings.data.rag_dsn, statement_cache_size=0)
+            try:
+                row = await conn.fetchrow("SELECT count(*) AS cnt FROM documents")
+                doc_count = row["cnt"] if row else 0
+                return {
+                    "status": "healthy",
+                    "document_count": doc_count,
+                    "dsn_target": "supabase" if "supabase" in self.settings.data.rag_dsn else "local",
+                }
+            finally:
+                await conn.close()
+        except Exception as e:
+            return {
+                "status": "unavailable",
+                "error": str(e),
+                "document_count": 0,
+            }

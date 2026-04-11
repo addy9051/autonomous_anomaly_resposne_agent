@@ -12,6 +12,7 @@ Processes runbook documents through:
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
 
 import asyncpg
@@ -44,6 +45,7 @@ class RunbookIngestionPipeline:
         )
         self.embeddings = OpenAIEmbeddings(
             model="text-embedding-3-small",
+            dimensions=768,
             api_key=self.settings.llm.openai_api_key,
         )
         logger.info("ingestion_pipeline_initialized")
@@ -81,7 +83,7 @@ class RunbookIngestionPipeline:
 
         # Upsert to database
         chunk_ids = []
-        conn = await asyncpg.connect(self.settings.data.postgres_dsn)
+        conn = await asyncpg.connect(self.settings.data.rag_dsn, statement_cache_size=0)
         try:
             for i, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=False)):
                 doc_id = self._generate_doc_id(title, i)
@@ -106,7 +108,7 @@ class RunbookIngestionPipeline:
                     i,
                     len(chunks),
                     str(embedding),  # pgvector accepts string representation
-                    metadata or {},
+                    json.dumps(metadata or {}),
                     service_tags or [],
                     severity_relevance or [],
                 )
@@ -362,6 +364,129 @@ If 3+ pods crash-looping for > 5 minutes, page Platform Engineering on-call.
 
 ## Escalation
 If error rate > 10% for > 5 minutes, trigger P1 incident response.
+""",
+            },
+            {
+                "title": "Resource Saturation Response",
+                "service_tags": ["payment-gateway", "fraud-api", "kubernetes"],
+                "severity_relevance": ["critical", "high"],
+                "content": """# Resource Saturation Response
+
+## Symptoms
+- CPU utilization > 85% sustained for > 5 minutes
+- Memory usage approaching OOM kill threshold
+- Disk I/O wait time > 20%
+- Network bandwidth saturation on ingress/egress
+
+## Investigation Steps
+
+### Step 1: Identify Saturated Resource
+- Check `kubectl top nodes` and `kubectl top pods` for resource usage
+- Query Prometheus: `container_cpu_usage_seconds_total`, `container_memory_working_set_bytes`
+- Check disk IOPS: `node_disk_io_time_seconds_total`
+
+### Step 2: Identify Root Cause
+- CPU: Look for runaway processes, GC storms, or crypto-mining containers
+- Memory: Check for memory leaks via heap dumps, OOM events in `dmesg`
+- Disk: Check for log flooding, temp file accumulation, or WAL buildup
+
+### Step 3: Check for Cascading Failure
+- Verify HPA (Horizontal Pod Autoscaler) is responding
+- Check if node auto-provisioning is triggering in GKE Autopilot
+- Watch for downstream services being affected by backpressure
+
+### Step 4: Remediation
+1. CPU saturation: Scale horizontally (increase replicas) or vertically (increase CPU limits)
+2. Memory leak: Restart affected pods, file ticket for code fix
+3. Disk saturation: Rotate logs, clean temp files, resize PVCs
+4. Network: Rate limit aggressive clients, scale load balancer
+5. If HPA is maxed: Increase maxReplicas or add node pool capacity
+
+## Escalation
+If resource saturation causes cascading failures across 3+ services, trigger P1.
+""",
+            },
+            {
+                "title": "Security Incident Investigation",
+                "service_tags": ["api-gateway", "fraud-api", "payment-gateway"],
+                "severity_relevance": ["critical", "high"],
+                "content": """# Security Incident Investigation
+
+## Symptoms
+- Spike in 401/403 HTTP responses
+- Unusual geographic distribution of API requests
+- Brute-force authentication attempts detected
+- API abuse or scraping patterns in access logs
+- Anomalous JWT token usage or expired token flood
+
+## Investigation Steps
+
+### Step 1: Classify the Threat
+- Check WAF (Web Application Firewall) logs for blocked requests
+- Analyze request patterns: rate, source IPs, user agents
+- Determine if attack is automated (consistent timing) vs. manual
+
+### Step 2: Assess Blast Radius
+- Check if any credentials have been compromised
+- Verify no unauthorized data access in audit logs
+- Check for privilege escalation attempts in RBAC logs
+
+### Step 3: Containment
+- Block offending IP ranges at the load balancer / WAF level
+- Rotate compromised API keys or service account credentials
+- Enable enhanced logging on affected endpoints
+
+### Step 4: Remediation
+1. DDoS/scraping: Enable rate limiting, deploy Cloud Armor rules
+2. Credential stuffing: Force password reset, enable MFA
+3. API abuse: Add request signing, tighten CORS policies
+4. Token theft: Rotate secrets, reduce token expiry windows
+5. Internal threat: Revoke access, engage security team
+
+## Escalation
+All confirmed security incidents must be reported to InfoSec within 30 minutes.
+""",
+            },
+            {
+                "title": "Transaction Volume Anomaly Response",
+                "service_tags": ["payment-gateway", "fraud-api"],
+                "severity_relevance": ["high", "medium"],
+                "content": """# Transaction Volume Anomaly Response
+
+## Symptoms
+- Transaction throughput drops or spikes > 3 standard deviations from baseline
+- Sudden drop in payment success rate
+- Unexpected volume surge (flash sale, viral event, or bot attack)
+- Queue depth increasing on payment processing topics
+
+## Investigation Steps
+
+### Step 1: Validate the Anomaly
+- Compare current TPS against 7-day and 30-day baselines
+- Check if the anomaly correlates with a known business event (marketing campaign, etc.)
+- Verify monitoring data is accurate (rule out telemetry pipeline issues)
+
+### Step 2: Volume Drop Investigation
+- Check upstream client health (mobile app, web checkout)
+- Verify DNS resolution to payment endpoints
+- Check for regional outages in cloud provider status pages
+- Validate third-party payment processor (Stripe, Adyen) status
+
+### Step 3: Volume Spike Investigation
+- Check for bot traffic patterns (consistent intervals, single IP ranges)
+- Verify rate limiters are functioning
+- Check Kafka consumer lag on payment processing topics
+- Monitor database write throughput for bottlenecks
+
+### Step 4: Remediation
+1. Drop due to outage: Failover to backup payment processor
+2. Drop due to client bug: Coordinate with frontend team for hotfix
+3. Spike from bots: Block offending traffic, tighten rate limits
+4. Organic spike: Auto-scale payment workers, increase Kafka partitions
+5. Queue backup: Scale consumers, check for poison messages
+
+## Escalation
+If payment success rate drops below 95% for > 3 minutes, trigger P1 revenue-impact incident.
 """,
             },
         ]
