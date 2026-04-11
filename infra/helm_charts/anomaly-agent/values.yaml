@@ -34,3 +34,22 @@ secretName: "agent-secrets"
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Auto-scaling via HPA
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Prometheus Monitoring
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  additionalLabels:
+    release: prometheus-operator
+
+# Canary / Blue-Green Deployments (Argo Rollouts)
+canary:
+  enabled: false

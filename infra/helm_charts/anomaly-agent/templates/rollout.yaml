@@ -1,12 +1,12 @@
-{{- if not .Values.canary.enabled }}
-apiVersion: apps/v1
-kind: Deployment
+{{- if .Values.canary.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: {{ include "anomaly-agent.fullname" . }}
   labels:
     app.kubernetes.io/name: {{ include "anomaly-agent.name" . }}
 spec:
-  replicas: 2
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "anomaly-agent.name" . }}
@@ -37,4 +37,11 @@ spec:
                   key: openai-key
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+  strategy:
+    canary:
+      steps:
+      - setWeight: 20
+      - pause: {duration: 10m}
+      - setWeight: 50
+      - pause: {duration: 10m}
 {{- end }}

@@ -52,6 +52,10 @@ class FeedbackLoopAgent:
             f"--quiet --cb_type mtr" # Model-based Training with Reward
         )
         self.vw = pyvw.vw(vw_params)
+        
+        # A/B Testing: Experimental model with aggressive exploration
+        vw_experimental_params = vw_params.replace(f"--epsilon {epsilon}", "--epsilon 0.20")
+        self.vw_experimental = pyvw.vw(vw_experimental_params)
 
         # Persistence location
         self.model_path = "data/models/feedback_policy.vw"
@@ -252,14 +256,22 @@ class FeedbackLoopAgent:
             from agents.feedback.reward import _extract_action_label
             action = _extract_action_label(incident)
             
-            # 3. Train Vowpal Wabbit online
+            # 3. Train Vowpal Wabbit online (with A/B splitting)
+            import hashlib
             vw_example = self.to_vw_format(
                 incident, 
                 chosen_action=action, 
                 reward=reward,
                 probability=0.25 # simplified for now
             )
-            self.vw.learn(vw_example)
+            
+            is_experimental = hashlib.sha256(incident.incident_id.encode()).digest()[0] % 2 == 0
+            if is_experimental and hasattr(self, 'vw_experimental'):
+                self.vw_experimental.learn(vw_example)
+                ab_group = "experimental"
+            else:
+                self.vw.learn(vw_example)
+                ab_group = "control"
 
             # 4. Add to experience buffer with semantic context
             experience = {
@@ -287,6 +299,7 @@ class FeedbackLoopAgent:
             span.set_attribute("reward", reward)
             span.set_attribute("action", action)
             span.set_attribute("has_semantic_feedback", semantic_reward is not None)
+            span.set_attribute("ab_group", ab_group)
 
             logger.info(
                 "outcome_recorded",

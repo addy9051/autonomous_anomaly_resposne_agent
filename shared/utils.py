@@ -131,6 +131,27 @@ async def get_redis_client() -> aioredis.Redis:
     )
 
 
+async def acquire_distributed_lock(lock_key: str, ttl_seconds: int = 300) -> bool:
+    """
+    Attempt to acquire a distributed lock using Redis.
+    Uses SETNX semantics.
+    
+    Returns:
+        True if the lock was acquired, False if it was already held.
+    """
+    redis = await get_redis_client()
+    try:
+        acquired = await redis.set(lock_key, "locked", ex=ttl_seconds, nx=True)
+        return bool(acquired)
+    except Exception as e:
+        logger = get_logger("distributed_lock")
+        logger.error("lock_acquisition_error", key=lock_key, error=str(e))
+        # Fail open or closed depending on requirements. Choosing fail-open for telemetry.
+        return True
+    finally:
+        await redis.aclose()
+
+
 # ─── PostgreSQL Client ──────────────────────────────────────────
 
 
@@ -152,6 +173,11 @@ def get_async_session_factory() -> Any:  # noqa: ANN401
 
 
 # ─── LLM Cost Tracker ───────────────────────────────────────────
+
+
+class BudgetExceededError(Exception):
+    """Raised when an agent exceeds its token or cost budget."""
+    pass
 
 
 class LLMCostTracker:
@@ -193,6 +219,11 @@ class LLMCostTracker:
             "cost_usd": round(cost, 6),
             "cumulative_tokens": self.total_tokens,
         })
+        
+        if self.budget_exceeded:
+            logger = get_logger("cost_tracker")
+            logger.error("budget_exceeded", incident_id=self.incident_id, tokens=self.total_tokens, max=self.max_tokens)
+            raise BudgetExceededError(f"Incident {self.incident_id} exceeded token budget of {self.max_tokens}")
 
     @property
     def budget_remaining(self) -> int:
