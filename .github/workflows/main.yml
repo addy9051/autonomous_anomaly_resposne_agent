@@ -141,4 +141,6 @@ jobs:
           kubectl apply -f infra/k8s/deployment.yaml
 
       - name: Wait for Rollout
-        run: kubectl rollout status deployment/anomaly-agent --timeout=300s
+        run: |
+          kubectl rollout status deployment/anomaly-agent-trainer --timeout=300s
+          kubectl rollout status deployment/anomaly-agent-predictor --timeout=300s
