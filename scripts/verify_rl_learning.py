@@ -38,9 +38,9 @@ async def simulate_learning() -> None:
     orchestrator = AgentOrchestrator()
     feedback = orchestrator.feedback_agent
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("PHASE 7: RL LEARNING VERIFICATION (SIMULATION)")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
     # Scenarios designed to test the RewardAgent's judgement
     scenarios = [
@@ -50,7 +50,7 @@ async def simulate_learning() -> None:
             "rca": "High CPU utilization on payment-gateway leading to request queuing and P99 latency spikes.",
             "action": "scale_replicas",
             "success": True,
-            "expected_reward": "high"
+            "expected_reward": "high",
         },
         {
             "name": "Illogical RCA (Error Rate vs Network)",
@@ -61,7 +61,7 @@ async def simulate_learning() -> None:
             ),
             "action": "flush_cache",
             "success": False,
-            "expected_reward": "low"
+            "expected_reward": "low",
         },
         {
             "name": "False Positive (Normal Metrics)",
@@ -70,12 +70,12 @@ async def simulate_learning() -> None:
             "action": "no_action",
             "success": True,
             "is_fp": True,
-            "expected_reward": "neutral/low"
-        }
+            "expected_reward": "neutral/low",
+        },
     ]
 
     for i, scenario in enumerate(scenarios):
-        print(f"--- Scenario {i+1}: {scenario['name']}")
+        print(f"--- Scenario {i + 1}: {scenario['name']}")
 
         incident_id = f"sim-{uuid.uuid4().hex[:8]}"
 
@@ -84,13 +84,11 @@ async def simulate_learning() -> None:
             severity=Severity.HIGH,
             affected_services=["payment-gateway"],
             anomaly_type=(
-                AnomalyType.LATENCY_SPIKE
-                if scenario["metrics"]["p99_latency_ms"] > 1000
-                else AnomalyType.ERROR_RATE
+                AnomalyType.LATENCY_SPIKE if scenario["metrics"]["p99_latency_ms"] > 1000 else AnomalyType.ERROR_RATE
             ),
             metrics_snapshot=MetricsSnapshot(**scenario["metrics"]),
             reasoning="Simulated anomaly for Phase 7 verification.",
-            confidence=0.85
+            confidence=0.85,
         )
 
         # 2. Create Mock Diagnosis
@@ -101,7 +99,7 @@ async def simulate_learning() -> None:
             root_cause_category=RootCauseCategory.APPLICATION,
             recommended_actions=[RecommendedAction(action=scenario["action"], tier=ActionTier.TIER_1_AUTO)],
             confidence=0.75,
-            reasoning_chain=f"Observation: {scenario['metrics']}. Conclusion: {scenario['rca']}"
+            reasoning_chain=f"Observation: {scenario['metrics']}. Conclusion: {scenario['rca']}",
         )
 
         # 3. Create Mock Action Result
@@ -110,7 +108,7 @@ async def simulate_learning() -> None:
             action_taken=scenario["action"],
             tier=ActionTier.TIER_1_AUTO,
             execution_status="success" if scenario["success"] else "failed",
-            timestamp=datetime.utcnow()
+            timestamp=datetime.utcnow(),
         )
 
         # 4. Assemble Incident Record
@@ -123,7 +121,7 @@ async def simulate_learning() -> None:
             auto_resolved=scenario["success"] and not scenario.get("is_fp", False),
             false_positive=scenario.get("is_fp", False),
             time_to_mitigate_seconds=45 if scenario["success"] else None,
-            resolved_at=datetime.utcnow()
+            resolved_at=datetime.utcnow(),
         )
 
         # 5. Run Reward Agent Evaluation
@@ -142,20 +140,21 @@ async def simulate_learning() -> None:
         print(f"   [Stats] Buffer Status: {len(feedback.experience_buffer)} experiences\n")
 
     # Final Status
-    print("="*60)
+    print("=" * 60)
     print("📊 FINAL POLICY STATUS")
-    print("="*60)
+    print("=" * 60)
     status = feedback.get_policy_status()
     print(f"Policy Version: {status['current_version']}")
     print(f"Total Experiences: {status['buffer_size']}")
 
     print("\nAction Performance Stats:")
-    for action, stats in status['action_stats'].items():
+    for action, stats in status["action_stats"].items():
         print(f"  🔹 {action:15} | count: {stats['count']} | mean_reward: {stats['mean_reward']:.4f}")
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("PHASE 7 VERIFICATION COMPLETE")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
+
 
 if __name__ == "__main__":
     asyncio.run(simulate_learning())

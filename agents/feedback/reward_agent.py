@@ -41,9 +41,7 @@ class RewardAgent:
             openai_api_key=self.settings.llm.openai_api_key,
         )
 
-    async def evaluate(
-        self, incident: IncidentRecord, cost_tracker: LLMCostTracker
-    ) -> SemanticReward:
+    async def evaluate(self, incident: IncidentRecord, cost_tracker: LLMCostTracker) -> SemanticReward:
         """
         Evaluate the quality of an incident resolution.
 
@@ -117,26 +115,23 @@ class RewardAgent:
 
         # Prepare context strings
         metrics_str = json.dumps(anomaly.metrics_snapshot.model_dump(), indent=2) if anomaly else "N/A"
-        actions_list = [
-            {"action": a.action_taken, "status": a.execution_status, "tier": a.tier}
-            for a in actions
-        ]
+        actions_list = [{"action": a.action_taken, "status": a.execution_status, "tier": a.tier} for a in actions]
 
         prompt = f"""
 Evaluate the following autonomous incident resolution.
 Your goal is to determine if the agent made a logically sound diagnosis and took the most effective action.
 
 ### 1. ANOMALY CONTEXT
-- **Type**: {anomaly.anomaly_type if anomaly else 'Unknown'}
-- **Severity**: {anomaly.severity if anomaly else 'Unknown'}
+- **Type**: {anomaly.anomaly_type if anomaly else "Unknown"}
+- **Severity**: {anomaly.severity if anomaly else "Unknown"}
 - **Observed Metrics**:
 {metrics_str}
 
 ### 2. AGENT DIAGNOSIS (Root Cause Analysis)
-- **Claimed Root Cause**: {diagnosis.root_cause if diagnosis else 'N/A'}
-- **Internal Category**: {diagnosis.root_cause_category if diagnosis else 'N/A'}
+- **Claimed Root Cause**: {diagnosis.root_cause if diagnosis else "N/A"}
+- **Internal Category**: {diagnosis.root_cause_category if diagnosis else "N/A"}
 - **Reasoning Chain**:
-{diagnosis.reasoning_chain if diagnosis else 'N/A'}
+{diagnosis.reasoning_chain if diagnosis else "N/A"}
 
 ### 3. ACTIONS EXECUTED
 - **Remediation Steps**: {json.dumps(actions_list, indent=2)}

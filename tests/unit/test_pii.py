@@ -5,7 +5,6 @@ Tests cover: credit cards, emails, IPs, SSNs, merchant IDs,
 API keys, edge cases, and recursive dict sanitization.
 """
 
-
 from shared.pii import sanitize_dict, sanitize_for_llm
 
 
@@ -118,10 +117,7 @@ class TestEdgeCases:
         assert "0.025" in result
 
     def test_multiple_pii_types(self) -> None:
-        text = (
-            "User john@test.com from 10.0.0.1 used card 4111111111111111 "
-            "at MERCH_GLOBALSHOP12345"
-        )
+        text = "User john@test.com from 10.0.0.1 used card 4111111111111111 at MERCH_GLOBALSHOP12345"
         result = sanitize_for_llm(text)
         assert "john@test.com" not in result
         assert "10.0.0.1" not in result

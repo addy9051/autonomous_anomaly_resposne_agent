@@ -35,8 +35,6 @@ def get_chat_model(
     """
     settings = get_settings()
 
-
-
     model_lower = model_name.lower()
 
     # 1. Anthropic (Claude)
@@ -67,7 +65,7 @@ def get_chat_model(
             ) from None
         return ChatGoogleGenerativeAI(
             model=model_name,
-            google_api_key=settings.llm.google_application_credentials or "", # Prioritize key if set
+            google_api_key=settings.llm.google_application_credentials or "",  # Prioritize key if set
             temperature=temperature,
             max_output_tokens=max_tokens or 2048,
             **kwargs,
@@ -79,8 +77,7 @@ def get_chat_model(
             from langchain_openai import ChatOpenAI
         except ImportError:
             raise ImportError(
-                "langchain-openai package is required for OpenAI models. "
-                "Install it with: pip install langchain-openai"
+                "langchain-openai package is required for OpenAI models. Install it with: pip install langchain-openai"
             ) from None
         return ChatOpenAI(
             model=model_name,

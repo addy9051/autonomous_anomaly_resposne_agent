@@ -83,8 +83,8 @@ class MonitoringAgent:
                         metadata={
                             "agent_version": "1.0.0",
                             "prompt_version": "mon-react-v1",
-                            "affected_service": event.service_name
-                        }
+                            "affected_service": event.service_name,
+                        },
                     )
                 except Exception as e:
                     logger.warning("langfuse_init_failed", error=str(e))
@@ -132,9 +132,7 @@ class MonitoringAgent:
 
         # Build the prompt (PII-masked before LLM call)
         raw_event_json = json.dumps(event.model_dump(mode="json"), indent=2, default=str)
-        human_msg = MONITORING_HUMAN_PROMPT.format(
-            telemetry_event=sanitize_for_llm(raw_event_json)
-        )
+        human_msg = MONITORING_HUMAN_PROMPT.format(telemetry_event=sanitize_for_llm(raw_event_json))
 
         messages = [
             SystemMessage(content=MONITORING_SYSTEM_PROMPT),
@@ -168,13 +166,17 @@ class MonitoringAgent:
                     if tool_fn:
                         result = await tool_fn.ainvoke(tool_args)
                         from langchain_core.messages import ToolMessage
+
                         messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
                     else:
                         from langchain_core.messages import ToolMessage
-                        messages.append(ToolMessage(
-                            content=f"Error: Unknown tool '{tool_name}'",
-                            tool_call_id=tool_call["id"],
-                        ))
+
+                        messages.append(
+                            ToolMessage(
+                                content=f"Error: Unknown tool '{tool_name}'",
+                                tool_call_id=tool_call["id"],
+                            )
+                        )
             else:
                 # Agent is done reasoning — parse the output
                 return self._parse_response(response.content, event)

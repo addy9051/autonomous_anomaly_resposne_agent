@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Add project root to python path to allow imports when run as script
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from agents.feedback.finetuner import generate_finetuning_dataset
 from shared.schemas import AnomalyEvent, AnomalyType, IncidentRecord, IncidentStatus, MetricsSnapshot, Severity
@@ -42,11 +42,12 @@ def get_historical_incidents(count: int = 100) -> list[IncidentRecord]:
                 anomaly_type=AnomalyType.LATENCY_SPIKE,
                 metrics_snapshot=MetricsSnapshot(p99_latency_ms=1200.5, error_rate=0.08),
                 reasoning="Saw latency spike, assuming DB contention.",
-                confidence=0.8
+                confidence=0.8,
             )
 
         incidents.append(inc)
     return incidents
+
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Extract negative-reward incidents into OpenAI JSONL")
@@ -69,6 +70,7 @@ async def main() -> None:
         print("    openai api fine_tunes.create -t <FILE_ID> -m gpt-4o-mini")
     else:
         print("\n⏩ Skipped: Not enough negative-reward incidents found to form a dataset.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

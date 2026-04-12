@@ -23,26 +23,29 @@ async def test_end_to_end_mocked_incident_flow() -> None:
         anomaly_type="latency_spike",
         metrics_snapshot={"p99_latency_ms": 1500, "error_rate": 0.05},
         reasoning="Mocked anomaly detection triggered.",
-        confidence=0.95
+        confidence=0.95,
     )
 
     # 2. Patch the graph invocation and action execution
-    with patch("agents.diagnosis.graph.build_diagnosis_graph") as mock_build, \
-         patch("agents.action.agent.get_chat_model") as mock_action_llm, \
-         patch("agents.action.agent.trigger_workflow") as mock_trigger_workflow:
-
+    with (
+        patch("agents.diagnosis.graph.build_diagnosis_graph") as mock_build,
+        patch("agents.action.agent.get_chat_model") as mock_action_llm,
+        patch("agents.action.agent.trigger_workflow") as mock_trigger_workflow,
+    ):
         # Mock theCompiled Graph
         mock_graph = MagicMock()
-        mock_graph.ainvoke = AsyncMock(return_value={
-            "diagnosis_result": {
-                "root_cause": "Test Cause",
-                "root_cause_category": "application",
-                "runbook_references": [],
-                "recommended_actions": [{"action": "scale_replicas", "tier": 1, "params": {}}],
-                "reasoning_chain": "Scale it",
-                "confidence": 0.99
+        mock_graph.ainvoke = AsyncMock(
+            return_value={
+                "diagnosis_result": {
+                    "root_cause": "Test Cause",
+                    "root_cause_category": "application",
+                    "runbook_references": [],
+                    "recommended_actions": [{"action": "scale_replicas", "tier": 1, "params": {}}],
+                    "reasoning_chain": "Scale it",
+                    "confidence": 0.99,
+                }
             }
-        })
+        )
         mock_build.return_value = mock_graph
 
         # Mock the Action LLM response (for summary)
@@ -68,7 +71,7 @@ async def test_end_to_end_mocked_incident_flow() -> None:
             incident_id=diagnosis_result.incident_id,
             event_id=event.event_id,
             status=IncidentStatus.DETECTED,
-            created_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
         )
 
         action_results = await action_agent.execute(diagnosis_result, incident)

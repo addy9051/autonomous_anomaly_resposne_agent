@@ -1,4 +1,3 @@
-
 import pytest
 
 from shared.utils import BudgetExceededError, LLMCostTracker

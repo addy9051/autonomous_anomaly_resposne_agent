@@ -60,9 +60,7 @@ class AgentOrchestrator:
 
         logger.info("orchestrator_initialized")
 
-    async def process_event(
-        self, event: TelemetryEvent, dry_run: bool = False
-    ) -> IncidentRecord | None:
+    async def process_event(self, event: TelemetryEvent, dry_run: bool = False) -> IncidentRecord | None:
         """
         Process a single telemetry event through the full pipeline.
 
@@ -112,9 +110,7 @@ class AgentOrchestrator:
 
             diagnosis = await self.diagnosis_agent.diagnose(anomaly, cost_tracker)
             incident.diagnosis_result = diagnosis
-            incident.time_to_detect_seconds = (
-                datetime.utcnow() - incident.created_at
-            ).total_seconds()
+            incident.time_to_detect_seconds = (datetime.utcnow() - incident.created_at).total_seconds()
 
             logger.info(
                 "diagnosis_complete",
@@ -126,13 +122,9 @@ class AgentOrchestrator:
 
             # ── Step 4: Action Agent — Execute Remediation ──
             incident.status = IncidentStatus.ACTION_PENDING
-            await self.action_agent.execute(
-                diagnosis, incident, cost_tracker, dry_run=dry_run
-            )
+            await self.action_agent.execute(diagnosis, incident, cost_tracker, dry_run=dry_run)
 
-            incident.time_to_mitigate_seconds = (
-                datetime.utcnow() - incident.created_at
-            ).total_seconds()
+            incident.time_to_mitigate_seconds = (datetime.utcnow() - incident.created_at).total_seconds()
 
             # ── Step 5: Feedback Loop — Record Outcome (Phase 7 Hybrid) ──
             # First, use LLM-as-a-Judge to evaluate the qualitative resolution
@@ -151,7 +143,7 @@ class AgentOrchestrator:
                 reward=reward,
                 tokens_used=cost_tracker.total_tokens,
                 cost_usd=round(cost_tracker.total_cost, 4),
-                justification=semantic_reward.justification[:100] if semantic_reward else "N/A"
+                justification=semantic_reward.justification[:100] if semantic_reward else "N/A",
             )
 
             # Move to resolved
@@ -258,6 +250,7 @@ async def main() -> None:
     """Main entry point."""
     # 1. Load settings early to sync environment (Final Hardening)
     from shared.config import get_settings
+
     get_settings()
 
     import argparse
@@ -286,7 +279,7 @@ async def main() -> None:
         print("\n🚀 Running demo with 5 telemetry events (2 anomalies)...\n")
         incidents = await orchestrator.run_batch(events, dry_run=True)
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"📊 Results: {len(incidents)} incidents detected from 5 events")
         for inc in incidents:
             print(f"\n  🔴 Incident {inc.incident_id[:8]}...")

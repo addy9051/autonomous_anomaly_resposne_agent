@@ -22,8 +22,8 @@ if TYPE_CHECKING:
 logger = get_logger("reward_function")
 
 # Baseline metrics (from historical data)
-BASELINE_TTM_SECONDS = 2700.0   # 45 minutes baseline MTTR
-BASELINE_TTD_SECONDS = 900.0    # 15 minutes baseline MTTA
+BASELINE_TTM_SECONDS = 2700.0  # 45 minutes baseline MTTR
+BASELINE_TTD_SECONDS = 900.0  # 15 minutes baseline MTTA
 
 
 def compute_reward(incident: IncidentRecord, semantic_reward: SemanticReward | None = None) -> float:
@@ -61,7 +61,7 @@ def compute_reward(incident: IncidentRecord, semantic_reward: SemanticReward | N
             "intrinsic_reward_added",
             score=semantic_reward.overall_quality_score,
             scaled_reward=intrinsic_r,
-            justification=semantic_reward.justification[:100]
+            justification=semantic_reward.justification[:100],
         )
     else:
         # If no semantic reward, we default to no intrinsic signal (neutral 0.0)
@@ -90,12 +90,14 @@ def compute_batch_rewards(incidents: list[IncidentRecord]) -> list[dict]:
     for incident in incidents:
         reward = compute_reward(incident)
         features = _extract_state_features(incident)
-        results.append({
-            "incident_id": incident.incident_id,
-            "reward": reward,
-            "features": features,
-            "action": _extract_action_label(incident),
-        })
+        results.append(
+            {
+                "incident_id": incident.incident_id,
+                "reward": reward,
+                "features": features,
+                "action": _extract_action_label(incident),
+            }
+        )
     return results
 
 
@@ -110,36 +112,42 @@ def _extract_state_features(incident: IncidentRecord) -> list[float]:
     # 1. Anomaly dimensions (7 features)
     if incident.anomaly_event:
         m = incident.anomaly_event.metrics_snapshot
-        features.extend([
-            min(1.0, (m.p99_latency_ms or 0.0) / 10000.0), # Latency capped at 10s
-            min(1.0, (m.error_rate or 0.0)),
-            (m.cpu_percent or 0.0) / 100.0,
-            (m.memory_percent or 0.0) / 100.0,
-            min(1.0, (m.kafka_consumer_lag or 0.0) / 50000.0),
-            (m.fraud_score_mean or 0.0),
-            incident.anomaly_event.confidence,
-        ])
+        features.extend(
+            [
+                min(1.0, (m.p99_latency_ms or 0.0) / 10000.0),  # Latency capped at 10s
+                min(1.0, (m.error_rate or 0.0)),
+                (m.cpu_percent or 0.0) / 100.0,
+                (m.memory_percent or 0.0) / 100.0,
+                min(1.0, (m.kafka_consumer_lag or 0.0) / 50000.0),
+                (m.fraud_score_mean or 0.0),
+                incident.anomaly_event.confidence,
+            ]
+        )
     else:
         features.extend([0.0] * 7)
 
     # 2. Diagnosis dimensions (4 features)
     if incident.diagnosis_result:
-        features.extend([
-            incident.diagnosis_result.confidence,
-            float(incident.diagnosis_result.is_novel_incident),
-            min(1.0, len(incident.diagnosis_result.recommended_actions) / 5.0),
-            # Numeric encoding of root cause category (Phase 7 expansion)
-            float(list(RootCauseCategory).index(incident.diagnosis_result.root_cause_category)) / 10.0
-        ])
+        features.extend(
+            [
+                incident.diagnosis_result.confidence,
+                float(incident.diagnosis_result.is_novel_incident),
+                min(1.0, len(incident.diagnosis_result.recommended_actions) / 5.0),
+                # Numeric encoding of root cause category (Phase 7 expansion)
+                float(list(RootCauseCategory).index(incident.diagnosis_result.root_cause_category)) / 10.0,
+            ]
+        )
     else:
         features.extend([0.0] * 4)
 
     # 3. Cost & Context (3 features)
-    features.extend([
-        min(1.0, incident.total_llm_tokens_used / 100000.0),
-        min(1.0, (incident.time_to_detect_seconds or 0.0) / 1800.0), # Capped at 30 mins
-        float(incident.status == IncidentStatus.RESOLVED)
-    ])
+    features.extend(
+        [
+            min(1.0, incident.total_llm_tokens_used / 100000.0),
+            min(1.0, (incident.time_to_detect_seconds or 0.0) / 1800.0),  # Capped at 30 mins
+            float(incident.status == IncidentStatus.RESOLVED),
+        ]
+    )
 
     return features
 

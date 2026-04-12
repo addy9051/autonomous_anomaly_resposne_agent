@@ -59,6 +59,7 @@ class HybridSearchService:
             List of RunbookReference sorted by relevance
         """
         import time
+
         start_time = time.time()
 
         with tracer.start_as_current_span("rag_retrieval") as span:
@@ -94,6 +95,7 @@ class HybridSearchService:
             if self.settings.llm.cohere_api_key and docs_map:
                 # Execute Cross-Encoder Reranking
                 import cohere
+
                 co = cohere.ClientV2(self.settings.llm.cohere_api_key)
 
                 # We must keep order aligned with doc_ids for the re-mapping
@@ -101,41 +103,40 @@ class HybridSearchService:
                 documents_text = [docs_map[did]["doc"]["content"] for did in doc_ids_list]
 
                 # Execute Cohere API
-                rerank_response = co.rerank(
-                    model="rerank-english-v3.0",
-                    query=query,
-                    documents=documents_text,
-                    top_n=k
-                )
+                rerank_response = co.rerank(model="rerank-english-v3.0", query=query, documents=documents_text, top_n=k)
 
                 # Build references from reranked results
                 for result in rerank_response.results:
                     did = doc_ids_list[result.index]
                     doc = docs_map[did]["doc"]
-                    references.append(RunbookReference(
-                        runbook_id=f"runbook://{doc['source']}/{doc['doc_id']}",
-                        title=doc["title"],
-                        similarity_score=round(result.relevance_score, 4),
-                        relevant_steps=self._extract_steps(doc["content"]),
-                    ))
+                    references.append(
+                        RunbookReference(
+                            runbook_id=f"runbook://{doc['source']}/{doc['doc_id']}",
+                            title=doc["title"],
+                            similarity_score=round(result.relevance_score, 4),
+                            relevant_steps=self._extract_steps(doc["content"]),
+                        )
+                    )
             else:
                 # No API key provided, fallback to pure RRF scoring
                 for doc_id, rrf_score in top_fused[:k]:
                     if doc_id in docs_map:
                         doc = docs_map[doc_id]["doc"]
-                        references.append(RunbookReference(
-                            runbook_id=f"runbook://{doc['source']}/{doc['doc_id']}",
-                            title=doc["title"],
-                            similarity_score=round(rrf_score, 4),
-                            relevant_steps=self._extract_steps(doc["content"]),
-                        ))
+                        references.append(
+                            RunbookReference(
+                                runbook_id=f"runbook://{doc['source']}/{doc['doc_id']}",
+                                title=doc["title"],
+                                similarity_score=round(rrf_score, 4),
+                                relevant_steps=self._extract_steps(doc["content"]),
+                            )
+                        )
 
             logger.info(
                 "search_complete",
                 query=query[:100],
                 num_results=len(references),
                 top_score=references[0].similarity_score if references else 0,
-                reranked_via_cohere=bool(self.settings.llm.cohere_api_key)
+                reranked_via_cohere=bool(self.settings.llm.cohere_api_key),
             )
 
             span.set_attribute("rag.num_results", len(references))

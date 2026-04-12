@@ -97,8 +97,10 @@ class ProcessEventRequest(BaseModel):
     event_type: str = "metric"
     payload: dict[str, Any] = {}
 
+
 class ApproveActionRequest(BaseModel):
     approved: bool = True
+
 
 class RunDemoRequest(BaseModel):
     num_events: int = 10
@@ -165,7 +167,7 @@ async def detailed_health() -> dict[str, Any]:
             "diagnosis": "connected",
             "action": "connected",
             "feedback": "connected",
-        }
+        },
     }
 
 
@@ -314,10 +316,7 @@ async def get_reward_history(limit: int = 100) -> dict[str, Any]:
     # Access experience buffer from feedback agent
     buffer = orchestrator.feedback_agent.experience_buffer[-limit:]
 
-    return {
-        "total": len(buffer),
-        "history": buffer
-    }
+    return {"total": len(buffer), "history": buffer}
 
 
 @app.post("/api/v1/incidents/{incident_id}/approve", tags=["Actions"])
@@ -330,12 +329,14 @@ async def approve_tier2_action(incident_id: str, request: ApproveActionRequest) 
     if not incident:
         # Check resolved just to be safe
         from shared.schemas import IncidentStatus
+
         for inc in orchestrator.resolved_incidents:
             if inc.incident_id == incident_id:
                 raise HTTPException(status_code=400, detail="Incident already resolved")
         raise HTTPException(status_code=404, detail="Incident not found")
 
     from shared.schemas import IncidentStatus
+
     if incident.status != IncidentStatus.ACTION_PENDING:
         detail = f"Incident is in status {incident.status.value}, expected ACTION_PENDING"
         raise HTTPException(status_code=400, detail=detail)

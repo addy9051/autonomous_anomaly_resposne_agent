@@ -18,6 +18,7 @@ from shared.utils import get_logger
 
 logger = get_logger("pubsub_client")
 
+
 class PubSubClient:
     """Async-friendly wrapper for Google Cloud Pub/Sub."""
 
@@ -66,7 +67,9 @@ class PubSubClient:
             logger.error("pubsub_publish_error", topic=topic_name, error=str(e))
             return ""
 
+
 _client = None
+
 
 def get_pubsub_client() -> PubSubClient:
     """Singleton getter for the PubSub client."""

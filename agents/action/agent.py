@@ -105,10 +105,7 @@ class ActionAgent:
                         session_id=diagnosis.incident_id,
                         user_id="sre-system",
                         tags=["agent:action", f"env:{self.settings.app.app_env}"],
-                        metadata={
-                            "agent_version": "1.0.0",
-                            "prompt_version": "act-tier-v1.8.0"
-                        }
+                        metadata={"agent_version": "1.0.0", "prompt_version": "act-tier-v1.8.0"},
                     )
                 except Exception as e:
                     logger.warning("langfuse_init_failed", error=str(e))
@@ -211,6 +208,7 @@ class ActionAgent:
         logger.info("tier3_human_required", action=action.action)
 
         from agents.action.pagerduty import trigger_pagerduty_incident
+
         pd_result = await trigger_pagerduty_incident(action, diagnosis)
 
         output = {
@@ -253,10 +251,13 @@ Format as:
 📊 **Current Status**: [resolved/pending/escalated]
 🔮 **Next Steps**: [if any]
 """
-        response = await self.llm.ainvoke([
-            SystemMessage(content="You are an SRE writing a concise incident summary for Slack."),
-            HumanMessage(content=prompt),
-        ], config={"callbacks": [handler]} if handler else None)
+        response = await self.llm.ainvoke(
+            [
+                SystemMessage(content="You are an SRE writing a concise incident summary for Slack."),
+                HumanMessage(content=prompt),
+            ],
+            config={"callbacks": [handler]} if handler else None,
+        )
 
         if cost_tracker and hasattr(response, "usage_metadata") and response.usage_metadata:
             cost_tracker.track(
@@ -295,17 +296,14 @@ Format as:
                 header = f"{icon} *Anomaly Detected: {diagnosis.incident_id[:8]}*"
 
                 blocks = [
-                    {
-                        "type": "section",
-                        "text": {"type": "mrkdwn", "text": f"{header}\n{summary}"}
-                    },
+                    {"type": "section", "text": {"type": "mrkdwn", "text": f"{header}\n{summary}"}},
                     {
                         "type": "context",
                         "elements": [
                             {"type": "mrkdwn", "text": f"*Incident ID:* `{diagnosis.incident_id}`"},
-                            {"type": "mrkdwn", "text": f"*Category:* `{diagnosis.root_cause_category.value}`"}
-                        ]
-                    }
+                            {"type": "mrkdwn", "text": f"*Category:* `{diagnosis.root_cause_category.value}`"},
+                        ],
+                    },
                 ]
 
                 await client.chat_postMessage(channel=channel, blocks=blocks, text=summary)
@@ -313,9 +311,7 @@ Format as:
 
             except ImportError:
                 logger.warning(
-                    "slack_sdk_missing",
-                    incident_id=diagnosis.incident_id,
-                    tip="Install with: pip install slack_sdk"
+                    "slack_sdk_missing", incident_id=diagnosis.incident_id, tip="Install with: pip install slack_sdk"
                 )
             except SlackApiError as e:
                 error_type = e.response["error"]
@@ -327,7 +323,7 @@ Format as:
                         tip=(
                             f"HINT: Have you invited the bot to channel '{channel}'? "
                             "Type /invite @YourBotName in that channel."
-                        )
+                        ),
                     )
                 else:
                     logger.error("slack_api_error", error=error_type, incident_id=diagnosis.incident_id)

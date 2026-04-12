@@ -66,7 +66,7 @@ async def test_search(query: str) -> None:
     from knowledge_base.retrieval.search import HybridSearchService
 
     search = HybridSearchService()
-    print(f"\nSearching: \"{query}\"\n")
+    print(f'\nSearching: "{query}"\n')
 
     results = await search.search(query=query)
 

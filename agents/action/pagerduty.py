@@ -69,23 +69,17 @@ async def trigger_pagerduty_incident(
             diagnosis.reasoning_chain[:500] + "..."
             if len(diagnosis.reasoning_chain) > 500
             else diagnosis.reasoning_chain
-        )
+        ),
     }
 
     payload = {
         "incident": {
             "type": "incident",
             "title": f"[SRE Auto-Escalation] Tier 3 Action Required: {action.action}",
-            "service": {
-                "id": service_id,
-                "type": "service_reference"
-            },
+            "service": {"id": service_id, "type": "service_reference"},
             "urgency": "high",
             "incident_key": diagnosis.incident_id,  # Deduplication key
-            "body": {
-                "type": "incident_body",
-                "details": json.dumps(details, indent=2)
-            }
+            "body": {"type": "incident_body", "details": json.dumps(details, indent=2)},
         }
     }
 
@@ -110,13 +104,9 @@ async def trigger_pagerduty_incident(
                 logger.info(
                     "pagerduty_incident_already_tracked",
                     incident_id=diagnosis.incident_id,
-                    message="An open incident with this key already exists on PagerDuty."
+                    message="An open incident with this key already exists on PagerDuty.",
                 )
-                return {
-                    "status": "success",
-                    "message": "Incident already tracked in PagerDuty",
-                    "is_duplicate": True
-                }
+                return {"status": "success", "message": "Incident already tracked in PagerDuty", "is_duplicate": True}
         except Exception as e:
             logger.debug("pagerduty_json_parse_error", error=str(e))
 
@@ -125,6 +115,7 @@ async def trigger_pagerduty_incident(
     except Exception as e:
         logger.error("pagerduty_connection_error", error=str(e))
         return {"status": "error", "message": str(e)}
+
 
 async def resolve_pagerduty_incident(incident_key: str) -> dict[str, Any]:
     """

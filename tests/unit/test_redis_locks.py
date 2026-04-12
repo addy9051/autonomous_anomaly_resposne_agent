@@ -7,7 +7,7 @@ from shared.utils import acquire_distributed_lock
 
 class TestRedisLocks:
     @pytest.mark.asyncio
-    @patch('shared.utils.get_redis_client')
+    @patch("shared.utils.get_redis_client")
     async def test_acquire_lock_success(self, mock_get_redis: AsyncMock) -> None:
         mock_redis = AsyncMock()
         # Mock redis.set to return True (lock acquired)
@@ -21,7 +21,7 @@ class TestRedisLocks:
         mock_redis.aclose.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('shared.utils.get_redis_client')
+    @patch("shared.utils.get_redis_client")
     async def test_acquire_lock_failure(self, mock_get_redis: AsyncMock) -> None:
         mock_redis = AsyncMock()
         # Mock redis.set to return None/False (lock already exists)
@@ -34,7 +34,7 @@ class TestRedisLocks:
         mock_redis.aclose.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('shared.utils.get_redis_client')
+    @patch("shared.utils.get_redis_client")
     async def test_acquire_lock_exception_fail_open(self, mock_get_redis: AsyncMock) -> None:
         mock_redis = AsyncMock()
         # Mock redis to raise ConnectionError

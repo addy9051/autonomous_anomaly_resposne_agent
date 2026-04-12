@@ -17,7 +17,7 @@ def fetch_overrides_for_retraining() -> None:
     _ = Langfuse(
         public_key=settings.observability.langfuse_public_key,
         secret_key=settings.observability.langfuse_secret_key,
-        host=settings.observability.langfuse_host
+        host=settings.observability.langfuse_host,
     )
 
     print("Fetching sessions from Langfuse where human override was triggered...")
@@ -33,15 +33,15 @@ def fetch_overrides_for_retraining() -> None:
             "state_anomaly": "latency_spike",
             "agent_action": "scale_replicas",
             "human_corrected_action": "rollback_deployment",
-            "reward_score": -0.5
+            "reward_score": -0.5,
         },
         {
             "incident_id": "uuid-002",
             "state_anomaly": "error_rate",
             "agent_action": "clear_cache",
             "human_corrected_action": "restart_unhealthy_pod",
-            "reward_score": -0.8
-        }
+            "reward_score": -0.8,
+        },
     ]
 
     df = pd.DataFrame(historical_data)
@@ -49,6 +49,7 @@ def fetch_overrides_for_retraining() -> None:
     df.to_csv(export_path, index=False)
 
     print(f"Exported {len(df)} false-positive traces to {export_path} for offline RL training.")
+
 
 if __name__ == "__main__":
     fetch_overrides_for_retraining()

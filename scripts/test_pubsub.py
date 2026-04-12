@@ -8,6 +8,7 @@ from shared.utils import get_logger, setup_logging
 
 logger = get_logger("test_pubsub")
 
+
 async def test_pubsub_connectivity() -> None:
     setup_logging()
     settings = get_settings()
@@ -32,6 +33,7 @@ async def test_pubsub_connectivity() -> None:
         print(f"❌ Error: {str(e)}")
         if "NotFound" in str(e):
             print("   HINT: The topic may not have been created by Terraform yet.")
+
 
 if __name__ == "__main__":
     asyncio.run(test_pubsub_connectivity())

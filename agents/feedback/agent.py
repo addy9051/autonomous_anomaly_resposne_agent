@@ -47,7 +47,7 @@ class FeedbackLoopAgent:
         # --quiet: suppress stdout
         vw_params = (
             f"--cb_explore_adf --epsilon {epsilon} --bit_precision 18 "
-            f"--quiet --cb_type mtr" # Model-based Training with Reward
+            f"--quiet --cb_type mtr"  # Model-based Training with Reward
         )
         self.vw = pyvw.vw(vw_params)
 
@@ -83,10 +83,7 @@ class FeedbackLoopAgent:
             self.start_sync_loop()
 
         logger.info(
-            "feedback_agent_initialized_vw",
-            epsilon=epsilon,
-            policy_version=self.policy_version,
-            params=vw_params
+            "feedback_agent_initialized_vw", epsilon=epsilon, policy_version=self.policy_version, params=vw_params
         )
 
     async def _init_redis(self) -> None:
@@ -94,6 +91,7 @@ class FeedbackLoopAgent:
             return
         # Lazy load redis
         import redis.asyncio as redis
+
         self.redis_client = redis.Redis.from_url(self.settings.data.redis_url)
         await self.load_policy()
 
@@ -109,6 +107,7 @@ class FeedbackLoopAgent:
 
             # 2. Save metadata to Redis for cross-instance sync
             import pickle
+
             state = {
                 "experience_buffer": self.experience_buffer[-1000:],
                 "action_rewards": self.action_rewards,
@@ -130,6 +129,7 @@ class FeedbackLoopAgent:
                 logger.debug("vw_model_binary_loaded", path=self.model_path)
 
             import pickle
+
             state_bytes = await self.redis_client.get("feedback_agent_metadata")
             if state_bytes:
                 state = pickle.loads(state_bytes)  # noqa: S301
@@ -139,6 +139,7 @@ class FeedbackLoopAgent:
                 logger.info("policy_metadata_loaded", version=self.policy_version)
         except Exception as e:
             logger.error("failed_to_load_policy", error=str(e))
+
     async def sync_model_to_gcs(self) -> None:
         """Upload the local model binary to Google Cloud Storage."""
         if not self.gcs_client or not os.path.exists(self.model_path):
@@ -150,6 +151,7 @@ class FeedbackLoopAgent:
 
             # Use blocking call in a thread to keep async loop happy
             import asyncio
+
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, blob.upload_from_filename, self.model_path)
 
@@ -172,6 +174,7 @@ class FeedbackLoopAgent:
 
             # Use blocking call in a thread
             import asyncio
+
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, blob.download_to_filename, self.model_path)
 
@@ -184,7 +187,7 @@ class FeedbackLoopAgent:
         incident: IncidentRecord,
         chosen_action: str | None = None,
         reward: float | None = None,
-        probability: float | None = None
+        probability: float | None = None,
     ) -> str:
         """
         Convert incident and actions into Vowpal Wabbit multiline ADF format.
@@ -200,9 +203,9 @@ class FeedbackLoopAgent:
 
         shared_parts = ["shared |s"]
         if m:
-            shared_parts.append(f"lat:{min(10.0, (m.p99_latency_ms or 0)/1000.0)}")
+            shared_parts.append(f"lat:{min(10.0, (m.p99_latency_ms or 0) / 1000.0)}")
             shared_parts.append(f"err:{m.error_rate or 0}")
-            shared_parts.append(f"cpu:{(m.cpu_percent or 0)/100.0}")
+            shared_parts.append(f"cpu:{(m.cpu_percent or 0) / 100.0}")
         if diag:
             shared_parts.append(f"conf:{diag.confidence}")
             shared_parts.append(f"novel:{float(diag.is_novel_incident)}")
@@ -212,6 +215,7 @@ class FeedbackLoopAgent:
         # 2. Actions (ADF)
         # In a real system, these would be filtered by Tier or Service
         from agents.action.workflows import N8N_WORKFLOWS
+
         all_actions = list(N8N_WORKFLOWS.keys()) + ["no_action"]
 
         for action in all_actions:
@@ -223,17 +227,13 @@ class FeedbackLoopAgent:
                 # but VW handles negative costs too)
                 cost = -reward
                 prob = probability or (1.0 / len(all_actions))
-                label = f"0:{cost}:{prob:.4f} " # 0 is relative index for the action line
+                label = f"0:{cost}:{prob:.4f} "  # 0 is relative index for the action line
 
             lines.append(f"{label}|a name_{action}")
 
         return "\n".join(lines)
 
-    async def record_outcome(
-        self,
-        incident: IncidentRecord,
-        semantic_reward: SemanticReward | None = None
-    ) -> float:
+    async def record_outcome(self, incident: IncidentRecord, semantic_reward: SemanticReward | None = None) -> float:
         """
         Record the outcome of a resolved incident and compute hybrid reward.
 
@@ -252,19 +252,21 @@ class FeedbackLoopAgent:
             # 2. Extract action and probability
             # Note: In production, we'd store the probability returned by suggest_action
             from agents.feedback.reward import _extract_action_label
+
             action = _extract_action_label(incident)
 
             # 3. Train Vowpal Wabbit online (with A/B splitting)
             import hashlib
+
             vw_example = self.to_vw_format(
                 incident,
                 chosen_action=action,
                 reward=reward,
-                probability=0.25 # simplified for now
+                probability=0.25,  # simplified for now
             )
 
             is_experimental = hashlib.sha256(incident.incident_id.encode()).digest()[0] % 2 == 0
-            if is_experimental and hasattr(self, 'vw_experimental'):
+            if is_experimental and hasattr(self, "vw_experimental"):
                 self.vw_experimental.learn(vw_example)
                 ab_group = "experimental"
             else:
@@ -331,6 +333,7 @@ class FeedbackLoopAgent:
 
         # 3. Sample an action from the distribution
         from agents.action.workflows import N8N_WORKFLOWS
+
         all_actions = list(N8N_WORKFLOWS.keys()) + ["no_action"]
 
         action_idx = np.random.choice(len(all_actions), p=probs)
@@ -340,9 +343,9 @@ class FeedbackLoopAgent:
         return {
             "action": action,
             "confidence": confidence,
-            "is_exploration": confidence < (1.0 / len(all_actions)) * 1.5, # heuristic
+            "is_exploration": confidence < (1.0 / len(all_actions)) * 1.5,  # heuristic
             "policy_version": self.policy_version,
-            "probabilities": {a: p for a, p in zip(all_actions, probs, strict=False)}
+            "probabilities": {a: p for a, p in zip(all_actions, probs, strict=False)},
         }
 
     async def retrain_policy(self) -> dict[str, Any]:
@@ -371,8 +374,9 @@ class FeedbackLoopAgent:
             "current_version": self.policy_version,
             "buffer_size": len(self.experience_buffer),
             "engine": "vowpal_wabbit",
-            "action_stats": self.get_action_stats()
+            "action_stats": self.get_action_stats(),
         }
+
     def start_sync_loop(self) -> None:
         """Start a background task to periodically pull the model from GCS."""
         if self.sync_task and not self.sync_task.done():

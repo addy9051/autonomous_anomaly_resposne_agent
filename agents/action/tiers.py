@@ -23,7 +23,6 @@ ACTION_TIERS: dict[str, ActionTier] = {
     "add_rate_limit": ActionTier.TIER_1_AUTO,
     "flush_redis_key": ActionTier.TIER_1_AUTO,
     "rotate_log_level": ActionTier.TIER_1_AUTO,
-
     # ═══ Tier 2 — Approval Required (medium blast radius) ═══
     "drain_node": ActionTier.TIER_2_APPROVE,
     "failover_db": ActionTier.TIER_2_APPROVE,
@@ -31,7 +30,6 @@ ACTION_TIERS: dict[str, ActionTier] = {
     "kill_long_running_queries": ActionTier.TIER_2_APPROVE,
     "increase_connection_pool": ActionTier.TIER_2_APPROVE,
     "modify_autoscaling_policy": ActionTier.TIER_2_APPROVE,
-
     # ═══ Tier 3 — Human Only (high blast radius) ═══
     "rollback_deployment": ActionTier.TIER_3_HUMAN,
     "block_issuer": ActionTier.TIER_3_HUMAN,

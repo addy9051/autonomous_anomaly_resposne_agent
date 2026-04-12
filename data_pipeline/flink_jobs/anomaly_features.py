@@ -98,9 +98,15 @@ class RollingWindowAggregator:
         baseline = self.baselines.get(service, {})
 
         metric_keys = [
-            "latency_p99_ms", "latency_p95_ms", "latency_p50_ms",
-            "error_rate", "cpu_percent", "memory_percent",
-            "request_rate", "fraud_score_mean", "kafka_consumer_lag",
+            "latency_p99_ms",
+            "latency_p95_ms",
+            "latency_p50_ms",
+            "error_rate",
+            "cpu_percent",
+            "memory_percent",
+            "request_rate",
+            "fraud_score_mean",
+            "kafka_consumer_lag",
         ]
 
         for key in metric_keys:
@@ -167,10 +173,7 @@ class AlertDeduplicator:
     def cleanup(self) -> int:
         """Remove expired entries. Returns count of removed entries."""
         now = time.time()
-        expired = [
-            k for k, v in self.seen_alerts.items()
-            if now - v["first_seen"] > self.window_seconds * 2
-        ]
+        expired = [k for k, v in self.seen_alerts.items() if now - v["first_seen"] > self.window_seconds * 2]
         for k in expired:
             del self.seen_alerts[k]
         return len(expired)

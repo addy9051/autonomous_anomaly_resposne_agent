@@ -20,6 +20,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 
 class LLMConfig(BaseSettings):
     """LLM provider configuration."""
+
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
     # OpenAI
@@ -47,6 +48,7 @@ class LLMConfig(BaseSettings):
 
 class DataConfig(BaseSettings):
     """Data infrastructure configuration."""
+
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
     # PostgreSQL / pgvector
@@ -97,6 +99,7 @@ class DataConfig(BaseSettings):
 
 class AgentConfig(BaseSettings):
     """Agent behavior configuration."""
+
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
     anomaly_confidence_threshold: float = 0.75
@@ -110,18 +113,17 @@ class AgentConfig(BaseSettings):
 
 class IntegrationConfig(BaseSettings):
     """Third-party integration configuration."""
+
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
     # Slack (Supports both #channel-names and C012345678 IDs)
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
     slack_alert_channel: str = Field(
-        default="",
-        validation_alias=AliasChoices("SLACK_ALERT_CHANNEL_ID", "SLACK_ALERT_CHANNEL")
+        default="", validation_alias=AliasChoices("SLACK_ALERT_CHANNEL_ID", "SLACK_ALERT_CHANNEL")
     )
     slack_approval_channel: str = Field(
-        default="",
-        validation_alias=AliasChoices("SLACK_APPROVAL_CHANNEL_ID", "SLACK_APPROVAL_CHANNEL")
+        default="", validation_alias=AliasChoices("SLACK_APPROVAL_CHANNEL_ID", "SLACK_APPROVAL_CHANNEL")
     )
 
     # PagerDuty
@@ -149,6 +151,7 @@ class IntegrationConfig(BaseSettings):
 
 class ObservabilityConfig(BaseSettings):
     """Observability and telemetry configuration."""
+
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
@@ -157,14 +160,14 @@ class ObservabilityConfig(BaseSettings):
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = Field(
-        default="http://localhost:3000",
-        validation_alias=AliasChoices("LANGFUSE_BASE_URL", "LANGFUSE_HOST")
+        default="http://localhost:3000", validation_alias=AliasChoices("LANGFUSE_BASE_URL", "LANGFUSE_HOST")
     )
     langfuse_enabled: bool = True  # Toggle for silencing noise in Lite Mode
 
 
 class AppConfig(BaseSettings):
     """Application-level configuration."""
+
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
     app_env: str = "development"
@@ -179,13 +182,13 @@ class AppConfig(BaseSettings):
 
 class Settings(BaseModel):
     """Aggregate all configuration sections."""
+
     llm: LLMConfig = Field(default_factory=LLMConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     integrations: IntegrationConfig = Field(default_factory=IntegrationConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     app: AppConfig = Field(default_factory=AppConfig)
-
 
 
 @lru_cache

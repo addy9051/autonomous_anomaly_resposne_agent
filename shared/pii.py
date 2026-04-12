@@ -16,39 +16,25 @@ from typing import Any
 # ─── Regex Patterns ──────────────────────────────────────────────
 
 # Credit/debit card numbers: 13–19 digit sequences (with optional separators)
-_CARD_NUMBER_RE = re.compile(
-    r"\b(?:\d[ -]*?){13,19}\b"
-)
+_CARD_NUMBER_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
 
 # PAN-style masking: keep first 6 and last 4 digits visible
-_CARD_STRICT_RE = re.compile(
-    r"\b(\d{4})[- ]?(\d{2})\d{2}[- ]?\d{4}[- ]?(\d{4})\b"
-)
+_CARD_STRICT_RE = re.compile(r"\b(\d{4})[- ]?(\d{2})\d{2}[- ]?\d{4}[- ]?(\d{4})\b")
 
 # Email addresses
-_EMAIL_RE = re.compile(
-    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
-)
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
 
 # IPv4 addresses
-_IPV4_RE = re.compile(
-    r"\b(?:\d{1,3}\.){3}\d{1,3}\b"
-)
+_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 # IPv6 addresses (simplified — catches most common formats)
-_IPV6_RE = re.compile(
-    r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b"
-)
+_IPV6_RE = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b")
 
 # SSN-like patterns (US format: XXX-XX-XXXX)
-_SSN_RE = re.compile(
-    r"\b\d{3}-\d{2}-\d{4}\b"
-)
+_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 
 # Phone numbers (various formats)
-_PHONE_RE = re.compile(
-    r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b"
-)
+_PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b")
 
 # Merchant IDs (common alphanumeric patterns, e.g., MID-12345, MERCH_ABC123)
 _MERCHANT_ID_RE = re.compile(
@@ -130,8 +116,10 @@ def sanitize_dict(data: dict[str, Any]) -> dict[str, Any]:
             sanitized[key] = sanitize_dict(value)
         elif isinstance(value, list):
             sanitized[key] = [
-                sanitize_dict(item) if isinstance(item, dict)
-                else sanitize_for_llm(item) if isinstance(item, str)
+                sanitize_dict(item)
+                if isinstance(item, dict)
+                else sanitize_for_llm(item)
+                if isinstance(item, str)
                 else item
                 for item in value
             ]

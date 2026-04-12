@@ -137,7 +137,7 @@ async def trigger_workflow(
             "workflow": workflow_name,
             "params": params,
             "would_execute": workflow["description"],
-            "message": "N8n bypassed due to lack of API key"
+            "message": "N8n bypassed due to lack of API key",
         }
 
     # If explicitly asked to dry-run via CLI

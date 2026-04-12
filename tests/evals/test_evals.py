@@ -48,9 +48,7 @@ class TestSyntheticRAGRecall:
         # At least one expected runbook should appear in results
         expected_ids = case["expected_runbook_ids"]
         matches = [rid for rid in expected_ids if rid in retrieved_ids]
-        assert len(matches) > 0, (
-            f"[{case['id']}] Expected one of {expected_ids} in {retrieved_ids}"
-        )
+        assert len(matches) > 0, f"[{case['id']}] Expected one of {expected_ids} in {retrieved_ids}"
 
     @pytest.mark.parametrize(
         "case",
@@ -64,9 +62,7 @@ class TestSyntheticRAGRecall:
 
         expected_ids = case["expected_runbook_ids"]
         matches = [rid for rid in expected_ids if rid in retrieved_ids]
-        assert len(matches) > 0, (
-            f"[{case['id']}] Expected one of {expected_ids} in {retrieved_ids}"
-        )
+        assert len(matches) > 0, f"[{case['id']}] Expected one of {expected_ids} in {retrieved_ids}"
 
     @pytest.mark.parametrize(
         "case",
@@ -80,9 +76,7 @@ class TestSyntheticRAGRecall:
 
         expected_ids = case["expected_runbook_ids"]
         matches = [rid for rid in expected_ids if rid in retrieved_ids]
-        assert len(matches) > 0, (
-            f"[{case['id']}] Expected one of {expected_ids} in {retrieved_ids}"
-        )
+        assert len(matches) > 0, f"[{case['id']}] Expected one of {expected_ids} in {retrieved_ids}"
 
     def test_unknown_anomaly_fallback(self) -> None:
         """Unknown anomaly types should fall back to general incident response."""
@@ -99,9 +93,7 @@ class TestRetrievalQuality:
         """Every golden case should return at least 1 runbook."""
         for case in GOLDEN_DATASET:
             runbooks = _get_synthetic_runbooks(case["anomaly_type"], case["services"])
-            assert len(runbooks) > 0, (
-                f"[{case['id']}] No runbooks returned for {case['anomaly_type']}"
-            )
+            assert len(runbooks) > 0, f"[{case['id']}] No runbooks returned for {case['anomaly_type']}"
 
     def test_similarity_scores_valid_range(self) -> None:
         """All similarity scores should be between 0 and 1."""
@@ -109,9 +101,7 @@ class TestRetrievalQuality:
             runbooks = _get_synthetic_runbooks(case["anomaly_type"], case["services"])
             for rb in runbooks:
                 score = rb["similarity_score"]
-                assert 0.0 <= score <= 1.0, (
-                    f"[{case['id']}] Score {score} out of range for {rb['runbook_id']}"
-                )
+                assert 0.0 <= score <= 1.0, f"[{case['id']}] Score {score} out of range for {rb['runbook_id']}"
 
     def test_top_result_high_confidence(self) -> None:
         """For known anomaly types, the top result should have confidence > 0.80."""
@@ -120,9 +110,7 @@ class TestRetrievalQuality:
             if case["anomaly_type"] in known_types:
                 runbooks = _get_synthetic_runbooks(case["anomaly_type"], case["services"])
                 top_score = runbooks[0]["similarity_score"]
-                assert top_score > 0.80, (
-                    f"[{case['id']}] Top score {top_score} is below 0.80 threshold"
-                )
+                assert top_score > 0.80, f"[{case['id']}] Top score {top_score} is below 0.80 threshold"
 
     def test_overall_recall_at_k(self) -> None:
         """
@@ -142,17 +130,21 @@ class TestRetrievalQuality:
 
         recall = hits / total if total > 0 else 0
         assert recall >= 0.80, (
-            f"Overall recall@K = {recall:.2%} is below the 80% threshold "
-            f"({hits}/{total} cases matched)"
+            f"Overall recall@K = {recall:.2%} is below the 80% threshold ({hits}/{total} cases matched)"
         )
 
     def test_golden_dataset_integrity(self) -> None:
         """Verify the golden dataset file is well-formed."""
         assert len(GOLDEN_DATASET) == 20, f"Expected 20 cases, found {len(GOLDEN_DATASET)}"
         required_fields = {
-            "id", "description", "anomaly_type", "services",
-            "metrics", "expected_root_cause_category",
-            "expected_runbook_ids", "expected_actions_contain",
+            "id",
+            "description",
+            "anomaly_type",
+            "services",
+            "metrics",
+            "expected_root_cause_category",
+            "expected_runbook_ids",
+            "expected_actions_contain",
         }
         for case in GOLDEN_DATASET:
             missing = required_fields - set(case.keys())

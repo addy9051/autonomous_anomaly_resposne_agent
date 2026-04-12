@@ -32,34 +32,38 @@ class ExpertAgent:
 
     async def investigate(self, anomaly_context: dict[str, Any]) -> dict[str, Any]:
         """Run domain-specific investigation."""
-        prompt = self.prompt_template.format(
-            anomaly_context=json.dumps(anomaly_context, indent=2, default=str)
-        )
+        prompt = self.prompt_template.format(anomaly_context=json.dumps(anomaly_context, indent=2, default=str))
 
-        response = await self.llm.ainvoke([
-            SystemMessage(content=f"You are the {self.expert_type.title()} Expert."),
-            HumanMessage(content=prompt),
-        ])
+        response = await self.llm.ainvoke(
+            [
+                SystemMessage(content=f"You are the {self.expert_type.title()} Expert."),
+                HumanMessage(content=prompt),
+            ]
+        )
 
         return {
             "agent_type": self.expert_type,
             "findings": response.content,
             "severity": "high",  # Could be parsed from response
             "confidence": 0.9,
-            "evidence": {}
+            "evidence": {},
         }
+
 
 class DatabaseExpert(ExpertAgent):
     def __init__(self) -> None:
         super().__init__("database", DATABASE_EXPERT_PROMPT)
 
+
 class NetworkExpert(ExpertAgent):
     def __init__(self) -> None:
         super().__init__("network", NETWORK_EXPERT_PROMPT)
 
+
 class SecurityExpert(ExpertAgent):
     def __init__(self) -> None:
         super().__init__("security", SECURITY_AUDITOR_PROMPT)
+
 
 class ApplicationExpert(ExpertAgent):
     def __init__(self) -> None:

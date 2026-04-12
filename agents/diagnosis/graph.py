@@ -61,6 +61,7 @@ def merge_reports(left: dict, right: dict) -> dict:
 
 class DiagnosisState(TypedDict):
     """State that flows through the diagnosis graph."""
+
     # Input
     anomaly_event: dict[str, Any]
 
@@ -93,14 +94,14 @@ async def gather_context(state: DiagnosisState) -> dict:
     )
 
     anomaly = state["anomaly_event"]
-    prompt = CONTEXT_GATHER_PROMPT.format(
-        anomaly_event=sanitize_for_llm(json.dumps(anomaly, indent=2, default=str))
-    )
+    prompt = CONTEXT_GATHER_PROMPT.format(anomaly_event=sanitize_for_llm(json.dumps(anomaly, indent=2, default=str)))
 
-    response = await llm.ainvoke([
-        SystemMessage(content="You are an SRE investigator. Summarize the operational context."),
-        HumanMessage(content=prompt),
-    ])
+    response = await llm.ainvoke(
+        [
+            SystemMessage(content="You are an SRE investigator. Summarize the operational context."),
+            HumanMessage(content=prompt),
+        ]
+    )
 
     logger.info("context_gathered", event_id=anomaly.get("event_id"))
 
@@ -122,10 +123,7 @@ async def rag_runbook_lookup(state: DiagnosisState) -> dict:
     reasoning = anomaly.get("reasoning", "")
 
     # Build a natural-language query for semantic search
-    query = (
-        f"{anomaly_type.replace('_', ' ')} incident affecting {', '.join(affected_services)}. "
-        f"{reasoning[:200]}"
-    )
+    query = f"{anomaly_type.replace('_', ' ')} incident affecting {', '.join(affected_services)}. {reasoning[:200]}"
 
     runbooks: list[dict] = []
     source = "synthetic"
@@ -205,10 +203,12 @@ async def supervisor_node(state: DiagnosisState) -> dict:
     anomaly = state["anomaly_event"]
 
     # 1. Triage
-    response = await llm.ainvoke([
-        SystemMessage(content=SUPERVISOR_PROMPT),
-        HumanMessage(content=f"Triage this incident:\n{json.dumps(anomaly, indent=2)}"),
-    ])
+    response = await llm.ainvoke(
+        [
+            SystemMessage(content=SUPERVISOR_PROMPT),
+            HumanMessage(content=f"Triage this incident:\n{json.dumps(anomaly, indent=2)}"),
+        ]
+    )
 
     try:
         content = response.content
@@ -231,6 +231,7 @@ async def supervisor_node(state: DiagnosisState) -> dict:
     }
 
     from shared.utils import Timer
+
     expert_timer = Timer()
 
     tasks = []
@@ -245,10 +246,12 @@ async def supervisor_node(state: DiagnosisState) -> dict:
     with expert_timer:
         reports_list = await asyncio.gather(*tasks)
 
-    logger.info("expert_investigations_complete",
-                num_reports=len(reports_list),
-                elapsed_ms=expert_timer.elapsed_ms,
-                event_id=anomaly.get("event_id"))
+    logger.info(
+        "expert_investigations_complete",
+        num_reports=len(reports_list),
+        elapsed_ms=expert_timer.elapsed_ms,
+        event_id=anomaly.get("event_id"),
+    )
 
     reports_dict = {}
     for r in reports_list:
@@ -282,10 +285,12 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
         sub_agent_reports=sanitize_for_llm(json.dumps(state.get("sub_agent_reports", {}), indent=2, default=str)),
     )
 
-    response = await llm.ainvoke([
-        SystemMessage(content=DIAGNOSIS_SYSTEM_PROMPT),
-        HumanMessage(content=prompt),
-    ])
+    response = await llm.ainvoke(
+        [
+            SystemMessage(content=DIAGNOSIS_SYSTEM_PROMPT),
+            HumanMessage(content=prompt),
+        ]
+    )
 
     # Parse the response
     diagnosis = _parse_diagnosis_response(response.content, anomaly, state)
@@ -376,10 +381,7 @@ class DiagnosisAgent:
                             session_id=anomaly_event.event_id,
                             user_id="sre-system",
                             tags=["agent:diagnosis", f"env:{settings.app.app_env}"],
-                            metadata={
-                                "agent_version": "1.0.0",
-                                "prompt_version": "diag-rag-v3"
-                            }
+                            metadata={"agent_version": "1.0.0", "prompt_version": "diag-rag-v3"},
                         )
                     except Exception as e:
                         logger.warning("langfuse_init_failed", error=str(e))
@@ -391,10 +393,7 @@ class DiagnosisAgent:
                 # Note: RedisSaver bypassed due to local serialization compatibility issues
                 saver = MemorySaver()
                 app = build_diagnosis_graph(checkpointer=saver)
-                config = {
-                    "configurable": {"thread_id": anomaly_event.event_id},
-                    "callbacks": callbacks
-                }
+                config = {"configurable": {"thread_id": anomaly_event.event_id}, "callbacks": callbacks}
 
                 result = await app.ainvoke(initial_state, config=config)
 
@@ -404,13 +403,8 @@ class DiagnosisAgent:
                 diagnosis = DiagnosisResult(
                     event_id=anomaly_event.event_id,
                     root_cause=diagnosis_dict.get("root_cause", "Unable to determine root cause"),
-                    root_cause_category=RootCauseCategory(
-                        diagnosis_dict.get("root_cause_category", "unknown")
-                    ),
-                    runbook_references=[
-                        RunbookReference(**r)
-                        for r in diagnosis_dict.get("runbook_references", [])
-                    ],
+                    root_cause_category=RootCauseCategory(diagnosis_dict.get("root_cause_category", "unknown")),
+                    runbook_references=[RunbookReference(**r) for r in diagnosis_dict.get("runbook_references", [])],
                     recommended_actions=[
                         RecommendedAction(
                             action=a.get("action", ""),
@@ -450,9 +444,7 @@ class DiagnosisAgent:
 # ─── Helper Functions ────────────────────────────────────────────
 
 
-def _get_synthetic_runbooks(
-    anomaly_type: str, affected_services: list[str]
-) -> list[dict[str, Any]]:
+def _get_synthetic_runbooks(anomaly_type: str, affected_services: list[str]) -> list[dict[str, Any]]:
     """Return synthetic runbook matches for development."""
     runbook_db = {
         "latency_spike": [
@@ -508,18 +500,21 @@ def _get_synthetic_runbooks(
         ],
     }
 
-    return runbook_db.get(anomaly_type, [
-        {
-            "runbook_id": "runbook://general/incident-response",
-            "title": "General Incident Response Procedure",
-            "similarity_score": 0.65,
-            "relevant_steps": [
-                "1. Assess blast radius",
-                "2. Engage on-call engineer",
-                "3. Begin timeline documentation",
-            ],
-        }
-    ])
+    return runbook_db.get(
+        anomaly_type,
+        [
+            {
+                "runbook_id": "runbook://general/incident-response",
+                "title": "General Incident Response Procedure",
+                "similarity_score": 0.65,
+                "relevant_steps": [
+                    "1. Assess blast radius",
+                    "2. Engage on-call engineer",
+                    "3. Begin timeline documentation",
+                ],
+            }
+        ],
+    )
 
 
 def _parse_diagnosis_response(

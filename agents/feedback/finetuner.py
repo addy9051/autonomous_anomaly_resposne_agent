@@ -15,6 +15,7 @@ from shared.schemas import IncidentRecord
 
 logger = logging.getLogger("finetuner")
 
+
 def generate_finetuning_dataset(incidents: list[IncidentRecord], output_path: str | Path) -> dict:
     """
     Extracts negative reward incidents and turns them into a fine-tuning dataset.
@@ -40,7 +41,7 @@ def generate_finetuning_dataset(incidents: list[IncidentRecord], output_path: st
                     incident.anomaly_event.metrics_snapshot.model_dump(exclude_none=True)
                     if incident.anomaly_event
                     else {}
-                )
+                ),
             }
 
             # The exact ground-truth label comes strictly from the overriding SRE
@@ -50,7 +51,7 @@ def generate_finetuning_dataset(incidents: list[IncidentRecord], output_path: st
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(user_msg)},
-                    {"role": "assistant", "content": assistant_msg}
+                    {"role": "assistant", "content": assistant_msg},
                 ]
             }
             dataset.append(example)

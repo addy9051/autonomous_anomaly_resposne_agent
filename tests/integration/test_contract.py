@@ -1,4 +1,3 @@
-
 import httpx
 import pytest
 
@@ -26,7 +25,8 @@ async def test_n8n_webhook_contract() -> None:
     except Exception:
         pytest.skip("N8n is unreachable - skipping contract test")
 
-    assert True # Contract successfully mapped
+    assert True  # Contract successfully mapped
+
 
 @pytest.mark.asyncio
 async def test_vertex_llm_contract() -> None:
@@ -34,9 +34,11 @@ async def test_vertex_llm_contract() -> None:
     Contract test interacting with OpenAI / LLM backbone briefly.
     """
     settings = get_settings()
-    if not settings.llm.openai_api_key or \
-       settings.llm.openai_api_key.startswith("sk-mock") or \
-       "your-openai-api-key" in settings.llm.openai_api_key:
+    if (
+        not settings.llm.openai_api_key
+        or settings.llm.openai_api_key.startswith("sk-mock")
+        or "your-openai-api-key" in settings.llm.openai_api_key
+    ):
         pytest.skip("No real OpenAI key provided.")
 
     from langchain_core.messages import HumanMessage

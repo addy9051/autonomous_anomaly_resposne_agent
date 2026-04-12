@@ -47,10 +47,10 @@ async def test_slack() -> None:
         try:
             # Check if we can get info about the channel
             conv_info = await client.conversations_info(channel=settings.integrations.slack_alert_channel)
-            channel_name = conv_info['channel']['name']
+            channel_name = conv_info["channel"]["name"]
 
             # Check if bot is the owner or member
-            is_member = conv_info['channel'].get('is_member', False)
+            is_member = conv_info["channel"].get("is_member", False)
             if not is_member:
                 print(f"⚠️ Warning: Channel '{channel_name}' found, but bot is NOT a member.")
                 print("   ACTION REQUIRED: Invite the bot to the channel first.")
@@ -71,7 +71,7 @@ async def test_slack() -> None:
         print("📡 Sending test message...")
         response = await client.chat_postMessage(
             channel=settings.integrations.slack_alert_channel,
-            text=f"🚀 *Anomaly Agent Integration Test*\nTime: `{asyncio.get_event_loop().time()}`\nStatus: Online"
+            text=f"🚀 *Anomaly Agent Integration Test*\nTime: `{asyncio.get_event_loop().time()}`\nStatus: Online",
         )
         print(f"✅ Message sent! TS: {response['ts']}")
         print("\n🎉 Slack integration is working correctly!")
@@ -80,6 +80,7 @@ async def test_slack() -> None:
         print(f"❌ Slack API error: {e.response['error']}")
     except Exception as e:
         print(f"❌ Unexpected error: {str(e)}")
+
 
 if __name__ == "__main__":
     asyncio.run(test_slack())

@@ -47,6 +47,7 @@ class RootCauseCategory(StrEnum):
 
 class ActionTier(int, Enum):
     """Tier 1 = autonomous, Tier 2 = needs SRE approval, Tier 3 = always human."""
+
     TIER_1_AUTO = 1
     TIER_2_APPROVE = 2
     TIER_3_HUMAN = 3
@@ -68,6 +69,7 @@ class IncidentStatus(StrEnum):
 
 class MetricsSnapshot(BaseModel):
     """Point-in-time metrics for the affected service."""
+
     p50_latency_ms: float | None = None
     p95_latency_ms: float | None = None
     p99_latency_ms: float | None = None
@@ -85,6 +87,7 @@ class AnomalyEvent(BaseModel):
     Output of the Monitoring Agent.
     Sent to the Diagnosis Agent when an anomaly is detected.
     """
+
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     severity: Severity
@@ -96,7 +99,9 @@ class AnomalyEvent(BaseModel):
         description="LLM reasoning chain explaining why this was flagged as anomalous",
     )
     confidence: float = Field(
-        ..., ge=0.0, le=1.0,
+        ...,
+        ge=0.0,
+        le=1.0,
         description="Anomaly confidence score (0–1). Escalate if > 0.75",
     )
     raw_event: dict[str, Any] = Field(
@@ -110,6 +115,7 @@ class AnomalyEvent(BaseModel):
 
 class RunbookReference(BaseModel):
     """Reference to a matched runbook in the knowledge base."""
+
     runbook_id: str
     title: str
     similarity_score: float
@@ -118,6 +124,7 @@ class RunbookReference(BaseModel):
 
 class SubAgentReport(BaseModel):
     """Report from a specialist sub-agent (Network/DB/App)."""
+
     agent_type: str
     findings: str
     severity: Severity
@@ -127,6 +134,7 @@ class SubAgentReport(BaseModel):
 
 class RecommendedAction(BaseModel):
     """An action recommended by the Diagnosis Agent."""
+
     action: str
     tier: ActionTier
     params: dict[str, Any] = Field(default_factory=dict)
@@ -139,6 +147,7 @@ class DiagnosisResult(BaseModel):
     Output of the Diagnosis Agent.
     Sent to the Action Agent with root cause analysis and recommended actions.
     """
+
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     event_id: str = Field(description="Link back to the triggering AnomalyEvent")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
@@ -166,6 +175,7 @@ class ActionResult(BaseModel):
     Output of the Action Agent.
     Records what action was taken and its outcome.
     """
+
     incident_id: str
     action_taken: str
     tier: ActionTier
@@ -186,6 +196,7 @@ class IncidentRecord(BaseModel):
     Complete lifecycle record for an incident.
     Stored in PostgreSQL/Spanner for durability.
     """
+
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     status: IncidentStatus = IncidentStatus.DETECTED
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -215,12 +226,15 @@ class IncidentRecord(BaseModel):
 
 class TelemetryEvent(BaseModel):
     """Raw telemetry event ingested from Kafka or the in-memory event bus."""
+
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     source: str  # "payment_gateway", "fraud_api", "infra_metrics", etc.
     service_name: str
     event_type: str  # "transaction", "metric", "trace", "alert"
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
 # ─── Feedback Agent (Phase 7) ───────────────────────────────────
 
 
@@ -229,23 +243,15 @@ class SemanticReward(BaseModel):
     Qualitative evaluation of an incident resolution by the Reward Agent.
     Acts as an 'LLM-as-a-Judge' signal for Reinforcement Learning.
     """
+
     logical_consistency: float = Field(
-        ge=0.0, le=1.0,
-        description="Did the RCA follow logically from the observed metrics?"
+        ge=0.0, le=1.0, description="Did the RCA follow logically from the observed metrics?"
     )
     action_relevance: float = Field(
-        ge=0.0, le=1.0,
-        description="Was the action taken appropriate given the identified root cause?"
+        ge=0.0, le=1.0, description="Was the action taken appropriate given the identified root cause?"
     )
-    expert_accuracy: float = Field(
-        ge=0.0, le=1.0,
-        description="Were the specialized expert reports accurate and deep?"
-    )
+    expert_accuracy: float = Field(ge=0.0, le=1.0, description="Were the specialized expert reports accurate and deep?")
     overall_quality_score: float = Field(
-        ge=0.0, le=1.0,
-        description="Final normalized quality score (0-1) across all dimensions"
+        ge=0.0, le=1.0, description="Final normalized quality score (0-1) across all dimensions"
     )
-    justification: str = Field(
-        ...,
-        description="Detailed explanation for the assigned qualitative scores"
-    )
+    justification: str = Field(..., description="Detailed explanation for the assigned qualitative scores")

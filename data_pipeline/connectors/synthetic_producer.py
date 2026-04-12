@@ -219,10 +219,15 @@ class SyntheticTelemetryProducer:
                 break
 
             if self.rng.random() < anomaly_probability:
-                anomaly_type = self.rng.choice([
-                    "latency_spike", "error_rate", "fraud_signal",
-                    "resource_saturation", "volume_anomaly",
-                ])
+                anomaly_type = self.rng.choice(
+                    [
+                        "latency_spike",
+                        "error_rate",
+                        "fraud_signal",
+                        "resource_saturation",
+                        "volume_anomaly",
+                    ]
+                )
                 yield self.generate_anomalous_event(anomaly_type)
             else:
                 if self.rng.random() < 0.6:
@@ -239,9 +244,7 @@ class SyntheticTelemetryProducer:
 
             await asyncio.sleep(interval)
 
-    def generate_batch(
-        self, count: int = 100, anomaly_fraction: float = 0.05
-    ) -> list[TelemetryEvent]:
+    def generate_batch(self, count: int = 100, anomaly_fraction: float = 0.05) -> list[TelemetryEvent]:
         """Generate a batch of events with specified anomaly fraction."""
         events = []
         n_anomalies = int(count * anomaly_fraction)

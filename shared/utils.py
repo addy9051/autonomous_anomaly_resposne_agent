@@ -38,12 +38,11 @@ def setup_logging(log_level: str = "INFO") -> None:
             structlog.processors.StackInfoRenderer(),
             structlog.dev.set_exc_info,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.ConsoleRenderer() if get_settings().app.app_env == "development"
+            structlog.dev.ConsoleRenderer()
+            if get_settings().app.app_env == "development"
             else structlog.processors.JSONRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, log_level.upper(), logging.INFO)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, log_level.upper(), logging.INFO)),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,
@@ -68,10 +67,12 @@ def setup_tracing() -> trace.Tracer:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        resource = Resource.create({
-            "service.name": settings.observability.otel_service_name,
-            "deployment.environment": settings.app.app_env,
-        })
+        resource = Resource.create(
+            {
+                "service.name": settings.observability.otel_service_name,
+                "deployment.environment": settings.app.app_env,
+            }
+        )
         provider = TracerProvider(resource=resource)
 
         if settings.observability.otel_exporter_otlp_endpoint:
@@ -119,13 +120,14 @@ def get_langfuse_callbacks(session_id: str | None = None) -> list[Any]:
             public_key=settings.observability.langfuse_public_key,
             secret_key=settings.observability.langfuse_secret_key,
             host=settings.observability.langfuse_host,
-            session_id=session_id
+            session_id=session_id,
         )
         return [handler]
     except ImportError:
         logger = get_logger("langfuse_setup")
         logger.warning("Langfuse package missing. Cannot initialize callbacks.")
         return []
+
 
 # ─── Redis Client ────────────────────────────────────────────────
 
@@ -186,6 +188,7 @@ def get_async_session_factory() -> Any:  # noqa: ANN401
 
 class BudgetExceededError(Exception):
     """Raised when an agent exceeds its token or cost budget."""
+
     pass
 
 
@@ -216,18 +219,18 @@ class LLMCostTracker:
         self.total_tokens += total
 
         cost_rates = self.COST_PER_1K.get(model, {"input": 0.01, "output": 0.03})
-        cost = (input_tokens / 1000 * cost_rates["input"]) + (
-            output_tokens / 1000 * cost_rates["output"]
-        )
+        cost = (input_tokens / 1000 * cost_rates["input"]) + (output_tokens / 1000 * cost_rates["output"])
         self.total_cost += cost
 
-        self.calls.append({
-            "model": model,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cost_usd": round(cost, 6),
-            "cumulative_tokens": self.total_tokens,
-        })
+        self.calls.append(
+            {
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost_usd": round(cost, 6),
+                "cumulative_tokens": self.total_tokens,
+            }
+        )
 
         if self.budget_exceeded:
             logger = get_logger("cost_tracker")

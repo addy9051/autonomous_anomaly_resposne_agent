@@ -1,4 +1,3 @@
-
 from locust import HttpUser, between, task
 
 
@@ -13,10 +12,7 @@ class AnomalyAgentUser(HttpUser):
         payload = {
             "severity": "high",
             "service_name": "payment-gateway",
-            "metrics": {
-                "p99_latency_ms": 1200,
-                "error_rate": 0.04
-            }
+            "metrics": {"p99_latency_ms": 1200, "error_rate": 0.04},
         }
 
         self.client.post("/api/v1/events/process", json=payload)

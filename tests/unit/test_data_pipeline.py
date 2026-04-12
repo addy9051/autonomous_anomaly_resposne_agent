@@ -59,9 +59,7 @@ class TestSyntheticProducer:
     @pytest.mark.asyncio
     async def test_stream_events(self) -> None:
         events = []
-        async for event in self.producer.stream_events(
-            events_per_second=100, duration_seconds=0.5
-        ):
+        async for event in self.producer.stream_events(events_per_second=100, duration_seconds=0.5):
             events.append(event)
         assert len(events) > 10  # Should have generated many events
 

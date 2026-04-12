@@ -57,11 +57,13 @@ async def prometheus_query(query: str, time_range: str = "5m") -> str:
                 for result in results[:10]:  # Limit results
                     metric = result.get("metric", {})
                     value = result.get("value", [None, None])
-                    formatted.append({
-                        "metric": metric,
-                        "timestamp": value[0],
-                        "value": float(value[1]) if value[1] else None,
-                    })
+                    formatted.append(
+                        {
+                            "metric": metric,
+                            "timestamp": value[0],
+                            "value": float(value[1]) if value[1] else None,
+                        }
+                    )
                 return json.dumps(formatted, indent=2)
             else:
                 return json.dumps({"error": f"Prometheus query failed: {data.get('error', 'unknown')}"})
@@ -78,14 +80,26 @@ def _synthetic_prometheus_response(query: str) -> list[dict[str, Any]]:
     """Generate synthetic Prometheus response for dev/testing."""
     rng = np.random.default_rng(42)
     if "latency" in query.lower() or "duration" in query.lower():
-        return [{"metric": {"service": "payment-gateway", "__name__": "http_request_duration_seconds"},
-                 "value": round(rng.exponential(0.5) + 0.1, 4)}]
+        return [
+            {
+                "metric": {"service": "payment-gateway", "__name__": "http_request_duration_seconds"},
+                "value": round(rng.exponential(0.5) + 0.1, 4),
+            }
+        ]
     elif "error" in query.lower():
-        return [{"metric": {"service": "payment-gateway", "__name__": "http_errors_total"},
-                 "value": round(rng.uniform(0.01, 0.15), 4)}]
+        return [
+            {
+                "metric": {"service": "payment-gateway", "__name__": "http_errors_total"},
+                "value": round(rng.uniform(0.01, 0.15), 4),
+            }
+        ]
     elif "cpu" in query.lower():
-        return [{"metric": {"pod": "payment-gateway-abc123", "__name__": "container_cpu_usage"},
-                 "value": round(rng.uniform(20, 85), 2)}]
+        return [
+            {
+                "metric": {"pod": "payment-gateway-abc123", "__name__": "container_cpu_usage"},
+                "value": round(rng.uniform(20, 85), 2),
+            }
+        ]
     else:
         return [{"metric": {"__name__": "unknown"}, "value": round(rng.uniform(0, 100), 2)}]
 
@@ -112,20 +126,25 @@ async def kafka_lag_inspector(consumer_group: str = "anomaly-agent-group", topic
         partitions = []
         for i in range(6):
             lag = int(rng.exponential(500))
-            partitions.append({
-                "partition": i,
-                "current_offset": 1_000_000 + int(rng.integers(0, 100_000)),
-                "end_offset": 1_000_000 + int(rng.integers(0, 100_000)) + lag,
-                "lag": lag,
-            })
+            partitions.append(
+                {
+                    "partition": i,
+                    "current_offset": 1_000_000 + int(rng.integers(0, 100_000)),
+                    "end_offset": 1_000_000 + int(rng.integers(0, 100_000)) + lag,
+                    "lag": lag,
+                }
+            )
         total_lag = sum(p["lag"] for p in partitions)
-        return json.dumps({
-            "consumer_group": consumer_group,
-            "topic": topic,
-            "total_lag": total_lag,
-            "partitions": partitions,
-            "status": "critical" if total_lag > 10_000 else "healthy",
-        }, indent=2)
+        return json.dumps(
+            {
+                "consumer_group": consumer_group,
+                "topic": topic,
+                "total_lag": total_lag,
+                "partitions": partitions,
+                "status": "critical" if total_lag > 10_000 else "healthy",
+            },
+            indent=2,
+        )
 
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -152,22 +171,25 @@ async def fraud_signal_fetch(service: str = "payment-gateway", window_minutes: i
         n_transactions = int(rng.integers(1000, 5000))
         fraud_scores = rng.beta(2, 50, size=n_transactions)  # Mostly low scores
 
-        return json.dumps({
-            "service": service,
-            "window_minutes": window_minutes,
-            "total_transactions": n_transactions,
-            "fraud_scores": {
-                "mean": round(float(fraud_scores.mean()), 4),
-                "std": round(float(fraud_scores.std()), 4),
-                "p95": round(float(np.percentile(fraud_scores, 95)), 4),
-                "p99": round(float(np.percentile(fraud_scores, 99)), 4),
-                "above_threshold_count": int((fraud_scores > 0.7).sum()),
-                "above_threshold_pct": round(float((fraud_scores > 0.7).mean() * 100), 2),
+        return json.dumps(
+            {
+                "service": service,
+                "window_minutes": window_minutes,
+                "total_transactions": n_transactions,
+                "fraud_scores": {
+                    "mean": round(float(fraud_scores.mean()), 4),
+                    "std": round(float(fraud_scores.std()), 4),
+                    "p95": round(float(np.percentile(fraud_scores, 95)), 4),
+                    "p99": round(float(np.percentile(fraud_scores, 99)), 4),
+                    "above_threshold_count": int((fraud_scores > 0.7).sum()),
+                    "above_threshold_pct": round(float((fraud_scores > 0.7).mean() * 100), 2),
+                },
+                "model_version": "fraud_model_v3.2.1",
+                "baseline_mean": 0.038,
+                "baseline_std": 0.012,
             },
-            "model_version": "fraud_model_v3.2.1",
-            "baseline_mean": 0.038,
-            "baseline_std": 0.012,
-        }, indent=2)
+            indent=2,
+        )
 
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -204,25 +226,31 @@ async def baseline_compare(metric_name: str, current_value: float, service: str 
     baseline = baselines.get(metric_name, {"mean": current_value * 0.8, "std": current_value * 0.1})
     z_score = (current_value - baseline["mean"]) / baseline["std"] if baseline["std"] > 0 else 0
 
-    return json.dumps({
-        "metric_name": metric_name,
-        "service": service,
-        "current_value": current_value,
-        "baseline": {
-            "mean": baseline["mean"],
-            "std": baseline["std"],
-            "window": "7d",
+    return json.dumps(
+        {
+            "metric_name": metric_name,
+            "service": service,
+            "current_value": current_value,
+            "baseline": {
+                "mean": baseline["mean"],
+                "std": baseline["std"],
+                "window": "7d",
+            },
+            "z_score": round(z_score, 3),
+            "deviation_pct": round(((current_value - baseline["mean"]) / baseline["mean"]) * 100, 2),
+            "is_anomalous": abs(z_score) > 2.0,
+            "severity": (
+                "critical"
+                if abs(z_score) > 4.0
+                else "high"
+                if abs(z_score) > 3.0
+                else "medium"
+                if abs(z_score) > 2.0
+                else "low"
+            ),
         },
-        "z_score": round(z_score, 3),
-        "deviation_pct": round(((current_value - baseline["mean"]) / baseline["mean"]) * 100, 2),
-        "is_anomalous": abs(z_score) > 2.0,
-        "severity": (
-            "critical" if abs(z_score) > 4.0
-            else "high" if abs(z_score) > 3.0
-            else "medium" if abs(z_score) > 2.0
-            else "low"
-        ),
-    }, indent=2)
+        indent=2,
+    )
 
 
 # ─── Anomaly Classifier Tool ────────────────────────────────────
@@ -246,14 +274,16 @@ async def anomaly_classifier(metrics_vector: list[float]) -> str:
         n_features = len(metrics_vector)
 
         # Generate synthetic normal training data
-        normal_data = np.column_stack([
-            rng.normal(250, 45, 500),    # p99 latency
-            rng.normal(0.02, 0.008, 500), # error rate
-            rng.normal(45, 12, 500),      # CPU
-            rng.normal(60, 8, 500),       # memory
-            rng.exponential(500, 500),    # kafka lag
-            rng.normal(0.038, 0.012, 500), # fraud score
-        ])
+        normal_data = np.column_stack(
+            [
+                rng.normal(250, 45, 500),  # p99 latency
+                rng.normal(0.02, 0.008, 500),  # error rate
+                rng.normal(45, 12, 500),  # CPU
+                rng.normal(60, 8, 500),  # memory
+                rng.exponential(500, 500),  # kafka lag
+                rng.normal(0.038, 0.012, 500),  # fraud score
+            ]
+        )
 
         # Ensure vector length matches
         if n_features < normal_data.shape[1]:
@@ -274,17 +304,20 @@ async def anomaly_classifier(metrics_vector: list[float]) -> str:
         # Lower scores = more anomalous
         confidence = max(0.0, min(1.0, 0.5 - score))
 
-        return json.dumps({
-            "is_anomaly": bool(prediction == -1),
-            "confidence": round(confidence, 4),
-            "isolation_score": round(float(score), 4),
-            "model": "isolation_forest_v3",
-            "interpretation": (
-                "ANOMALOUS — metrics significantly deviate from normal patterns"
-                if prediction == -1
-                else "NORMAL — metrics within expected operational bounds"
-            ),
-        }, indent=2)
+        return json.dumps(
+            {
+                "is_anomaly": bool(prediction == -1),
+                "confidence": round(confidence, 4),
+                "isolation_score": round(float(score), 4),
+                "model": "isolation_forest_v3",
+                "interpretation": (
+                    "ANOMALOUS — metrics significantly deviate from normal patterns"
+                    if prediction == -1
+                    else "NORMAL — metrics within expected operational bounds"
+                ),
+            },
+            indent=2,
+        )
 
     except Exception as e:
         return json.dumps({"error": str(e), "is_anomaly": False, "confidence": 0.0})
