@@ -85,6 +85,9 @@ pre-commit = ">=3.7.0"
 target-version = "py311"
 line-length = 120
 
+[tool.ruff.format]
+line-ending = "lf"
+
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "N", "UP", "ANN", "S", "B", "SIM", "TCH"]
 ignore = ["S101"]
