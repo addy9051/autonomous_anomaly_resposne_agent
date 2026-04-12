@@ -5,6 +5,7 @@
 !tsconfig.json
 !**/n8n_workflows/*.json
 !**/grafana/**/*.json
+!tests/evals/*.json
 
 # ─── Python ───────────────────────────────────────────────────
 __pycache__/

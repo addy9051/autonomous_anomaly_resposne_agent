@@ -22,6 +22,12 @@ from agents.diagnosis.graph import _get_synthetic_runbooks
 
 GOLDEN_DATASET_PATH = Path(__file__).parent / "golden_dataset.json"
 
+if not GOLDEN_DATASET_PATH.exists():
+    raise FileNotFoundError(
+        f"Evaluation dataset missing: {GOLDEN_DATASET_PATH.absolute()}\n"
+        "HINT: Ensure the file is not ignored by .gitignore and is correctly committed."
+    )
+
 with open(GOLDEN_DATASET_PATH) as f:
     GOLDEN_DATASET: list[dict] = json.load(f)
 
