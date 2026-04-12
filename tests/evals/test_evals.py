@@ -12,13 +12,11 @@ Architecture Reference: Phase 05 — Testing (LLM Evals)
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 
 from agents.diagnosis.graph import _get_synthetic_runbooks
-
 
 # ─── Load Golden Dataset ─────────────────────────────────────────
 

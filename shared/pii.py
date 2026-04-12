@@ -13,7 +13,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 # ─── Regex Patterns ──────────────────────────────────────────────
 
 # Credit/debit card numbers: 13–19 digit sequences (with optional separators)

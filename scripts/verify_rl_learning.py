@@ -6,9 +6,9 @@ Checks that the 'LLM-as-a-Judge' correctly penalizes poor reasoning and rewards 
 """
 
 import asyncio
-import uuid
-import sys
 import os
+import sys
+import uuid
 from datetime import datetime
 
 # Add project root to path (at index 0 to override site-packages)
@@ -16,24 +16,32 @@ root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
-from orchestrator import AgentOrchestrator
-from shared.schemas import (
-    TelemetryEvent, IncidentRecord, IncidentStatus, AnomalyEvent, 
-    MetricsSnapshot, Severity, AnomalyType, DiagnosisResult, 
-    RootCauseCategory, RecommendedAction, ActionTier, ActionResult, 
-    SemanticReward
+from orchestrator import AgentOrchestrator  # noqa: E402
+from shared.schemas import (  # noqa: E402
+    ActionResult,
+    ActionTier,
+    AnomalyEvent,
+    AnomalyType,
+    DiagnosisResult,
+    IncidentRecord,
+    IncidentStatus,
+    MetricsSnapshot,
+    RecommendedAction,
+    RootCauseCategory,
+    Severity,
 )
-from shared.utils import LLMCostTracker
+from shared.utils import LLMCostTracker  # noqa: E402
 
-async def simulate_learning():
+
+async def simulate_learning() -> None:
     # Initialize orchestrator (sets up all agents)
     orchestrator = AgentOrchestrator()
     feedback = orchestrator.feedback_agent
-    
+
     print("\n" + "="*60)
     print("PHASE 7: RL LEARNING VERIFICATION (SIMULATION)")
     print("="*60 + "\n")
-    
+
     # Scenarios designed to test the RewardAgent's judgement
     scenarios = [
         {
@@ -47,7 +55,10 @@ async def simulate_learning():
         {
             "name": "Illogical RCA (Error Rate vs Network)",
             "metrics": {"p99_latency_ms": 150, "error_rate": 0.65, "cpu_percent": 10},
-            "rca": "Network jitter is causing errors, though metrics show zero packet loss and high application error rate.",
+            "rca": (
+                "Network jitter is causing errors, though metrics show zero packet loss "
+                "and high application error rate."
+            ),
             "action": "flush_cache",
             "success": False,
             "expected_reward": "low"
@@ -62,22 +73,26 @@ async def simulate_learning():
             "expected_reward": "neutral/low"
         }
     ]
-    
+
     for i, scenario in enumerate(scenarios):
         print(f"--- Scenario {i+1}: {scenario['name']}")
-        
+
         incident_id = f"sim-{uuid.uuid4().hex[:8]}"
-        
+
         # 1. Create Mock Anomaly
         anomaly = AnomalyEvent(
             severity=Severity.HIGH,
             affected_services=["payment-gateway"],
-            anomaly_type=AnomalyType.LATENCY_SPIKE if scenario["metrics"]["p99_latency_ms"] > 1000 else AnomalyType.ERROR_RATE,
+            anomaly_type=(
+                AnomalyType.LATENCY_SPIKE
+                if scenario["metrics"]["p99_latency_ms"] > 1000
+                else AnomalyType.ERROR_RATE
+            ),
             metrics_snapshot=MetricsSnapshot(**scenario["metrics"]),
             reasoning="Simulated anomaly for Phase 7 verification.",
             confidence=0.85
         )
-        
+
         # 2. Create Mock Diagnosis
         diagnosis = DiagnosisResult(
             incident_id=incident_id,
@@ -88,7 +103,7 @@ async def simulate_learning():
             confidence=0.75,
             reasoning_chain=f"Observation: {scenario['metrics']}. Conclusion: {scenario['rca']}"
         )
-        
+
         # 3. Create Mock Action Result
         action_result = ActionResult(
             incident_id=incident_id,
@@ -97,7 +112,7 @@ async def simulate_learning():
             execution_status="success" if scenario["success"] else "failed",
             timestamp=datetime.utcnow()
         )
-        
+
         # 4. Assemble Incident Record
         incident = IncidentRecord(
             incident_id=incident_id,
@@ -110,19 +125,19 @@ async def simulate_learning():
             time_to_mitigate_seconds=45 if scenario["success"] else None,
             resolved_at=datetime.utcnow()
         )
-        
+
         # 5. Run Reward Agent Evaluation
         cost_tracker = LLMCostTracker(incident_id=incident_id)
-        print(f"   [Brain] RewardAgent evaluating...")
-        
+        print("   [Brain] RewardAgent evaluating...")
+
         semantic_reward = await orchestrator.reward_agent.evaluate(incident, cost_tracker)
-        
+
         print(f"   [Score] Quality Score: {semantic_reward.overall_quality_score:.2f}")
         print(f"   [Justification] Justification: {semantic_reward.justification[:120]}...")
-        
+
         # 6. Record in Feedback Loop
         reward = await feedback.record_outcome(incident, semantic_reward)
-        
+
         print(f"   [Reward] Hybrid Reward: {reward:.4f}")
         print(f"   [Stats] Buffer Status: {len(feedback.experience_buffer)} experiences\n")
 
@@ -133,11 +148,11 @@ async def simulate_learning():
     status = feedback.get_policy_status()
     print(f"Policy Version: {status['current_version']}")
     print(f"Total Experiences: {status['buffer_size']}")
-    
+
     print("\nAction Performance Stats:")
     for action, stats in status['action_stats'].items():
         print(f"  🔹 {action:15} | count: {stats['count']} | mean_reward: {stats['mean_reward']:.4f}")
-    
+
     print("\n" + "="*60)
     print("PHASE 7 VERIFICATION COMPLETE")
     print("="*60 + "\n")

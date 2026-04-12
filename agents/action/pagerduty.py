@@ -7,13 +7,15 @@ Handles triggering PagerDuty incidents for Tier 3 actions and high-severity anom
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from shared.config import get_settings
-from shared.schemas import DiagnosisResult, RecommendedAction
 from shared.utils import get_logger
+
+if TYPE_CHECKING:
+    from shared.schemas import DiagnosisResult, RecommendedAction
 
 logger = get_logger("pagerduty")
 
@@ -63,7 +65,11 @@ async def trigger_pagerduty_incident(
         "Execution Parameters": action.params,
         "System Confidence": f"{diagnosis.confidence:.2f}",
         "Rollback Strategy": action.rollback_steps,
-        "Reasoning": diagnosis.reasoning_chain[:500] + "..." if len(diagnosis.reasoning_chain) > 500 else diagnosis.reasoning_chain
+        "Reasoning": (
+            diagnosis.reasoning_chain[:500] + "..."
+            if len(diagnosis.reasoning_chain) > 500
+            else diagnosis.reasoning_chain
+        )
     }
 
     payload = {
@@ -88,14 +94,14 @@ async def trigger_pagerduty_incident(
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             result = response.json()
-            
+
             logger.info("pagerduty_incident_created", incident_url=result.get("incident", {}).get("html_url"))
             return {
                 "status": "success",
                 "incident_id": result.get("incident", {}).get("id"),
                 "incident_url": result.get("incident", {}).get("html_url"),
             }
-            
+
     except httpx.HTTPStatusError as e:
         # Check for deduplication conflict (Incident already open)
         try:
@@ -111,8 +117,8 @@ async def trigger_pagerduty_incident(
                     "message": "Incident already tracked in PagerDuty",
                     "is_duplicate": True
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("pagerduty_json_parse_error", error=str(e))
 
         logger.error("pagerduty_api_error", status_code=e.response.status_code, text=e.response.text)
         return {"status": "error", "message": f"API Error: {e.response.status_code}"}
@@ -130,13 +136,7 @@ async def resolve_pagerduty_incident(incident_key: str) -> dict[str, Any]:
         return {"status": "skipped", "reason": "No API key"}
 
     # PD Events API V2 is better for resolution by incident_key
-    url = "https://events.pagerduty.com/v2/enqueue"
-    payload = {
-        "routing_key": settings.integrations.pagerduty_api_key, # Or Integration Key
-        "event_action": "resolve",
-        "dedup_key": incident_key
-    }
-    
+
     # Actually, the REST API approach is more consistent with our trigger logic
     # But resolution via REST API requires the internal ID, not the dedup_key.
     # We'll stick to a mock or use the Events API if integration keys are used.

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shared.schemas import RootCauseCategory, IncidentStatus
+from shared.schemas import IncidentStatus, RootCauseCategory
 from shared.utils import get_logger
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ def compute_reward(incident: IncidentRecord, semantic_reward: SemanticReward | N
     if incident.auto_resolved and incident.time_to_mitigate_seconds:
         improvement = 1.0 - (incident.time_to_mitigate_seconds / BASELINE_TTM_SECONDS)
         extrinsic_r += max(0.0, improvement)
-    
+
     # Status-based base rewards
     if incident.auto_resolved:
         extrinsic_r += 0.2
@@ -102,7 +102,7 @@ def compute_batch_rewards(incidents: list[IncidentRecord]) -> list[dict]:
 def _extract_state_features(incident: IncidentRecord) -> list[float]:
     """
     Extract a comprehensive feature vector for RL model training.
-    
+
     Includes normalized metrics, diagnosis metadata, and cost dimensions.
     """
     features = []

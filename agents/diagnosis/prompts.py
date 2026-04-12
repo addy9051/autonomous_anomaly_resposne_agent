@@ -102,8 +102,9 @@ You MUST return a JSON list of required experts:
 ```
 """
 
-SECURITY_AUDITOR_PROMPT = """You are the Security Auditor Expert. 
-Your role is to investigate if the current anomaly is caused by a security event rather than a standard infrastructure failure.
+SECURITY_AUDITOR_PROMPT = """You are the Security Auditor Expert.
+Your role is to investigate if the current anomaly is caused by a security event
+rather than a standard infrastructure failure.
 
 Check:
 - IP address reputation and geolocations

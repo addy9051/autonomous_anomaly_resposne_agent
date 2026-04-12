@@ -283,13 +283,13 @@ Format as:
 
         # Attempt real Slack notification
         if self.settings.integrations.slack_bot_token:
-            from slack_sdk.errors import SlackApiError
-            from slack_sdk.web.async_client import AsyncWebClient
-
-            client = AsyncWebClient(token=self.settings.integrations.slack_bot_token)
-            channel = self.settings.integrations.slack_alert_channel
-
             try:
+                from slack_sdk.errors import SlackApiError
+                from slack_sdk.web.async_client import AsyncWebClient
+
+                client = AsyncWebClient(token=self.settings.integrations.slack_bot_token)
+                channel = self.settings.integrations.slack_alert_channel
+
                 # Add severity icon to summary
                 icon = "🔴" if diagnosis.confidence > 0.8 else "🟡"
                 header = f"{icon} *Anomaly Detected: {diagnosis.incident_id[:8]}*"
@@ -311,6 +311,12 @@ Format as:
                 await client.chat_postMessage(channel=channel, blocks=blocks, text=summary)
                 logger.debug("slack_notified", incident_id=diagnosis.incident_id)
 
+            except ImportError:
+                logger.warning(
+                    "slack_sdk_missing",
+                    incident_id=diagnosis.incident_id,
+                    tip="Install with: pip install slack_sdk"
+                )
             except SlackApiError as e:
                 error_type = e.response["error"]
                 if error_type == "channel_not_found":

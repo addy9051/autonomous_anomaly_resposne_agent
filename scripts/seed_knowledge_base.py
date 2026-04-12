@@ -34,11 +34,11 @@ async def seed() -> None:
     pipeline = RunbookIngestionPipeline()
     total_chunks = await pipeline.ingest_sample_runbooks()
 
-    print(f"\nIngestion complete!")
-    print(f"Runbooks ingested: 8")
+    print("\nIngestion complete!")
+    print("Runbooks ingested: 8")
     print(f"Total chunks created: {total_chunks}")
-    print(f"Embedding dimensions: 768 (Matryoshka)")
-    print(f"Embedding model: text-embedding-3-small")
+    print("Embedding dimensions: 768 (Matryoshka)")
+    print("Embedding model: text-embedding-3-small")
 
 
 async def check_health() -> None:
@@ -49,16 +49,16 @@ async def check_health() -> None:
     health = await search.healthcheck()
 
     if health["status"] == "healthy":
-        print(f"\nKnowledge base is healthy")
+        print("\nKnowledge base is healthy")
         print(f"Documents: {health['document_count']}")
         print(f"Target: {health.get('dsn_target', 'unknown')}")
     else:
-        print(f"\nKnowledge base is unavailable")
+        print("\nKnowledge base is unavailable")
         print(f"Error: {health.get('error', 'unknown')}")
-        print(f"\nMake sure to:")
-        print(f"1. Set SUPABASE_DB_URL in .env with your Supabase connection string")
-        print(f"2. Run the migration SQL in your Supabase SQL editor")
-        print(f"3. Or start local Docker: docker compose up -d postgres")
+        print("\nMake sure to:")
+        print("1. Set SUPABASE_DB_URL in .env with your Supabase connection string")
+        print("2. Run the migration SQL in your Supabase SQL editor")
+        print("3. Or start local Docker: docker compose up -d postgres")
 
 
 async def test_search(query: str) -> None:

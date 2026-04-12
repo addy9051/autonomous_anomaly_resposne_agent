@@ -13,13 +13,17 @@ State is checkpointed to Redis for durability.
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse.callback import CallbackHandler
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph.message import add_messages
+
+if TYPE_CHECKING:
+    from langgraph.checkpoint.base import BaseCheckpointSaver
+    from langgraph.graph.state import CompiledStateGraph
 
 from agents.diagnosis.prompts import (
     CONTEXT_GATHER_PROMPT,
@@ -187,11 +191,10 @@ async def supervisor_node(state: DiagnosisState) -> dict:
     Node 3: Supervisor - Triage incident and dispatch specialized experts in parallel.
     """
     import asyncio
+
+    from agents.diagnosis.experts import ApplicationExpert, DatabaseExpert, NetworkExpert, SecurityExpert
     from agents.diagnosis.prompts import SUPERVISOR_PROMPT
-    from agents.diagnosis.experts import (
-        DatabaseExpert, NetworkExpert, SecurityExpert, ApplicationExpert
-    )
-    
+
     settings = get_settings()
     llm = get_chat_model(
         model_name=settings.llm.diagnosis_agent_model,
@@ -200,7 +203,7 @@ async def supervisor_node(state: DiagnosisState) -> dict:
     )
 
     anomaly = state["anomaly_event"]
-    
+
     # 1. Triage
     response = await llm.ainvoke([
         SystemMessage(content=SUPERVISOR_PROMPT),
@@ -229,24 +232,24 @@ async def supervisor_node(state: DiagnosisState) -> dict:
 
     from shared.utils import Timer
     expert_timer = Timer()
-    
+
     tasks = []
     for key in expert_keys:
         if key in expert_map:
             tasks.append(expert_map[key].investigate(anomaly))
-    
+
     # Default to application if list is empty
     if not tasks:
         tasks.append(expert_map["application_expert"].investigate(anomaly))
 
     with expert_timer:
         reports_list = await asyncio.gather(*tasks)
-    
-    logger.info("expert_investigations_complete", 
-                num_reports=len(reports_list), 
+
+    logger.info("expert_investigations_complete",
+                num_reports=len(reports_list),
                 elapsed_ms=expert_timer.elapsed_ms,
                 event_id=anomaly.get("event_id"))
-    
+
     reports_dict = {}
     for r in reports_list:
         reports_dict[r["agent_type"]] = r
@@ -263,7 +266,6 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
     Node 4: Synthesize all evidence into a final root cause analysis.
     Produces a structured DiagnosisResult.
     """
-    from agents.diagnosis.prompts import DIAGNOSIS_SYSTEM_PROMPT, SYNTHESIS_PROMPT
     settings = get_settings()
     llm = get_chat_model(
         model_name=settings.llm.diagnosis_agent_model,
@@ -305,7 +307,9 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
 # ─── Graph Builder ───────────────────────────────────────────────
 
 
-def build_diagnosis_graph(checkpointer: Any = None) -> Any:
+def build_diagnosis_graph(
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> CompiledStateGraph:
     """Build and compile the diagnosis LangGraph."""
     graph = StateGraph(DiagnosisState)
 
@@ -382,7 +386,7 @@ class DiagnosisAgent:
                         handler = None
 
                 callbacks = [handler] if handler else []
-                
+
                 # Resilient LangGraph Execution (In-Memory Checkpointing)
                 # Note: RedisSaver bypassed due to local serialization compatibility issues
                 saver = MemorySaver()
@@ -391,9 +395,9 @@ class DiagnosisAgent:
                     "configurable": {"thread_id": anomaly_event.event_id},
                     "callbacks": callbacks
                 }
-                
+
                 result = await app.ainvoke(initial_state, config=config)
-                    
+
                 diagnosis_dict = result.get("diagnosis_result") or {}
 
                 # Build DiagnosisResult

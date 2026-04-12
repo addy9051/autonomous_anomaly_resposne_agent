@@ -60,7 +60,7 @@ class HybridSearchService:
         """
         import time
         start_time = time.time()
-        
+
         with tracer.start_as_current_span("rag_retrieval") as span:
             span.set_attribute("rag.query", query)
             k = top_k or self.top_k
@@ -82,24 +82,24 @@ class HybridSearchService:
             # 4. Take a larger pool of RRF results, fetch documents, and (optionally) rerank
             pool_size = k * 3
             top_fused = fused[:pool_size]
-            
+
             docs_map = {}
             for doc_id, rrf_score in top_fused:
                 doc = await self._get_document(conn, doc_id)
                 if doc:
                     docs_map[doc_id] = {"doc": doc, "initial_score": rrf_score}
-            
+
             references = []
-            
+
             if self.settings.llm.cohere_api_key and docs_map:
                 # Execute Cross-Encoder Reranking
                 import cohere
                 co = cohere.ClientV2(self.settings.llm.cohere_api_key)
-                
+
                 # We must keep order aligned with doc_ids for the re-mapping
                 doc_ids_list = list(docs_map.keys())
                 documents_text = [docs_map[did]["doc"]["content"] for did in doc_ids_list]
-                
+
                 # Execute Cohere API
                 rerank_response = co.rerank(
                     model="rerank-english-v3.0",
@@ -107,7 +107,7 @@ class HybridSearchService:
                     documents=documents_text,
                     top_n=k
                 )
-                
+
                 # Build references from reranked results
                 for result in rerank_response.results:
                     did = doc_ids_list[result.index]
@@ -141,10 +141,10 @@ class HybridSearchService:
             span.set_attribute("rag.num_results", len(references))
             if references:
                 span.set_attribute("rag.top_score", references[0].similarity_score)
-                
+
             latency_ms = (time.time() - start_time) * 1000
             span.set_attribute("rag.latency_ms", latency_ms)
-            
+
             return references
 
         except Exception as e:

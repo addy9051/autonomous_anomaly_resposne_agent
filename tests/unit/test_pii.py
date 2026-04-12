@@ -5,7 +5,6 @@ Tests cover: credit cards, emails, IPs, SSNs, merchant IDs,
 API keys, edge cases, and recursive dict sanitization.
 """
 
-import pytest
 
 from shared.pii import sanitize_dict, sanitize_for_llm
 

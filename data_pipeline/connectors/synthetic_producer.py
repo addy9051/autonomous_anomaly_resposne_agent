@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Any
-from shared.config import get_settings
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from shared.config import get_settings
+from shared.pubsub import get_pubsub_client
 from shared.schemas import TelemetryEvent
 from shared.utils import get_logger
-from shared.pubsub import get_pubsub_client
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

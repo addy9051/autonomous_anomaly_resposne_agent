@@ -7,18 +7,20 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from shared.llm import get_chat_model
-from shared.config import get_settings
 from langchain_core.messages import HumanMessage, SystemMessage
+
 from agents.diagnosis.prompts import (
+    APPLICATION_EXPERT_PROMPT,
     DATABASE_EXPERT_PROMPT,
     NETWORK_EXPERT_PROMPT,
     SECURITY_AUDITOR_PROMPT,
-    APPLICATION_EXPERT_PROMPT,
 )
+from shared.config import get_settings
+from shared.llm import get_chat_model
+
 
 class ExpertAgent:
-    def __init__(self, expert_type: str, prompt_template: str):
+    def __init__(self, expert_type: str, prompt_template: str) -> None:
         self.expert_type = expert_type
         self.prompt_template = prompt_template
         settings = get_settings()
@@ -33,7 +35,7 @@ class ExpertAgent:
         prompt = self.prompt_template.format(
             anomaly_context=json.dumps(anomaly_context, indent=2, default=str)
         )
-        
+
         response = await self.llm.ainvoke([
             SystemMessage(content=f"You are the {self.expert_type.title()} Expert."),
             HumanMessage(content=prompt),
@@ -48,17 +50,17 @@ class ExpertAgent:
         }
 
 class DatabaseExpert(ExpertAgent):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("database", DATABASE_EXPERT_PROMPT)
 
 class NetworkExpert(ExpertAgent):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("network", NETWORK_EXPERT_PROMPT)
 
 class SecurityExpert(ExpertAgent):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("security", SECURITY_AUDITOR_PROMPT)
 
 class ApplicationExpert(ExpertAgent):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("application", APPLICATION_EXPERT_PROMPT)

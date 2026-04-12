@@ -12,11 +12,14 @@ Provides endpoints for:
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agents.action.tiers import ACTION_TIERS, get_tier_description
@@ -38,9 +41,9 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
     global orchestrator
     setup_logging()
     orchestrator = AgentOrchestrator()
-    
+
     # Background Heartbeat: Keep the dashboard pulse alive
-    async def pulse_heartbeat():
+    async def pulse_heartbeat() -> None:
         while orchestrator is not None:
             try:
                 # Generate a normal metric event to populate charts
@@ -49,20 +52,16 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
                 await asyncio.sleep(2.0)  # Pulse every 2s
             except Exception:
                 await asyncio.sleep(5.0)
-                
+
     heartbeat_task = asyncio.create_task(pulse_heartbeat())
-    
+
     yield
-    
+
     heartbeat_task.cancel()
     orchestrator = None
 
 
 # ─── App Setup ───────────────────────────────────────────────────
-
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
-import os
 
 app = FastAPI(
     title="Anomaly Response Agent System",
@@ -153,7 +152,7 @@ async def detailed_health() -> dict[str, Any]:
     """Detailed health for UI diagnostics."""
     if not orchestrator:
         return {"status": "uninitialized", "error": "Orchestrator not found"}
-    
+
     return {
         "status": "healthy",
         "orchestrator": {
@@ -338,7 +337,8 @@ async def approve_tier2_action(incident_id: str, request: ApproveActionRequest) 
 
     from shared.schemas import IncidentStatus
     if incident.status != IncidentStatus.ACTION_PENDING:
-        raise HTTPException(status_code=400, detail=f"Incident is in status {incident.status.value}, expected ACTION_PENDING")
+        detail = f"Incident is in status {incident.status.value}, expected ACTION_PENDING"
+        raise HTTPException(status_code=400, detail=detail)
 
     # Move incident to resolved execution status upon approval
     incident.status = IncidentStatus.RESOLVED

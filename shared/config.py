@@ -68,7 +68,7 @@ class DataConfig(BaseSettings):
     # Kafka
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_schema_registry_url: str = "http://localhost:8081"
-    
+
     # Pub/Sub (Production replacement for Kafka)
     pubsub_project_id: str = ""
     pubsub_topic_prefix: str = "anomaly-events"

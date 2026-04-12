@@ -9,11 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from langchain_anthropic import ChatAnthropic
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_openai import ChatOpenAI
-
-
 from shared.config import get_settings
 
 if TYPE_CHECKING:
@@ -46,6 +41,13 @@ def get_chat_model(
 
     # 1. Anthropic (Claude)
     if model_lower.startswith("claude-"):
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except ImportError:
+            raise ImportError(
+                "langchain-anthropic package is required for Claude models. "
+                "Install it with: pip install langchain-anthropic"
+            ) from None
         return ChatAnthropic(
             model=model_name,
             anthropic_api_key=settings.llm.anthropic_api_key,
@@ -56,6 +58,13 @@ def get_chat_model(
 
     # 2. Google (Gemini)
     elif model_lower.startswith("gemini-"):
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+        except ImportError:
+            raise ImportError(
+                "langchain-google-genai package is required for Gemini models. "
+                "Install it with: pip install langchain-google-genai"
+            ) from None
         return ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=settings.llm.google_application_credentials or "", # Prioritize key if set
@@ -66,6 +75,13 @@ def get_chat_model(
 
     # 3. OpenAI (Default)
     else:
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError:
+            raise ImportError(
+                "langchain-openai package is required for OpenAI models. "
+                "Install it with: pip install langchain-openai"
+            ) from None
         return ChatOpenAI(
             model=model_name,
             api_key=settings.llm.openai_api_key,

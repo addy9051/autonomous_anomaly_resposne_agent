@@ -20,10 +20,6 @@ from typing import Any
 import redis.asyncio as aioredis
 import structlog
 from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -65,20 +61,33 @@ def get_logger(name: str) -> structlog.BoundLogger:
 def setup_tracing() -> trace.Tracer:
     """Initialize OpenTelemetry tracing with OTLP exporter."""
     settings = get_settings()
-    resource = Resource.create({
-        "service.name": settings.observability.otel_service_name,
-        "deployment.environment": settings.app.app_env,
-    })
-    provider = TracerProvider(resource=resource)
 
-    if settings.observability.otel_exporter_otlp_endpoint:
-        otlp_exporter = OTLPSpanExporter(
-            endpoint=settings.observability.otel_exporter_otlp_endpoint,
-            insecure=True,
-        )
-        provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+    try:
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-    trace.set_tracer_provider(provider)
+        resource = Resource.create({
+            "service.name": settings.observability.otel_service_name,
+            "deployment.environment": settings.app.app_env,
+        })
+        provider = TracerProvider(resource=resource)
+
+        if settings.observability.otel_exporter_otlp_endpoint:
+            otlp_exporter = OTLPSpanExporter(
+                endpoint=settings.observability.otel_exporter_otlp_endpoint,
+                insecure=True,
+            )
+            provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+
+        trace.set_tracer_provider(provider)
+    except (ImportError, ModuleNotFoundError) as e:
+        # Graceful degradation if SDK or OTLP exporter is missing
+        # We still return the default tracer provider (which usually defaults to a NoOp provider)
+        logger = get_logger("tracing_setup")
+        logger.warning("opentelemetry_sdk_missing", error=str(e), action="falling_back_to_noop")
+
     return trace.get_tracer(settings.observability.otel_service_name)
 
 
@@ -105,7 +114,7 @@ def get_langfuse_callbacks(session_id: str | None = None) -> list[Any]:
 
     try:
         from langfuse.callback import CallbackHandler
-        
+
         handler = CallbackHandler(
             public_key=settings.observability.langfuse_public_key,
             secret_key=settings.observability.langfuse_secret_key,
@@ -135,7 +144,7 @@ async def acquire_distributed_lock(lock_key: str, ttl_seconds: int = 300) -> boo
     """
     Attempt to acquire a distributed lock using Redis.
     Uses SETNX semantics.
-    
+
     Returns:
         True if the lock was acquired, False if it was already held.
     """
@@ -219,7 +228,7 @@ class LLMCostTracker:
             "cost_usd": round(cost, 6),
             "cumulative_tokens": self.total_tokens,
         })
-        
+
         if self.budget_exceeded:
             logger = get_logger("cost_tracker")
             logger.error("budget_exceeded", incident_id=self.incident_id, tokens=self.total_tokens, max=self.max_tokens)

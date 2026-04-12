@@ -1,5 +1,6 @@
 """Quick sanity check for RAG pipeline imports and configuration."""
 import sys
+
 sys.path.insert(0, ".")
 
 from knowledge_base.ingestion.pipeline import RunbookIngestionPipeline

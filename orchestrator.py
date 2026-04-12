@@ -11,9 +11,10 @@ Supports both:
 
 from __future__ import annotations
 
+import asyncio
+from collections import deque
 from datetime import datetime
 from typing import Any
-from collections import deque
 
 from agents.action.agent import ActionAgent
 from agents.action.pagerduty import resolve_pagerduty_incident
@@ -53,7 +54,7 @@ class AgentOrchestrator:
         # Track active incidents
         self.active_incidents: dict[str, IncidentRecord] = {}
         self.resolved_incidents: list[IncidentRecord] = []
-        
+
         # Real-time telemetry pulse buffer (last 100 events)
         self.telemetry_history: deque[TelemetryEvent] = deque(maxlen=100)
 
@@ -136,14 +137,14 @@ class AgentOrchestrator:
             # ── Step 5: Feedback Loop — Record Outcome (Phase 7 Hybrid) ──
             # First, use LLM-as-a-Judge to evaluate the qualitative resolution
             semantic_reward = await self.reward_agent.evaluate(incident, cost_tracker)
-            
+
             # Sync cost tracker after evaluation
             incident.total_llm_tokens_used = cost_tracker.total_tokens
             incident.total_llm_cost_usd = cost_tracker.total_cost
 
             # Record final outcome and compute hybrid reward
             reward = await self.feedback_agent.record_outcome(incident, semantic_reward)
-            
+
             logger.info(
                 "feedback_recorded",
                 incident_id=incident.incident_id,
@@ -156,7 +157,7 @@ class AgentOrchestrator:
             # Move to resolved
             del self.active_incidents[incident.incident_id]
             self.resolved_incidents.append(incident)
-            
+
             # Sync with PagerDuty (Close the ticket)
             await resolve_pagerduty_incident(incident.incident_id)
 

@@ -4,8 +4,8 @@ Triggers 4 distinct scenarios to test the Supervisor's routing logic.
 """
 
 import asyncio
+
 import httpx
-import json
 
 API_URL = "http://localhost:8000/api/v1/events/process"
 
@@ -64,7 +64,7 @@ SCENARIOS = [
     }
 ]
 
-async def run_verification():
+async def run_verification() -> None:
     print("🚀 Starting Specialized Agent Verification...\n")
     async with httpx.AsyncClient() as client:
         for scenario in SCENARIOS:
@@ -82,7 +82,7 @@ async def run_verification():
                     print(f"   Body: {response.text}")
             except Exception as e:
                 print(f"❌ Error: {type(e).__name__}: {str(e)}")
-            
+
             print("Waiting for agent processing...\n")
             await asyncio.sleep(5) # Give it some time to process
 
