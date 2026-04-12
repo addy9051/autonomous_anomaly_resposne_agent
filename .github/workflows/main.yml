@@ -91,16 +91,23 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud
+        id: auth
         uses: google-github-actions/auth@v2
         with:
+          token_format: 'access_token'
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Verify Identity
+        run: |
+          gcloud auth list
+          gcloud config get-value project
+
       - name: Configure Docker for Artifact Registry
         run: |
-          gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev
+          echo "${{ steps.auth.outputs.access_token }}" | docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev
 
       - name: Build Docker image
         run: |
@@ -125,8 +132,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud
+        id: auth_gke
         uses: google-github-actions/auth@v2
         with:
+          token_format: 'access_token'
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
       - name: Get GKE Credentials
