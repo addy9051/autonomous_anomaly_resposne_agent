@@ -135,7 +135,7 @@ A comprehensive code-vs-design validation produced a maturity scorecard and iden
 Systematically closed the audit gaps across all priority tiers:
 
 #### Priority 1 (High Impact) — Completed
-- **RAG Pipeline — Real Hybrid Search**: Implemented full vector + BM25 + Reciprocal Rank Fusion (RRF) search in `knowledge_base/retrieval/search.py`, with optional Cohere cross-encoder reranking
+- **RAG Pipeline — Real Hybrid Search**: Implemented full vector + BM25 + Reciprocal Rank Fusion (RRF) search in `knowledge_base/retrieval/search.py`, with **Cohere cross-encoder reranking** (`rerank-english-v3.0`)
 - **Runbook Ingestion Pipeline**: Built document chunking (512 tokens, 64 overlap) and embedding pipeline in `knowledge_base/ingestion/pipeline.py`
 - **LangGraph Checkpointing**: Added state checkpointing to the diagnosis graph (initially Redis, now MemorySaver for local dev compatibility)
 - **Langfuse Integration**: Wired `CallbackHandler` throughout agents with session scoping by `incident_id`
@@ -340,7 +340,7 @@ This section documents every significant implementation step taken during the pr
   - Dense vector search (cosine similarity via pgvector)
   - Sparse BM25 keyword search (PostgreSQL trigram similarity)
   - Reciprocal Rank Fusion (RRF) to merge results
-  - Optional Cohere cross-encoder reranking
+  - **Cohere cross-encoder reranking** (`rerank-english-v3.0`) for precision boosting
 - Built document ingestion pipeline with 512-token chunks and 64-token overlap
 - Created pgvector migration schemas
 
@@ -690,7 +690,7 @@ gcloud auth application-default login
 | **Langfuse** | Optional | ✅ Self-Hosted | LLM tracing & observability |
 | **Slack** | Optional | ✅ | Tier 2 approval notifications |
 | **PagerDuty** | Optional | 14-day trial | Tier 3 incident escalations |
-| **Cohere** | Optional | ✅ 1K/mo | Cross-encoder reranking for RAG |
+| **Cohere** | Recommended | ✅ 1K/mo | Cross-encoder reranking for RAG (`rerank-english-v3.0`) |
 | **Google Cloud** | Optional | $300 credit | Vertex AI, GKE, GCS, Pub/Sub |
 
 ---

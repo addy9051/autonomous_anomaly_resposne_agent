@@ -69,6 +69,7 @@ structlog = ">=24.1.0"
 tenacity = ">=8.3.0"
 orjson = ">=3.10.0"
 rich = ">=13.7.0"
+cohere = "^6.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0.0"
