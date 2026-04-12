@@ -16,8 +16,9 @@ import json
 from typing import Annotated, Any, TypedDict
 
 from langfuse.callback import CallbackHandler
-from langgraph.checkpoint.redis import AsyncRedisSaver
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph.message import add_messages
 
 from agents.diagnosis.prompts import (
@@ -382,16 +383,16 @@ class DiagnosisAgent:
 
                 callbacks = [handler] if handler else []
                 
-                # Resilient LangGraph Execution (Redis Checkpointing)
-                async with AsyncRedisSaver.from_conn_string("redis://localhost:6379") as saver:
-                    app = build_diagnosis_graph(checkpointer=saver)
-                    
-                    config = {
-                        "configurable": {"thread_id": anomaly_event.event_id},
-                        "callbacks": callbacks
-                    }
-                    
-                    result = await app.ainvoke(initial_state, config=config)
+                # Resilient LangGraph Execution (In-Memory Checkpointing)
+                # Note: RedisSaver bypassed due to local serialization compatibility issues
+                saver = MemorySaver()
+                app = build_diagnosis_graph(checkpointer=saver)
+                config = {
+                    "configurable": {"thread_id": anomaly_event.event_id},
+                    "callbacks": callbacks
+                }
+                
+                result = await app.ainvoke(initial_state, config=config)
                     
                 diagnosis_dict = result.get("diagnosis_result") or {}
 

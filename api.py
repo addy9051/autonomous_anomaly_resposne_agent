@@ -11,6 +11,7 @@ Provides endpoints for:
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -37,7 +38,23 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
     global orchestrator
     setup_logging()
     orchestrator = AgentOrchestrator()
+    
+    # Background Heartbeat: Keep the dashboard pulse alive
+    async def pulse_heartbeat():
+        while orchestrator is not None:
+            try:
+                # Generate a normal metric event to populate charts
+                event = producer.generate_normal_metrics()
+                await orchestrator.process_event(event, dry_run=True)
+                await asyncio.sleep(2.0)  # Pulse every 2s
+            except Exception:
+                await asyncio.sleep(5.0)
+                
+    heartbeat_task = asyncio.create_task(pulse_heartbeat())
+    
     yield
+    
+    heartbeat_task.cancel()
     orchestrator = None
 
 
@@ -60,6 +77,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://0.0.0.0:3000",
+        "http://[::1]:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],

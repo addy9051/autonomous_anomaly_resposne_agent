@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { LayoutDashboard, Activity, Database, Zap, Shield, Play } from 'lucide-react';
+import { LayoutDashboard, Activity, Database, Zap, Shield, Play, Wifi, WifiOff, AlertCircle } from 'lucide-react';
 import StatusCards from './StatusCards';
 import TelemetryPulse from './TelemetryPulse';
 import ActiveIncidents from './ActiveIncidents';
@@ -10,12 +10,12 @@ import {
   fetchStats, 
   fetchRecentTelemetry, 
   fetchActiveIncidents, 
-  fetchResolvedIncidents, 
-  fetchRewardHistory,
+  fetchDetailedHealth,
   triggerDemo,
   TelemetryEvent,
   IncidentRecord,
-  RewardHistoryEntry
+  RewardHistoryEntry,
+  fetchRewardHistory
 } from '@/lib/api';
 
 export default function Dashboard() {
@@ -25,9 +25,15 @@ export default function Dashboard() {
   const [rewards, setRewards] = useState<RewardHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [isInjecting, setIsInjecting] = useState(false);
+  const [isBackendOnline, setIsBackendOnline] = useState<boolean | null>(null);
+  const [errorCount, setErrorCount] = useState(0);
 
   const refreshData = useCallback(async () => {
     try {
+      // Check detailed health for connectivity status
+      const health = await fetchDetailedHealth();
+      setIsBackendOnline(health?.status === 'healthy');
+      
       const [s, t, a, r] = await Promise.all([
         fetchStats(),
         fetchRecentTelemetry(),
@@ -39,8 +45,11 @@ export default function Dashboard() {
       setActiveIncidents(a);
       setRewards(r);
       setLoading(false);
+      setErrorCount(0);
     } catch (err) {
       console.error("Data refresh failed:", err);
+      setIsBackendOnline(false);
+      setErrorCount(prev => prev + 1);
     }
   }, []);
 
@@ -54,9 +63,12 @@ export default function Dashboard() {
     setIsInjecting(true);
     try {
       await triggerDemo();
+      console.log("Demo successfully triggered");
+      // Immediate refresh to show result
       setTimeout(refreshData, 500);
     } catch (err) {
       console.error("Demo failed:", err);
+      alert("⚠️ Request Blocked: Please check browser console for CORS or Network errors.");
     } finally {
       setTimeout(() => setIsInjecting(false), 2000);
     }
@@ -66,13 +78,27 @@ export default function Dashboard() {
     <div className="flex flex-col min-h-screen bg-background text-foreground selection:bg-primary selection:text-black">
       {/* Navigation */}
       <nav className="glass sticky top-0 z-50 px-8 py-4 flex items-center justify-between border-b border-white/5 mx-6 mt-6 rounded-3xl">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary rounded-2xl flex items-center justify-center shadow-neon">
-            <Zap className="text-black" size={24} />
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary rounded-2xl flex items-center justify-center shadow-neon">
+              <Zap className="text-black" size={24} />
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-lg font-black tracking-tight uppercase leading-none">SRE MISSION CONTROL</h1>
+              <span className="text-[10px] font-bold text-primary tracking-[0.2em] uppercase">Autonomous Response v3</span>
+            </div>
           </div>
-          <div className="flex flex-col">
-            <h1 className="text-lg font-black tracking-tight uppercase leading-none">SRE MISSION CONTROL</h1>
-            <span className="text-[10px] font-bold text-primary tracking-[0.2em] uppercase">Autonomous Response v3</span>
+
+          {/* Connection Status Indicator */}
+          <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${
+            isBackendOnline === true 
+              ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
+              : isBackendOnline === false 
+                ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse'
+                : 'bg-white/5 text-white/40 border-white/10'
+          }`}>
+            {isBackendOnline === true ? <Wifi size={12} /> : <WifiOff size={12} />}
+            {isBackendOnline === true ? 'SYSTEM CONNECTED' : isBackendOnline === false ? 'CONNECTION FAILED' : 'CONNECTING...'}
           </div>
         </div>
         
@@ -85,8 +111,12 @@ export default function Dashboard() {
 
         <button 
           onClick={handleTriggerDemo}
-          disabled={isInjecting}
-          className="flex items-center gap-2 bg-white text-black font-bold text-xs uppercase tracking-widest px-6 py-3 rounded-2xl hover:bg-primary transition-all active:scale-95 disabled:opacity-50"
+          disabled={isInjecting || !isBackendOnline}
+          className={`flex items-center gap-2 font-bold text-xs uppercase tracking-widest px-6 py-3 rounded-2xl transition-all active:scale-95 disabled:opacity-50 ${
+            isBackendOnline 
+              ? 'bg-white text-black hover:bg-primary' 
+              : 'bg-white/5 text-white/20'
+          }`}
         >
           <Play size={14} fill="currentColor" />
           {isInjecting ? "Injecting..." : "Synthesize Anomaly"}
@@ -95,6 +125,16 @@ export default function Dashboard() {
 
       {/* Main Content */}
       <main className="p-8 pb-16 space-y-8 animate-in fade-in duration-1000">
+        {errorCount > 3 && (
+          <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl flex items-center gap-4 text-rose-500 max-w-2xl mx-auto">
+            <AlertCircle size={24} />
+            <div className="text-xs">
+              <p className="font-black uppercase">Dashboard Sync Failure</p>
+              <p className="opacity-70 font-bold mt-1">We are unable to reach the FastAPI orchestrator at http://localhost:8050. Please ensure the backend server is running and CORS is configured.</p>
+            </div>
+          </div>
+        )}
+
         <StatusCards 
           activeIncidents={activeIncidents.length}
           resolvedIncidents={stats?.resolved_incidents || 0}

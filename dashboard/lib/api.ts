@@ -3,7 +3,8 @@
  * Centralized logic for interacting with the Anomaly Response Agent FastAPI.
  */
 
-const API_BASE = "http://127.0.0.1:8000/api/v1";
+// Use localhost consistently to match the browser's address bar and resolve CORS issues on Windows
+const API_BASE = "http://localhost:8050/api/v1";
 
 export interface TelemetryEvent {
   event_id: string;
@@ -31,52 +32,62 @@ export interface RewardHistoryEntry {
   action: string;
 }
 
+/**
+ * Enhanced fetcher with logging
+ */
+async function fetchWithLogs(url: string, options: RequestInit = {}) {
+  try {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error(`API Error [${res.status}] at ${url}:`, errorText);
+      throw new Error(`API Error ${res.status}: ${errorText}`);
+    }
+    return res.json();
+  } catch (err) {
+    console.error(`Fetch failure at ${url}:`, err);
+    throw err;
+  }
+}
+
 export async function fetchStats() {
-  const res = await fetch(`${API_BASE}/status`, { cache: 'no-store' });
-  if (!res.ok) throw new Error("Failed to fetch status");
-  return res.json();
+  return fetchWithLogs(`${API_BASE}/status`, { cache: 'no-store' });
 }
 
 export async function fetchRecentTelemetry(): Promise<TelemetryEvent[]> {
-  const res = await fetch(`${API_BASE}/telemetry/recent`, { cache: 'no-store' });
-  if (!res.ok) throw new Error("Failed to fetch telemetry");
-  const data = await res.json();
+  const data = await fetchWithLogs(`${API_BASE}/telemetry/recent`, { cache: 'no-store' });
   return data.events || [];
 }
 
 export async function fetchActiveIncidents(): Promise<IncidentRecord[]> {
-  const res = await fetch(`${API_BASE}/incidents/active`, { cache: 'no-store' });
-  if (!res.ok) throw new Error("Failed to fetch active incidents");
-  const data = await res.json();
+  const data = await fetchWithLogs(`${API_BASE}/incidents/active`, { cache: 'no-store' });
   return data.incidents || [];
 }
 
 export async function fetchResolvedIncidents(limit = 10): Promise<IncidentRecord[]> {
-  const res = await fetch(`${API_BASE}/incidents?limit=${limit}`, { cache: 'no-store' });
-  if (!res.ok) throw new Error("Failed to fetch resolved incidents");
-  const data = await res.json();
+  const data = await fetchWithLogs(`${API_BASE}/incidents?limit=${limit}`, { cache: 'no-store' });
   return data.incidents || [];
 }
 
 export async function fetchRewardHistory(): Promise<RewardHistoryEntry[]> {
-  const res = await fetch(`${API_BASE}/feedback/rewards`, { cache: 'no-store' });
-  if (!res.ok) throw new Error("Failed to fetch rewards");
-  const data = await res.json();
+  const data = await fetchWithLogs(`${API_BASE}/feedback/rewards`, { cache: 'no-store' });
   return data.history || [];
 }
 
+export async function fetchDetailedHealth() {
+  return fetchWithLogs(`${API_BASE}/health/detailed`, { cache: 'no-store' });
+}
+
 export async function approveAction(incidentId: string, approved: boolean) {
-  const res = await fetch(`${API_BASE}/incidents/${incidentId}/approve`, {
+  return fetchWithLogs(`${API_BASE}/incidents/${incidentId}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ approved }),
   });
-  if (!res.ok) throw new Error("Failed to approve action");
-  return res.json();
 }
 
 export async function triggerDemo() {
-  const res = await fetch(`${API_BASE}/events/process`, {
+  return fetchWithLogs(`${API_BASE}/events/process`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -92,6 +103,4 @@ export async function triggerDemo() {
       }
     }),
   });
-  if (!res.ok) throw new Error("Failed to trigger demo");
-  return res.json();
 }

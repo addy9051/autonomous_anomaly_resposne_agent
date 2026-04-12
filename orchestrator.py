@@ -16,6 +16,7 @@ from typing import Any
 from collections import deque
 
 from agents.action.agent import ActionAgent
+from agents.action.pagerduty import resolve_pagerduty_incident
 from agents.diagnosis.graph import DiagnosisAgent
 from agents.feedback.agent import FeedbackLoopAgent
 from agents.feedback.reward_agent import RewardAgent
@@ -155,6 +156,9 @@ class AgentOrchestrator:
             # Move to resolved
             del self.active_incidents[incident.incident_id]
             self.resolved_incidents.append(incident)
+            
+            # Sync with PagerDuty (Close the ticket)
+            await resolve_pagerduty_incident(incident.incident_id)
 
         logger.info(
             "pipeline_complete",

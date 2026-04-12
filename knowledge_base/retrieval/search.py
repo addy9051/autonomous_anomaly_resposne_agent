@@ -91,10 +91,10 @@ class HybridSearchService:
             
             references = []
             
-            if self.settings.llms.cohere_api_key and docs_map:
+            if self.settings.llm.cohere_api_key and docs_map:
                 # Execute Cross-Encoder Reranking
                 import cohere
-                co = cohere.ClientV2(self.settings.llms.cohere_api_key)
+                co = cohere.ClientV2(self.settings.llm.cohere_api_key)
                 
                 # We must keep order aligned with doc_ids for the re-mapping
                 doc_ids_list = list(docs_map.keys())
@@ -135,7 +135,7 @@ class HybridSearchService:
                 query=query[:100],
                 num_results=len(references),
                 top_score=references[0].similarity_score if references else 0,
-                reranked_via_cohere=bool(self.settings.llms.cohere_api_key)
+                reranked_via_cohere=bool(self.settings.llm.cohere_api_key)
             )
 
             span.set_attribute("rag.num_results", len(references))
