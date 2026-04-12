@@ -1,3 +1,9 @@
+"""
+Pytest configuration and global mocks for the Agent System.
+"""
+
+from __future__ import annotations
+
 import sys
 from typing import Any
 from unittest.mock import MagicMock
