@@ -302,7 +302,7 @@ graph TD
 
 
 
-###Gemini next steps:
+### Gemini next steps:
 Now that your Autonomous Anomaly Response System is completely hardened and successfully running live on a GKE test cluster alongside a robust observability stack, the project has reached a tremendous level of maturity.
 
 Here are the most impactful next steps I'd suggest to elevate it into a world-class system:
@@ -312,16 +312,19 @@ Since you have a highly distributed architecture (Kafka, Supabase, Redis, LLMs, 
 
 Action: Introduce Chaos Mesh into your GKE cluster to randomly kill predictor pods or add artificial network latency to the us-central1 zone.
 Goal: Watch the RollingWindowAggregator and AlertDeduplicator naturally filter out downstream noise and verify your Redis distributed locks prevent cascading event failures.
+
 2. Interactive Human-in-the-Loop (Slack/PagerDuty)
 Currently, Tier 2 & Tier 3 actions require human authorization. Instead of relying purely on CLI or API interventions, we can bring the approval flow to where the engineers actually work.
 
 Action: Implement Slack Block Kit buttons or actionable PagerDuty webhooks.
 Goal: When the Action Agent halts for a high-risk mitigation, it pings a Slack channel. An SRE can read the reasoning_chain and simply click "Approve" or "Reject", immediately unblocking the LangGraph node via a dedicated FastAPI webhook.
+
 3. Vowpal Wabbit Offline Evaluation & CI/CD
 Your Vowpal Wabbit contextual bandit is logging real-time rewards and exploring via A/B testing. However, true online RL in production requires a strong offline validation process to prevent concept drift.
 
 Action: Build an automated pipeline (perhaps using GitHub Actions or Vertex AI Pipelines) that chronologically replays yesterday's incident logs against the VW model buffer to train it overnight.
 Goal: Promote the experimental model safely to the control model based on automated multi-variate statistical significance testing.
+
 4. Build a Real-Time SRE Frontend Dashboard
 While Grafana gives you system metrics and Langfuse shows you LLM traces, an agent-specific UI would be incredibly powerful.
 
