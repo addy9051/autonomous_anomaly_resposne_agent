@@ -5,6 +5,26 @@ Coordinates 3 specialist sub-agents for parallel investigation:
 - Network Sub-Agent: DNS, CDN, BGP, firewalls
 - Database Sub-Agent: queries, locks, pools, replication
 - Application Sub-Agent: pods, deployments, circuit breakers
+
+
+This module provides a lightweight CrewAI-based implementation for specialist
+diagnosis sub-agents (network, database, and application). It is currently
+kept as an integration scaffold for future use and is not the primary
+orchestration path in the system.
+
+Important:
+- The main multi-agent workflow is implemented with LangGraph in
+  `agents/diagnosis/graph.py`.
+- This CrewAI crew is intended as an optional extension layer and may be
+  enabled later if deeper specialist coordination is needed.
+- Because CrewAI execution can introduce additional LLM calls and sequential
+  orchestration overhead, enabling it in the runtime request path may
+  increase diagnosis latency and end-to-end response time.
+- For production use, this scaffold should be evaluated with asynchronous
+  execution, bounded concurrency, and latency budgets.
+
+This file is maintained for future experimentation and incremental
+integration rather than as the active runtime execution path.
 """
 
 from __future__ import annotations
