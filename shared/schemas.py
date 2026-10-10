@@ -9,11 +9,11 @@ If LLM output fails validation, the agent retries up to 3 times with a
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ─── Enums ────────────────────────────────────────────────────────
 
@@ -43,6 +43,23 @@ class RootCauseCategory(StrEnum):
     INFRASTRUCTURE = "infrastructure"
     SECURITY = "security"
     UNKNOWN = "unknown"
+
+
+class TelemetrySignalType(StrEnum):
+    METRIC = "metric"
+    LOG_SUMMARY = "log_summary"
+    TRACE = "trace"
+    SYNTHETIC_PROBE = "synthetic_probe"
+    BUSINESS_SIGNAL = "business_signal"
+
+
+class TelemetryConnectorSource(StrEnum):
+    SIMULATOR = "simulator"
+    DATADOG = "datadog"
+    SPLUNK = "splunk"
+    PROMETHEUS = "prometheus"
+    SNOWFLAKE = "snowflake"
+    CUSTOM = "custom"
 
 
 class ActionTier(int, Enum):
@@ -89,7 +106,7 @@ class AnomalyEvent(BaseModel):
     """
 
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     severity: Severity
     affected_services: list[str]
     anomaly_type: AnomalyType
@@ -150,7 +167,7 @@ class DiagnosisResult(BaseModel):
 
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     event_id: str = Field(description="Link back to the triggering AnomalyEvent")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     root_cause: str
     root_cause_category: RootCauseCategory
     runbook_references: list[RunbookReference] = Field(default_factory=list)
@@ -185,7 +202,7 @@ class ActionResult(BaseModel):
     error: str | None = None
     human_approved: bool | None = None
     slack_thread_ts: str | None = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ─── Full Incident Record ───────────────────────────────────────
@@ -199,8 +216,8 @@ class IncidentRecord(BaseModel):
 
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     status: IncidentStatus = IncidentStatus.DETECTED
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Phase outputs
     anomaly_event: AnomalyEvent | None = None
@@ -221,18 +238,125 @@ class IncidentRecord(BaseModel):
     total_llm_cost_usd: float = 0.0
 
 
-# ─── Telemetry Event (raw input) ─────────────────────────────────
+# ─── Normalized Telemetry Schema (Universal Observability API Contract) ─
 
 
-class TelemetryEvent(BaseModel):
-    """Raw telemetry event ingested from Kafka or the in-memory event bus."""
+class NormalizedTelemetryRecord(BaseModel):
+    """
+    Standard internal schema for telemetry ingested via Observability Tool APIs.
 
-    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-    source: str  # "payment_gateway", "fraud_api", "infra_metrics", etc.
-    service_name: str
-    event_type: str  # "transaction", "metric", "trace", "alert"
-    payload: dict[str, Any] = Field(default_factory=dict)
+    Replaces raw log/Kafka stream ingestion. All external platforms (Datadog, Splunk,
+    Prometheus, Simulator) are normalized to this schema by their respective adapters.
+    """
+
+    record_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    entity: str = Field(..., description="Service or infrastructure entity identifier (e.g. payment-service-prod)")
+    environment: str = Field(default="production", description="Environment: production, staging, etc.")
+    connector_source: TelemetryConnectorSource = Field(
+        default=TelemetryConnectorSource.SIMULATOR,
+        description="Observability tool API source (Datadog, Splunk, Prometheus, Simulator)",
+    )
+    signal_type: TelemetrySignalType = Field(
+        default=TelemetrySignalType.METRIC,
+        description="Type of telemetry signal: metric, log_summary, trace, synthetic_probe, business_signal",
+    )
+    metric_name: str = Field(..., description="Name of the SLI / metric (e.g. transaction_failure_rate, latency_p99)")
+    value: float = Field(..., description="Observed numeric value")
+    unit: str = Field(default="", description="Unit of measurement (ms, percent, req/sec, etc.)")
+    baseline_mean: float | None = Field(
+        default=None,
+        description="Historical baseline mean calculated by observability platform",
+    )
+    deviation_sigma: float | None = Field(
+        default=None,
+        description="Standard deviation or anomaly score from baseline",
+    )
+    severity: Severity = Field(
+        default=Severity.MEDIUM,
+        description="Pre-assessed or derived severity level",
+    )
+    tags: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Dimensions/tags (e.g. cluster, region, deployment_version, error_code)",
+    )
+    raw_query: str | None = Field(
+        default=None,
+        description="Optional API query string or PromQL/Splunk expression used to fetch this record",
+    )
+    raw_source: str | None = Field(
+        default=None,
+        description="Original source identifier if migrating from legacy telemetry",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_telemetry(cls, data: Any) -> Any:
+        """Handle legacy constructor arguments for backwards-compatible migration."""
+        if isinstance(data, dict):
+            if "entity" not in data and "service_name" in data:
+                data["entity"] = data.pop("service_name")
+            if "connector_source" not in data and "source" in data:
+                src = data.pop("source")
+                data["raw_source"] = src
+                try:
+                    data["connector_source"] = TelemetryConnectorSource(src)
+                except ValueError:
+                    data["connector_source"] = TelemetryConnectorSource.CUSTOM
+            if "signal_type" not in data and "event_type" in data:
+                ev_type = data.pop("event_type")
+                try:
+                    data["signal_type"] = TelemetrySignalType(ev_type)
+                except ValueError:
+                    data["signal_type"] = TelemetrySignalType.METRIC
+            if "record_id" not in data and "event_id" in data:
+                data["record_id"] = data.pop("event_id")
+            if "payload" in data and ("metric_name" not in data or "value" not in data):
+                payload = data.pop("payload")
+                tags = data.setdefault("tags", {})
+                tags.update(payload)
+                if "metric_name" not in data:
+                    numeric_keys = [k for k, v in payload.items() if isinstance(v, (int, float))]
+                    if numeric_keys:
+                        data["metric_name"] = numeric_keys[0]
+                        data["value"] = float(payload[numeric_keys[0]])
+                    else:
+                        data["metric_name"] = "observed_signal"
+                        data["value"] = 1.0
+        return data
+
+    @property
+    def event_id(self) -> str:
+        return self.record_id
+
+    @property
+    def service_name(self) -> str:
+        return self.entity
+
+    @property
+    def source(self) -> str:
+        return self.raw_source or self.connector_source.value
+
+    @property
+    def event_type(self) -> str:
+        return self.signal_type.value
+
+    @property
+    def payload(self) -> dict[str, Any]:
+        """Synthesized payload dictionary for consumers transitioning from raw event dictionaries."""
+        base = {
+            self.metric_name: self.value,
+            "unit": self.unit,
+            "baseline_mean": self.baseline_mean,
+            "deviation_sigma": self.deviation_sigma,
+        }
+        base.update(self.tags)
+        return base
+
+
+# Aliases
+TelemetryRecord = NormalizedTelemetryRecord
+TelemetryEvent = NormalizedTelemetryRecord  # Backwards-compatibility alias during pipeline migration
 
 
 # ─── Feedback Agent (Phase 7) ───────────────────────────────────

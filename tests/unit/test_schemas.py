@@ -11,7 +11,7 @@ Tests all inter-agent API contracts for:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -26,7 +26,11 @@ from shared.schemas import (
     RecommendedAction,
     RootCauseCategory,
     Severity,
+    TelemetryConnectorSource,
     TelemetryEvent,
+    TelemetryRecord,
+    TelemetrySignalType,
+    NormalizedTelemetryRecord,
 )
 
 
@@ -157,42 +161,11 @@ class TestIncidentRecord:
         # Resolve
         incident.status = IncidentStatus.RESOLVED
         incident.auto_resolved = True
-        incident.resolved_at = datetime.utcnow()
+        incident.resolved_at = datetime.now(timezone.utc)
         incident.time_to_mitigate_seconds = 120.0
         assert incident.auto_resolved
         assert incident.time_to_mitigate_seconds == 120.0
 
-
-class TestTelemetryEvent:
-    """Tests for TelemetryEvent schema."""
-
-    def test_create_transaction_event(self) -> None:
-        event = TelemetryEvent(
-            source="payment_gateway",
-            service_name="payment-gateway",
-            event_type="transaction",
-            payload={
-                "txn_id": "abc-123",
-                "amount": 99.99,
-                "status": "approved",
-                "latency_ms": 150,
-            },
-        )
-        assert event.source == "payment_gateway"
-        assert event.payload["amount"] == 99.99
-
-    def test_create_metric_event(self) -> None:
-        event = TelemetryEvent(
-            source="infra_metrics",
-            service_name="fraud-api",
-            event_type="metric",
-            payload={
-                "cpu_percent": 45.2,
-                "memory_percent": 60.1,
-                "latency_p99_ms": 250.0,
-            },
-        )
-        assert event.event_type == "metric"
 
 
 class TestActionTier:
@@ -202,3 +175,45 @@ class TestActionTier:
         assert ActionTier.TIER_1_AUTO.value == 1
         assert ActionTier.TIER_2_APPROVE.value == 2
         assert ActionTier.TIER_3_HUMAN.value == 3
+
+
+class TestNormalizedTelemetryRecord:
+    """Tests for the new NormalizedTelemetryRecord schema from Observability APIs."""
+
+    def test_create_normalized_record(self) -> None:
+        record = NormalizedTelemetryRecord(
+            entity="payment-service-prod",
+            environment="production",
+            connector_source=TelemetryConnectorSource.DATADOG,
+            signal_type=TelemetrySignalType.METRIC,
+            metric_name="transaction_failure_rate",
+            value=2.85,
+            unit="percent",
+            baseline_mean=0.15,
+            deviation_sigma=3.2,
+            severity=Severity.CRITICAL,
+            tags={"cluster": "us-east-1", "deployment_version": "v1.2.0"},
+            raw_query="avg:payment.tx.failures{env:prod}",
+        )
+        assert record.entity == "payment-service-prod"
+        assert record.connector_source == TelemetryConnectorSource.DATADOG
+        assert record.signal_type == TelemetrySignalType.METRIC
+        assert record.metric_name == "transaction_failure_rate"
+        assert record.value == 2.85
+        assert record.deviation_sigma == 3.2
+        assert record.severity == Severity.CRITICAL
+        assert record.tags["deployment_version"] == "v1.2.0"
+        assert record.raw_query == "avg:payment.tx.failures{env:prod}"
+
+    def test_normalized_record_defaults(self) -> None:
+        record = NormalizedTelemetryRecord(
+            entity="checkout-api",
+            metric_name="latency_p99_ms",
+            value=450.0,
+        )
+        assert record.connector_source == TelemetryConnectorSource.SIMULATOR
+        assert record.signal_type == TelemetrySignalType.METRIC
+        assert record.environment == "production"
+        assert record.severity == Severity.MEDIUM
+        assert record.tags == {}
+
