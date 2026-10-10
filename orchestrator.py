@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from agents.action.agent import ActionAgent
@@ -22,6 +22,7 @@ from agents.diagnosis.graph import DiagnosisAgent
 from agents.feedback.agent import FeedbackLoopAgent
 from agents.feedback.reward_agent import RewardAgent
 from agents.monitoring.agent import MonitoringAgent
+from data_pipeline.connectors.adapters import get_telemetry_adapter
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from data_pipeline.flink_jobs.anomaly_features import AlertDeduplicator, RollingWindowAggregator
 from shared.schemas import IncidentRecord, IncidentStatus, TelemetryEvent
@@ -58,7 +59,13 @@ class AgentOrchestrator:
         # Real-time telemetry pulse buffer (last 100 events)
         self.telemetry_history: deque[TelemetryEvent] = deque(maxlen=100)
 
-        logger.info("orchestrator_initialized")
+        # Telemetry API adapter (Simulator, Prometheus, Datadog, Splunk)
+        self.telemetry_adapter = get_telemetry_adapter()
+
+        logger.info(
+            "orchestrator_initialized",
+            connector_mode=self.telemetry_adapter.source.value,
+        )
 
     async def process_event(self, event: TelemetryEvent, dry_run: bool = False) -> IncidentRecord | None:
         """
@@ -106,11 +113,11 @@ class AgentOrchestrator:
 
             # ── Step 3: Diagnosis Agent — Root Cause Analysis ──
             incident.status = IncidentStatus.DIAGNOSING
-            datetime.utcnow()
+            datetime.now(timezone.utc)
 
             diagnosis = await self.diagnosis_agent.diagnose(anomaly, cost_tracker)
             incident.diagnosis_result = diagnosis
-            incident.time_to_detect_seconds = (datetime.utcnow() - incident.created_at).total_seconds()
+            incident.time_to_detect_seconds = (datetime.now(timezone.utc) - incident.created_at).total_seconds()
 
             logger.info(
                 "diagnosis_complete",
@@ -124,7 +131,7 @@ class AgentOrchestrator:
             incident.status = IncidentStatus.ACTION_PENDING
             await self.action_agent.execute(diagnosis, incident, cost_tracker, dry_run=dry_run)
 
-            incident.time_to_mitigate_seconds = (datetime.utcnow() - incident.created_at).total_seconds()
+            incident.time_to_mitigate_seconds = (datetime.now(timezone.utc) - incident.created_at).total_seconds()
 
             # ── Step 5: Feedback Loop — Record Outcome (Phase 7 Hybrid) ──
             # First, use LLM-as-a-Judge to evaluate the qualitative resolution
@@ -260,10 +267,17 @@ async def main() -> None:
     parser.add_argument("--duration", type=float, default=30.0, help="Streaming duration in seconds")
     parser.add_argument("--eps", type=float, default=2.0, help="Events per second")
     parser.add_argument("--anomaly-prob", type=float, default=0.1, help="Anomaly probability")
-    parser.add_argument("--dry-run", action="store_true", default=True, help="Simulate actions")
+    parser.add_argument(
+        "--connector",
+        choices=["simulator", "prometheus", "datadog", "splunk"],
+        default=None,
+        help="Observability platform telemetry connector adapter",
+    )
     args = parser.parse_args()
 
     orchestrator = AgentOrchestrator()
+    if args.connector:
+        orchestrator.telemetry_adapter = get_telemetry_adapter(args.connector)
 
     if args.mode == "demo":
         # Quick demo: generate 5 events with 2 anomalies
@@ -283,8 +297,10 @@ async def main() -> None:
         print(f"📊 Results: {len(incidents)} incidents detected from 5 events")
         for inc in incidents:
             print(f"\n  🔴 Incident {inc.incident_id[:8]}...")
-            print(f"     Severity: {inc.anomaly_event.severity.value}")
-            print(f"     Type: {inc.anomaly_event.anomaly_type.value}")
+            severity = inc.anomaly_event.severity.value if inc.anomaly_event else "UNKNOWN"
+            anomaly_type = inc.anomaly_event.anomaly_type.value if inc.anomaly_event else "UNKNOWN"
+            print(f"     Severity: {severity}")
+            print(f"     Type: {anomaly_type}")
             print(f"     Status: {inc.status.value}")
             if inc.diagnosis_result:
                 print(f"     Root Cause: {inc.diagnosis_result.root_cause_category.value}")

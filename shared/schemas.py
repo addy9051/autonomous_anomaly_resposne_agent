@@ -288,6 +288,10 @@ class NormalizedTelemetryRecord(BaseModel):
         default=None,
         description="Original source identifier if migrating from legacy telemetry",
     )
+    raw_event_type: str | None = Field(
+        default=None,
+        description="Original event_type identifier if migrating from legacy telemetry",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -305,6 +309,7 @@ class NormalizedTelemetryRecord(BaseModel):
                     data["connector_source"] = TelemetryConnectorSource.CUSTOM
             if "signal_type" not in data and "event_type" in data:
                 ev_type = data.pop("event_type")
+                data["raw_event_type"] = ev_type
                 try:
                     data["signal_type"] = TelemetrySignalType(ev_type)
                 except ValueError:
@@ -339,7 +344,7 @@ class NormalizedTelemetryRecord(BaseModel):
 
     @property
     def event_type(self) -> str:
-        return self.signal_type.value
+        return self.raw_event_type or self.signal_type.value
 
     @property
     def payload(self) -> dict[str, Any]:

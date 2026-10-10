@@ -148,6 +148,24 @@ class IntegrationConfig(BaseSettings):
     langchain_project: str = "anomaly-agent"
     langchain_endpoint: str = "https://api.smith.langchain.com"
 
+    # Telemetry Connector Mode ("simulator", "prometheus", "datadog", "splunk")
+    telemetry_connector_mode: str = Field(
+        default="simulator",
+        validation_alias=AliasChoices("CONNECTOR_MODE", "TELEMETRY_CONNECTOR_MODE"),
+    )
+
+    # Datadog API
+    datadog_api_key: str = ""
+    datadog_app_key: str = ""
+    datadog_site: str = "datadoghq.com"
+
+    # Splunk REST API
+    splunk_host: str = "localhost"
+    splunk_port: int = 8089
+    splunk_token: str = ""
+    splunk_username: str = "admin"
+    splunk_password: str = ""
+
 
 class ObservabilityConfig(BaseSettings):
     """Observability and telemetry configuration."""
@@ -189,6 +207,10 @@ class Settings(BaseModel):
     integrations: IntegrationConfig = Field(default_factory=IntegrationConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     app: AppConfig = Field(default_factory=AppConfig)
+
+    @property
+    def integration(self) -> IntegrationConfig:
+        return self.integrations
 
 
 @lru_cache
