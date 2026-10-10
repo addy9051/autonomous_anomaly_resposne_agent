@@ -563,9 +563,12 @@ poetry run pytest tests/ -v
 ├── api.py                   # FastAPI REST API (15+ endpoints)
 ├── docker-compose.yml       # Full local dev stack (12 services)
 ├── docker-compose.lite.yml  # Lightweight mode (Redis + Postgres)
-├── agentic-ai-architecture.html       # v1 Architecture Design Document
-├── agentic-ai-architecture-obs.html   # v2 Architecture (+LLM Observability)
-└── claude_walkthrough.md              # Architecture Audit Report
+├── docs/                                  # Comprehensive technical & strategic documentation
+│   ├── ARCHITECTURE_DOCS.md               # Detailed Technical Architecture Audit
+│   └── SRE_STRATEGIC_BLUEPRINT.md         # Senior SRE Advisory Blueprint & Pitch Strategy
+├── agentic-ai-architecture.html        # v1 Architecture Design Document
+├── agentic-ai-architecture-obs.html    # v2 Architecture (+LLM Observability)
+└── claude_walkthrough.md               # Architecture Audit Report
 ```
 
 ---

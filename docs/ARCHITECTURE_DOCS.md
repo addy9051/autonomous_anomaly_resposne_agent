@@ -72,6 +72,10 @@ autonomous_anomaly_response_agent/
 │   ├── app.js                            # UI state management and API polling logic
 │   ├── index.html                        # Dashboard HTML layout
 │   └── style.css                         # Custom dark mode stylesheet
+├── docs/                                 # Technical architecture & strategic documentation
+│   ├── ARCHITECTURE_DOCS.md              # Technical architecture & implementation audit
+│   ├── SRE_STRATEGIC_BLUEPRINT.md        # Senior SRE advisory insights & adapter blueprint
+│   └── architecture_diagram.png          # System architecture diagram
 ├── infra/                                # Infrastructure as Code & Deployment
 │   ├── argocd/                           # ArgoCD GitOps applications
 │   ├── docker/                           # Container build configurations
