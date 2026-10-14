@@ -12,11 +12,11 @@ import asyncio
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
 import json
 
-from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter
+import httpx
+
+from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter, TelemetrySourceError
 from shared.config import get_settings
 from shared.schemas import (
     NormalizedTelemetryRecord,
@@ -53,8 +53,15 @@ class SplunkAdapter(BaseTelemetryAdapter):
         self.username = username or settings.integration.splunk_username
         self.password = password or settings.integration.splunk_password
         self.base_url = f"https://{self.host}:{self.port}".rstrip("/")
-        self.client = httpx.AsyncClient(verify=False, timeout=15.0)  # Splunk dev instances often use self-signed certs
+        self.client = httpx.AsyncClient(verify=self._tls_verify(settings), timeout=15.0)
         logger.info("splunk_adapter_initialized", host=self.host, port=self.port, configured=bool(self.token or self.password))
+
+    @staticmethod
+    def _tls_verify(settings: Any) -> bool | str:
+        cfg = settings.integration
+        if cfg.splunk_ca_bundle:
+            return cfg.splunk_ca_bundle
+        return bool(cfg.splunk_verify_ssl)
 
     async def close(self) -> None:
         """Close internal HTTP client."""
@@ -99,36 +106,23 @@ class SplunkAdapter(BaseTelemetryAdapter):
             f"search index=* service={entity} status>=500 "
             f"| stats count as failure_count by error_code"
         )
-        return await self.query_signal(query=search_query, entity=entity)
+        return await self.query_signal(
+            query=search_query, entity=entity, time_window_seconds=time_window_seconds
+        )
 
     async def query_signal(
         self,
         query: str,
         entity: str | None = None,
         tags: dict[str, Any] | None = None,
+        time_window_seconds: int = 300,
     ) -> list[NormalizedTelemetryRecord]:
         """Execute a Splunk search export and return normalized log summary records."""
         endpoint = f"{self.base_url}/services/search/jobs/export"
         records: list[NormalizedTelemetryRecord] = []
 
         if not (self.token or self.password):
-            logger.debug("splunk_credentials_not_configured_using_mock", query=query)
-            return [
-                NormalizedTelemetryRecord(
-                    timestamp=datetime.now(timezone.utc),
-                    entity=entity or "payment-service-prod",
-                    connector_source=self.source,
-                    signal_type=TelemetrySignalType.LOG_SUMMARY,
-                    metric_name="failed_transaction_count",
-                    value=42.0,
-                    unit="count",
-                    baseline_mean=2.0,
-                    deviation_sigma=4.5,
-                    severity=Severity.CRITICAL,
-                    tags={**(tags or {}), "error_code": "504_GATEWAY_TIMEOUT", "simulated_mock": True},
-                    raw_query=query,
-                )
-            ]
+            raise TelemetrySourceError("Splunk credentials are not configured")
 
         try:
             search_param = query if query.startswith("search ") else f"search {query}"
@@ -137,7 +131,7 @@ class SplunkAdapter(BaseTelemetryAdapter):
             data_payload = {
                 "search": search_param, 
                 "output_mode": "json",
-                "earliest_time": "-5m", # Strictly isolates search canvas size
+                "earliest_time": f"-{int(time_window_seconds)}s",
                 "latest_time": "now"
             }
 
@@ -201,13 +195,13 @@ class SplunkAdapter(BaseTelemetryAdapter):
                     except Exception:
                         continue
             else:
-                logger.warning("splunk_query_failed", status=resp.status_code, text=resp.text)
-        except Exception as exc:
+                logger.warning("splunk_query_failed", status=resp.status_code)
+                raise TelemetrySourceError(f"Splunk query returned HTTP {resp.status_code}")
+        except httpx.HTTPError as exc:
             logger.warning("splunk_query_exception", error=str(exc))
+            raise TelemetrySourceError(f"Splunk query failed: {exc}") from exc
 
         return records
-
-
 
     async def stream_signals(
         self,
@@ -219,7 +213,10 @@ class SplunkAdapter(BaseTelemetryAdapter):
         default_query = "search index=main (status>=500 OR level=ERROR) | stats count by service"
         
         while True:
-            records = await self.query_signal(query=default_query)
+            try:
+                records = await self.query_signal(query=default_query)
+            except TelemetrySourceError:
+                records = []
             for rec in records:
                 if not entities or rec.entity in entities:
                     yield rec

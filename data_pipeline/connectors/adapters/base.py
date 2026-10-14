@@ -17,6 +17,14 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 
+class TelemetrySourceError(RuntimeError):
+    """Raised when a live observability platform cannot return trustworthy data.
+
+    Live adapters must raise this instead of returning mock or empty results, so
+    callers can record an explicit evidence gap.
+    """
+
+
 class BaseTelemetryAdapter(ABC):
     """
     Abstract Base Class for Observability Platform API Connectors.

@@ -176,6 +176,9 @@ class IntegrationConfig(BaseSettings):
     splunk_token: str = ""
     splunk_username: str = "admin"
     splunk_password: str = ""
+    # TLS verification stays on by default; set to false or to a CA bundle path for self-signed dev instances.
+    splunk_verify_ssl: bool = True
+    splunk_ca_bundle: str = ""
 
 
 class ObservabilityConfig(BaseSettings):

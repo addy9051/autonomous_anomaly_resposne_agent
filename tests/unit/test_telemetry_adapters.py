@@ -21,8 +21,9 @@ from data_pipeline.connectors.adapters import (
     get_telemetry_adapter,
     list_available_adapters,
 )
+from data_pipeline.connectors.adapters.base import TelemetrySourceError
+from shared.config import get_settings
 from shared.schemas import (
-    Severity,
     TelemetryConnectorSource,
     TelemetrySignalType,
 )
@@ -58,9 +59,9 @@ class TestAdapterFactory:
         assert isinstance(adapter, SplunkAdapter)
         assert adapter.source == TelemetryConnectorSource.SPLUNK
 
-    def test_fallback_to_simulator(self) -> None:
-        adapter = get_telemetry_adapter("invalid_vendor_xyz")
-        assert isinstance(adapter, SimulatorAdapter)
+    def test_unknown_mode_raises(self) -> None:
+        with pytest.raises(ValueError):
+            get_telemetry_adapter("invalid_vendor_xyz")
 
 
 class TestSimulatorAdapter:
@@ -114,16 +115,11 @@ class TestPrometheusAdapter:
     """Tests for PrometheusAdapter."""
 
     @pytest.mark.asyncio
-    async def test_mocked_query(self) -> None:
-        adapter = PrometheusAdapter(base_url="http://localhost:9090")
+    async def test_unreachable_server_raises_not_mocks(self) -> None:
+        adapter = PrometheusAdapter(base_url="http://127.0.0.1:1")
         try:
-            # When server is not running, falls back safely without unhandled crash
-            records = await adapter.query_signal(
-                query="up{job='payment_service'}",
-                entity="payment-service",
-            )
-            assert len(records) >= 1
-            assert records[0].connector_source == TelemetryConnectorSource.PROMETHEUS
+            with pytest.raises(TelemetrySourceError):
+                await adapter.query_signal(query="up{job='payment_service'}", entity="payment-service")
         finally:
             await adapter.close()
 
@@ -132,17 +128,11 @@ class TestDatadogAdapter:
     """Tests for DatadogAdapter."""
 
     @pytest.mark.asyncio
-    async def test_mock_fallback_when_unconfigured(self) -> None:
+    async def test_raises_when_unconfigured(self) -> None:
         adapter = DatadogAdapter(api_key="", app_key="")
         try:
-            records = await adapter.query_signal(
-                query="avg:trace.payment.errors{*}",
-                entity="checkout-api",
-            )
-            assert len(records) == 1
-            assert records[0].connector_source == TelemetryConnectorSource.DATADOG
-            assert records[0].entity == "checkout-api"
-            assert records[0].tags.get("simulated_mock") is True
+            with pytest.raises(TelemetrySourceError):
+                await adapter.query_signal(query="avg:trace.payment.errors{*}", entity="checkout-api")
         finally:
             await adapter.close()
 
@@ -151,14 +141,26 @@ class TestSplunkAdapter:
     """Tests for SplunkAdapter."""
 
     @pytest.mark.asyncio
-    async def test_mock_fallback_when_unconfigured(self) -> None:
+    async def test_raises_when_unconfigured(self) -> None:
         adapter = SplunkAdapter(token="", password="")
         try:
-            records = await adapter.fetch_signals(entity="settlement-engine", metric_names=["errors"])
-            assert len(records) == 1
-            assert records[0].connector_source == TelemetryConnectorSource.SPLUNK
-            assert records[0].signal_type == TelemetrySignalType.LOG_SUMMARY
-            assert records[0].severity == Severity.CRITICAL
-            assert records[0].tags.get("error_code") == "504_GATEWAY_TIMEOUT"
+            with pytest.raises(TelemetrySourceError):
+                await adapter.fetch_signals(entity="settlement-engine", metric_names=["errors"])
+        finally:
+            await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_bearer_header_carries_token(self) -> None:
+        adapter = SplunkAdapter(token="abc123", password="")
+        try:
+            assert adapter._headers["Authorization"] == "Bearer abc123"
+        finally:
+            await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_tls_verification_enabled_by_default(self) -> None:
+        adapter = SplunkAdapter(token="abc123")
+        try:
+            assert SplunkAdapter._tls_verify(get_settings()) is True
         finally:
             await adapter.close()

@@ -247,6 +247,7 @@ class RecoveryVerifier:
                 or r.tags.get("is_simulated")
                 or r.tags.get("is_mock")
                 or r.tags.get("simulated_fallback")
+                or r.tags.get("simulated_mock")
             ):
                 continue
             authoritative.append(r)

@@ -14,11 +14,10 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter
+from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter, TelemetrySourceError
 from shared.config import get_settings
 from shared.schemas import (
     NormalizedTelemetryRecord,
-    Severity,
     TelemetryConnectorSource,
     TelemetrySignalType,
 )
@@ -105,22 +104,8 @@ class DatadogAdapter(BaseTelemetryAdapter):
         now_ms = int(time.time() * 1000)
         from_ms = now_ms - (300 * 1000) # 5 minutes window
 
-        if not self.api_key:
-            logger.debug("datadog_api_key_not_configured_using_mock", query=query)
-            return [
-                NormalizedTelemetryRecord(
-                    timestamp=datetime.now(timezone.utc),
-                    entity=entity or "payment-service-prod",
-                    connector_source=self.source,
-                    signal_type=TelemetrySignalType.METRIC,
-                    metric_name=query.split("{")[0],
-                    value=2.45,
-                    baseline_mean=0.15,
-                    severity=Severity.HIGH,
-                    tags={**(tags or {}), "simulated_mock": True},
-                    raw_query=query,
-                )
-            ]
+        if not (self.api_key and self.app_key):
+            raise TelemetrySourceError("Datadog API/application keys are not configured")
 
         # V2 Metrics API expects a clean JSON POST payload rather than raw query params
         payload = {
@@ -145,56 +130,60 @@ class DatadogAdapter(BaseTelemetryAdapter):
                 headers=self._headers,
                 json=payload,
             )
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                series_list = data.get("data", {}).get("attributes", {}).get("series", [])
-                
-                for series in series_list:
-                    # In V2, timeseries data arrays map coordinates directly 
-                    values = series.get("values", [])
-                    times = data.get("data", {}).get("attributes", {}).get("times", [])
-                    
-                    metric_name = series.get("query_index", query)
-                    series_tags = series.get("tags", [])
-
-                    # Extract the latest value cleanly from the arrays
-                    latest_val = float(values[-1]) if values else 0.0
-                    all_vals = [float(v) for v in values if v is not None]
-                    baseline = sum(all_vals) / len(all_vals) if all_vals else latest_val
-                    
-                    # Extract raw timestamp context directly from Datadog API timeline
-                    raw_ts_ms = times[-1] if times else now_ms
-                    record_dt = datetime.fromtimestamp(raw_ts_ms / 1000.0, tz=timezone.utc)
-
-                    # Safe parsing block protecting against both flag tags and key-value tags
-                    parsed_tags = {}
-                    for t in series_tags:
-                        if ":" in t:
-                            k, v = t.split(":", 1)
-                            parsed_tags[k] = v
-                        else:
-                            parsed_tags[t] = True
-
-                    combined_tags = {**parsed_tags, **(tags or {})}
-
-                    records.append(
-                        NormalizedTelemetryRecord(
-                            timestamp=record_dt,
-                            entity=entity or parsed_tags.get("service", "datadog_scope"),
-                            connector_source=self.source,
-                            signal_type=TelemetrySignalType.METRIC,
-                            metric_name=metric_name,
-                            value=round(latest_val, 2),
-                            baseline_mean=round(baseline, 2),
-                            tags=combined_tags,
-                            raw_query=query,
-                        )
-                    )
-            else:
-                logger.warning("datadog_query_failed", status=resp.status_code, text=resp.text)
-        except Exception as exc:
+        except httpx.HTTPError as exc:
             logger.warning("datadog_query_exception", error=str(exc))
+            raise TelemetrySourceError(f"Datadog query failed: {exc}") from exc
+
+        if resp.status_code != 200:
+            logger.warning("datadog_query_failed", status=resp.status_code)
+            raise TelemetrySourceError(f"Datadog query returned HTTP {resp.status_code}")
+
+        try:
+            data = resp.json()
+            series_list = data.get("data", {}).get("attributes", {}).get("series", [])
+
+            for series in series_list:
+                # In V2, timeseries data arrays map coordinates directly
+                values = series.get("values", [])
+                times = data.get("data", {}).get("attributes", {}).get("times", [])
+
+                metric_name = series.get("query_index", query)
+                series_tags = series.get("tags", [])
+
+                latest_val = float(values[-1]) if values else 0.0
+                all_vals = [float(v) for v in values if v is not None]
+                baseline = sum(all_vals) / len(all_vals) if all_vals else latest_val
+
+                raw_ts_ms = times[-1] if times else now_ms
+                record_dt = datetime.fromtimestamp(raw_ts_ms / 1000.0, tz=timezone.utc)
+
+                # Handle both flag tags and key:value tags
+                parsed_tags = {}
+                for t in series_tags:
+                    if ":" in t:
+                        k, v = t.split(":", 1)
+                        parsed_tags[k] = v
+                    else:
+                        parsed_tags[t] = True
+
+                combined_tags = {**parsed_tags, **(tags or {})}
+
+                records.append(
+                    NormalizedTelemetryRecord(
+                        timestamp=record_dt,
+                        entity=entity or parsed_tags.get("service", "datadog_scope"),
+                        connector_source=self.source,
+                        signal_type=TelemetrySignalType.METRIC,
+                        metric_name=metric_name,
+                        value=round(latest_val, 2),
+                        baseline_mean=round(baseline, 2),
+                        tags=combined_tags,
+                        raw_query=query,
+                    )
+                )
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            logger.warning("datadog_response_parse_error", error=str(exc))
+            raise TelemetrySourceError(f"Datadog response could not be parsed: {exc}") from exc
 
         return records
 

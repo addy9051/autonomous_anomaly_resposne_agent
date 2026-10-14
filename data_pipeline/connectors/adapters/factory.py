@@ -47,11 +47,10 @@ def get_telemetry_adapter(mode: str | None = None) -> BaseTelemetryAdapter:
     elif active_mode in ["splunk"]:
         return SplunkAdapter()
     else:
-        logger.warning(
-            "unknown_connector_mode_fallback_to_simulator",
-            requested_mode=active_mode,
+        raise ValueError(
+            f"Unknown telemetry connector mode '{active_mode}'. "
+            f"Supported: {', '.join(list_available_adapters())}"
         )
-        return SimulatorAdapter()
 
 
 def list_available_adapters() -> list[str]:
