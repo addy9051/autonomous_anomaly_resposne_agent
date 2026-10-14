@@ -17,7 +17,7 @@ Live adapters never fabricate data; mock data exists only in `SimulatorAdapter`.
 | 1 | Adapters fail loudly outside simulator mode; fix Splunk TLS | Done (commit `59c2688`) |
 | 2 | Alert-triggered intake (Alertmanager first) | Done (not yet committed) |
 | 3 | Remove/rewire fabricated monitoring tools; expand `gather_context` into a scoped timeline | Done (not yet committed) |
-| 4 | Provenance fields on normalized records; deploy-events source | Pending |
+| 4 | Provenance fields on normalized records; deploy-events source | Done (not yet committed) |
 | 5 | Hypothesis modelling | Pending |
 
 ## Step 1 — Adapters fail loudly
@@ -76,3 +76,13 @@ Consumers: the verifier turns a raised connector error into `INCONCLUSIVE`; `gat
 - Docs mention CrewAI.
 - `trigger_workflow` returns `mocked` without `N8N_API_KEY`.
 - Monitoring tools (`kafka_lag_inspector`, `fraud_signal_fetch`, `baseline_compare`, `prometheus_query` fallback) fabricate data (addressed by step 3).
+
+## Step 4: Provenance and deploy events
+
+- `NormalizedTelemetryRecord` gains `ingested_at`, `is_simulated` (derived from the SIMULATOR connector or legacy tags) and `source_ref`, plus a `freshness_seconds` property.
+- New `DEPLOY_EVENT` signal type and `GITHUB` connector. `data_pipeline/connectors/deploy_events.py` reads the GitHub Deployments API (`GITHUB_DEPLOY_REPO`, `GITHUB_TOKEN`, `GITHUB_DEPLOY_ENVIRONMENT`); it raises `TelemetrySourceError` on failure and is disabled when no repo is set.
+- `agents/diagnosis/evidence.py`: `record_to_evidence` carries event time, ingestion time, freshness and simulated flag; `collect_deploy_evidence` merges deploys into the timeline and records `github:deployments` as a gap on failure.
+- The verifier now also rejects any record with `is_simulated`.
+- Tests: `tests/unit/test_provenance_and_deploys.py`. Full unit suite: 120 passed.
+
+Limitations: the deploy repo is global rather than mapped per service; deploys are not yet correlated to the alert start time.

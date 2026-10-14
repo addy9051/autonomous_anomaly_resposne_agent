@@ -239,7 +239,7 @@ class RecoveryVerifier:
         authoritative: list[NormalizedTelemetryRecord] = []
         for r in records:
             # Reject records from the simulator adapter
-            if r.connector_source == TelemetryConnectorSource.SIMULATOR:
+            if r.connector_source == TelemetryConnectorSource.SIMULATOR or r.is_simulated:
                 continue
             # Reject records explicitly tagged as simulated or mock
             if (

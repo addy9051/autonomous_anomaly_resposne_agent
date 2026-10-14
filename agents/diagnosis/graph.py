@@ -108,10 +108,15 @@ async def gather_context(state: DiagnosisState) -> dict:
     try:
         from data_pipeline.connectors.adapters import get_telemetry_adapter
 
-        from agents.diagnosis.evidence import collect_evidence
+        from agents.diagnosis.evidence import collect_deploy_evidence, collect_evidence
 
         adapter = get_telemetry_adapter()
         evidence_records, missing_sources = await collect_evidence(adapter, affected_services)
+        deploy_records, deploy_gaps = await collect_deploy_evidence()
+        evidence_records = sorted(
+            [*evidence_records, *deploy_records], key=lambda e: e["observed_at"]
+        )
+        missing_sources.extend(deploy_gaps)
     except Exception as exc:
         logger.warning("adapter_telemetry_fetch_failed", error=str(exc))
         missing_sources.append("telemetry_adapter")
@@ -443,10 +448,13 @@ class DiagnosisAgent:
                     EvidenceRecord(
                         source=e.get("source", "telemetry"),
                         query_or_ref=e.get("query_or_ref", ""),
+                        event_time=e.get("event_time"),
+                        freshness_seconds=e.get("freshness_seconds"),
+                        metric_name=e.get("metric_name"),
                         value=e.get("value"),
                         unit=e.get("unit", ""),
                         description=e.get("description", ""),
-                        tags=e.get("tags", {}),
+                        tags={**e.get("tags", {}), "simulated": bool(e.get("simulated", False))},
                     )
                     for e in result.get("evidence_timeline", [])
                 ]

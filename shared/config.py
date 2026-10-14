@@ -180,6 +180,10 @@ class IntegrationConfig(BaseSettings):
     splunk_verify_ssl: bool = True
     splunk_ca_bundle: str = ""
 
+    # Deploy events (GitHub Deployments API). Empty repo disables the source.
+    github_token: str = ""
+    github_deploy_repo: str = ""  # "owner/repo"
+    github_deploy_environment: str = "production"
 
 class ObservabilityConfig(BaseSettings):
     """Observability and telemetry configuration."""

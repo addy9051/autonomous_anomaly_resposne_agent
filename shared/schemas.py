@@ -51,6 +51,7 @@ class TelemetrySignalType(StrEnum):
     TRACE = "trace"
     SYNTHETIC_PROBE = "synthetic_probe"
     BUSINESS_SIGNAL = "business_signal"
+    DEPLOY_EVENT = "deploy_event"
 
 
 class TelemetryConnectorSource(StrEnum):
@@ -59,6 +60,7 @@ class TelemetryConnectorSource(StrEnum):
     SPLUNK = "splunk"
     PROMETHEUS = "prometheus"
     SNOWFLAKE = "snowflake"
+    GITHUB = "github"
     CUSTOM = "custom"
 
 
@@ -370,6 +372,18 @@ class NormalizedTelemetryRecord(BaseModel):
         default=None,
         description="Original event_type identifier if migrating from legacy telemetry",
     )
+    ingested_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When this system fetched the record; `timestamp` is when the source observed it",
+    )
+    is_simulated: bool = Field(
+        default=False,
+        description="True for synthetic data. Never treat as authoritative evidence for real incidents",
+    )
+    source_ref: str | None = Field(
+        default=None,
+        description="Link or identifier to the originating object (query URL, deployment URL, etc.)",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -407,6 +421,20 @@ class NormalizedTelemetryRecord(BaseModel):
                         data["metric_name"] = "observed_signal"
                         data["value"] = 1.0
         return data
+
+    @model_validator(mode="after")
+    def _derive_provenance(self) -> NormalizedTelemetryRecord:
+        """Mark simulated data from the connector or legacy tags so consumers need not guess."""
+        if not self.is_simulated:
+            legacy = any(self.tags.get(k) for k in ("simulated", "is_simulated", "is_mock", "simulated_fallback"))
+            if legacy or self.connector_source == TelemetryConnectorSource.SIMULATOR:
+                self.is_simulated = True
+        return self
+
+    @property
+    def freshness_seconds(self) -> float:
+        """Age of the observation at ingestion time (never negative)."""
+        return max(0.0, (self.ingested_at - self.timestamp).total_seconds())
 
     @property
     def event_id(self) -> str:
