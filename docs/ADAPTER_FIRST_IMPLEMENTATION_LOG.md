@@ -112,3 +112,8 @@ Known limitations:
 - Nothing sets `regressed` yet; a recurrence detector (same fingerprint re-firing within a window) is needed.
 - The judge is uncalibrated, has no SRE-labelled set, and does not see the evidence timeline or hypotheses.
 - No RL fine-tuning of a judge exists; do not attempt it before real labelled incidents exist.
+
+## LLM Evals
+
+Three-layer eval suite (deterministic, regex guardrails, LLM-as-a-Judge with an 80% human-agreement gate) in `evals/`, CI in `.circleci/config.yml`. Full detail and limitations: [LLM_EVALS.md](LLM_EVALS.md). Status: layers 1-2 working and tested; layer 3 machinery tested with synthetic data; **no human labels yet, so the gate reports not-ready.**
+

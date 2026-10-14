@@ -1,0 +1,71 @@
+version: 2.1
+
+# Layers 1-2 (deterministic + guardrails) run on every commit.
+# Layer 3 (judge/human agreement) gates promotion of the LLM judge: >= 80% agreement
+# on expert-labelled eval cases. Exit code 2 ("not ready", too few labels) also fails
+# the job: an unvalidated judge must never be promoted.
+
+executors:
+  py:
+    docker:
+      - image: cimg/python:3.11
+
+commands:
+  install:
+    steps:
+      - checkout
+      - restore_cache:
+          keys: [pip-{{ checksum "pyproject.toml" }}]
+      - run:
+          name: Install
+          command: pip install -e ".[dev]"
+      - save_cache:
+          key: pip-{{ checksum "pyproject.toml" }}
+          paths: [~/.cache/pip]
+
+jobs:
+  deterministic-evals:
+    executor: py
+    steps:
+      - install
+      - run:
+          name: Lint evals
+          command: ruff check evals tests/evals
+      - run:
+          name: Layer 1+2 evals and judge-gate math (no network)
+          command: pytest tests/evals tests/unit -q
+
+  judge-agreement-gate:
+    executor: py
+    steps:
+      - install
+      - run:
+          name: Score eval split with the judge and compare to human labels
+          command: python -m evals.run_judge_gate --threshold 0.80 --min-cases 30
+      - store_artifacts:
+          path: evals/reports
+          destination: judge-gate
+
+  promote-judge:
+    executor: py
+    steps:
+      - checkout
+      - run:
+          name: Promote judge (placeholder hook)
+          command: echo "Judge fingerprint validated; wire release step here."
+
+workflows:
+  evals:
+    jobs:
+      - deterministic-evals
+      - judge-agreement-gate:
+          context: llm-judge # provides OPENAI_API_KEY
+          requires: [deterministic-evals]
+          filters:
+            branches:
+              only: [main]
+      - promote-judge:
+          requires: [judge-agreement-gate]
+          filters:
+            branches:
+              only: [main]
