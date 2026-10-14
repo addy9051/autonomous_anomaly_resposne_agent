@@ -26,11 +26,12 @@ from pydantic import BaseModel, ConfigDict
 
 from agents.action.pagerduty import resolve_pagerduty_incident
 from agents.action.tiers import ACTION_TIERS, get_tier_description
+from data_pipeline.connectors.alertmanager_intake import parse_alertmanager_payload
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from orchestrator import AgentOrchestrator
 from shared.config import get_settings
 from shared.schemas import ActionPolicyDecision, TelemetryEvent
-from shared.utils import get_logger, setup_logging
+from shared.utils import LLMCostTracker, get_logger, setup_logging
 
 # ─── Global State ────────────────────────────────────────────────
 
@@ -265,6 +266,36 @@ async def process_event(request: ProcessEventRequest, _auth: str = Depends(verif
             "incident": incident.model_dump(mode="json"),
         }
     return {"status": "normal", "message": "No anomaly detected"}
+
+
+@app.post("/api/v1/alerts/alertmanager", tags=["Events"])
+async def alertmanager_webhook(
+    payload: dict[str, Any],
+    dry_run: bool = True,
+    _auth: str = Depends(verify_auth),
+) -> dict[str, Any]:
+    """Alertmanager webhook: each firing alert starts a scoped investigation."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+
+    anomalies = parse_alertmanager_payload(payload)
+    incident_ids: list[str] = []
+    suppressed = 0
+    for anomaly in anomalies:
+        cost_tracker = LLMCostTracker(incident_id="pending")
+        incident = await orchestrator.process_anomaly(anomaly, cost_tracker, dry_run=dry_run)
+        if incident:
+            incident_ids.append(incident.incident_id)
+        else:
+            suppressed += 1
+
+    return {
+        "status": "accepted",
+        "alerts_received": len(payload.get("alerts", []) or []),
+        "investigations_started": len(incident_ids),
+        "suppressed_or_duplicate": suppressed,
+        "incident_ids": incident_ids,
+    }
 
 
 @app.post("/api/v1/demo/run", tags=["Demo"])

@@ -27,7 +27,7 @@ from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProduc
 from data_pipeline.flink_jobs.anomaly_features import AlertDeduplicator, RollingWindowAggregator
 from shared.config import get_settings
 from shared.incident_store import IncidentStore
-from shared.schemas import IncidentRecord, IncidentStatus, TelemetryEvent
+from shared.schemas import AnomalyEvent, IncidentRecord, IncidentStatus, TelemetryEvent
 from shared.utils import LLMCostTracker, Timer, get_logger, setup_logging
 
 logger = get_logger("orchestrator")
@@ -99,6 +99,20 @@ class AgentOrchestrator:
             if not anomaly:
                 return None
 
+        return await self.process_anomaly(anomaly, cost_tracker, dry_run=dry_run)
+
+    async def process_anomaly(
+        self,
+        anomaly: AnomalyEvent,
+        cost_tracker: LLMCostTracker,
+        dry_run: bool = False,
+    ) -> IncidentRecord | None:
+        """
+        Run an already-detected anomaly (from the monitoring agent or an external
+        alert) through dedupe, incident creation, diagnosis and action policy.
+        """
+        total_timer = Timer()
+        with total_timer:
             # Deduplicate alerts
             alert_key = f"{':'.join(anomaly.affected_services)}:{anomaly.anomaly_type.value}"
             if not self.alert_dedup.should_fire(alert_key, anomaly.model_dump(mode="json")):
