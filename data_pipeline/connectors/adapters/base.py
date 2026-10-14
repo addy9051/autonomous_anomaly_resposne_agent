@@ -74,7 +74,7 @@ class BaseTelemetryAdapter(ABC):
         ...
 
     @abstractmethod
-    async def stream_signals(
+    def stream_signals(
         self,
         poll_interval_seconds: float = 5.0,
         entities: list[str] | None = None,

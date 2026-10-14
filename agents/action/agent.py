@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse.callback import CallbackHandler
@@ -310,7 +311,8 @@ Format as:
                 output_tokens=response.usage_metadata.get("output_tokens", 0),
             )
 
-        return response.content
+        content = response.content
+        return content if isinstance(content, str) else str(content)
 
     async def _send_notification(
         self,
