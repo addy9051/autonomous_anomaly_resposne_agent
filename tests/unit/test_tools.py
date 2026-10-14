@@ -7,124 +7,67 @@ Tests each tool independently with mocked external services.
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from agents.monitoring.tools.monitoring_tools import (
+    ALL_MONITORING_TOOLS,
     anomaly_classifier,
     baseline_compare,
-    fraud_signal_fetch,
-    kafka_lag_inspector,
+    compute_baseline_result,
     prometheus_query,
 )
+from data_pipeline.connectors.adapters.base import TelemetrySourceError
 
 
 class TestPrometheusQueryTool:
-    """Tests for Prometheus query tool."""
+    """Prometheus tool must never fabricate data."""
 
     @pytest.mark.asyncio
-    async def test_returns_valid_json(self) -> None:
-        result = await prometheus_query.ainvoke({"query": "http_request_duration_seconds", "time_range": "5m"})
-        data = json.loads(result)
-        assert isinstance(data, list)
-        assert len(data) > 0
-        assert "value" in data[0]
-
-    @pytest.mark.asyncio
-    async def test_latency_query(self) -> None:
-        result = await prometheus_query.ainvoke({"query": "latency_p99"})
-        data = json.loads(result)
-        assert len(data) > 0
-        assert data[0]["value"] > 0
-
-    @pytest.mark.asyncio
-    async def test_error_query(self) -> None:
-        result = await prometheus_query.ainvoke({"query": "error_rate"})
-        data = json.loads(result)
-        assert len(data) > 0
+    async def test_unreachable_reports_evidence_gap(self) -> None:
+        with patch("agents.monitoring.tools.monitoring_tools.httpx.AsyncClient") as client_cls:
+            client = client_cls.return_value.__aenter__.return_value
+            client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+            data = json.loads(await prometheus_query.ainvoke({"query": "latency_p99"}))
+        assert data["evidence_gap"] is True
+        assert "error" in data
 
 
-class TestKafkaLagInspector:
-    """Tests for Kafka lag inspector tool."""
-
-    @pytest.mark.asyncio
-    async def test_returns_lag_info(self) -> None:
-        result = await kafka_lag_inspector.ainvoke({"consumer_group": "test-group", "topic": "test-topic"})
-        data = json.loads(result)
-        assert "total_lag" in data
-        assert "partitions" in data
-        assert "status" in data
-        assert data["consumer_group"] == "test-group"
-
-    @pytest.mark.asyncio
-    async def test_partitions_have_lag(self) -> None:
-        result = await kafka_lag_inspector.ainvoke({})
-        data = json.loads(result)
-        for partition in data["partitions"]:
-            assert "partition" in partition
-            assert "lag" in partition
-            assert partition["lag"] >= 0
-
-
-class TestFraudSignalFetch:
-    """Tests for fraud signal fetch tool."""
-
-    @pytest.mark.asyncio
-    async def test_returns_fraud_stats(self) -> None:
-        result = await fraud_signal_fetch.ainvoke({"service": "payment-gateway", "window_minutes": 5})
-        data = json.loads(result)
-        assert "fraud_scores" in data
-        assert "mean" in data["fraud_scores"]
-        assert "p95" in data["fraud_scores"]
-        assert data["total_transactions"] > 0
-
-    @pytest.mark.asyncio
-    async def test_fraud_scores_valid_range(self) -> None:
-        result = await fraud_signal_fetch.ainvoke({})
-        data = json.loads(result)
-        scores = data["fraud_scores"]
-        assert 0 <= scores["mean"] <= 1
-        assert 0 <= scores["p95"] <= 1
+class TestRegistry:
+    def test_fabricated_tools_not_registered(self) -> None:
+        names = {t.name for t in ALL_MONITORING_TOOLS}
+        assert names == {"prometheus_query", "baseline_compare"}
 
 
 class TestBaselineCompare:
-    """Tests for baseline compare tool."""
+    """Baseline must come from real history or report a gap."""
 
-    @pytest.mark.asyncio
-    async def test_normal_value(self) -> None:
-        result = await baseline_compare.ainvoke(
-            {
-                "metric_name": "p99_latency_ms",
-                "current_value": 260.0,  # Close to normal
-            }
-        )
-        data = json.loads(result)
-        assert "z_score" in data
-        assert "is_anomalous" in data
-        assert abs(data["z_score"]) < 2  # Should be normal
+    def test_insufficient_samples_is_gap(self) -> None:
+        data = json.loads(compute_baseline_result("latency_p99", "svc", 1.0, [1.0] * 5))
+        assert data["evidence_gap"] is True
 
-    @pytest.mark.asyncio
-    async def test_anomalous_value(self) -> None:
-        result = await baseline_compare.ainvoke(
-            {
-                "metric_name": "p99_latency_ms",
-                "current_value": 1500.0,  # Way above baseline
-            }
-        )
-        data = json.loads(result)
+    def test_normal_value(self) -> None:
+        samples = [250.0 + (i % 5) for i in range(30)]
+        data = json.loads(compute_baseline_result("latency_p99", "svc", 252.0, samples))
+        assert abs(data["z_score"]) < 2
+        assert data["is_anomalous"] is False
+        assert data["baseline"]["samples"] == 30
+
+    def test_anomalous_value(self) -> None:
+        samples = [250.0 + (i % 5) for i in range(30)]
+        data = json.loads(compute_baseline_result("latency_p99", "svc", 1500.0, samples))
         assert data["is_anomalous"] is True
-        assert data["z_score"] > 2
+        assert data["severity"] == "critical"
 
     @pytest.mark.asyncio
-    async def test_severity_classification(self) -> None:
-        result = await baseline_compare.ainvoke(
-            {
-                "metric_name": "error_rate",
-                "current_value": 0.15,  # Very high error rate
-            }
-        )
-        data = json.loads(result)
-        assert data["severity"] in ["critical", "high", "medium", "low"]
+    async def test_adapter_failure_is_gap(self) -> None:
+        adapter = AsyncMock()
+        adapter.fetch_signals.side_effect = TelemetrySourceError("down")
+        with patch("data_pipeline.connectors.adapters.get_telemetry_adapter", return_value=adapter):
+            data = json.loads(await baseline_compare.ainvoke({"metric_name": "error_rate", "current_value": 0.1}))
+        assert data["evidence_gap"] is True
 
 
 class TestAnomalyClassifier:

@@ -2,11 +2,12 @@
 Monitoring Agent Tools.
 
 Custom LangChain tools for querying infrastructure telemetry:
-- PrometheusQueryTool — query Prometheus metrics API
-- KafkaLagInspectorTool — check consumer group lag
-- FraudSignalFetchTool — fetch fraud scores from Redis
-- BaselineCompareTool — compare current vs baseline metrics
-- AnomalyClassifierTool — run Isolation Forest anomaly detection
+- PrometheusQueryTool — query Prometheus metrics API (reports an evidence gap when unreachable)
+- BaselineCompareTool — compare current vs 7-day baseline derived from the telemetry adapter
+- AnomalyClassifierTool — Isolation Forest scoring against a SYNTHETIC reference distribution;
+  not registered for the LLM agent because it does not learn from real data
+
+Kafka-lag and fraud-signal tools were removed: no real data source backs them.
 """
 
 from __future__ import annotations
@@ -81,30 +82,65 @@ async def prometheus_query(query: str, time_range: str = "5m") -> str:
 @tool
 async def baseline_compare(metric_name: str, current_value: float, service: str = "payment-gateway") -> str:
     """
-    Compare a current metric value against its 7-day rolling baseline.
-    Computes z-score to determine if the current value is anomalous.
+    Compare a current metric value against its 7-day baseline from the telemetry adapter.
+    Computes z-score to determine if the current value is anomalous. If the adapter
+    cannot supply enough history, returns an evidence gap instead of a guess.
 
     Args:
-        metric_name: Name of the metric (e.g., 'p99_latency_ms', 'error_rate')
+        metric_name: Name of the metric (e.g., 'latency_p99', 'error_rate')
         current_value: The current observed value
         service: Service name
 
     Returns:
         JSON string with baseline stats and z-score analysis.
     """
-    # Synthetic baseline data
-    baselines = {
-        "p99_latency_ms": {"mean": 250.0, "std": 45.0},
-        "p95_latency_ms": {"mean": 180.0, "std": 30.0},
-        "error_rate": {"mean": 0.02, "std": 0.008},
-        "request_rate": {"mean": 5000.0, "std": 800.0},
-        "cpu_percent": {"mean": 45.0, "std": 12.0},
-        "memory_percent": {"mean": 60.0, "std": 8.0},
-        "fraud_score_mean": {"mean": 0.038, "std": 0.012},
-    }
+    from data_pipeline.connectors.adapters import get_telemetry_adapter
+    from data_pipeline.connectors.adapters.base import TelemetrySourceError
 
-    baseline = baselines.get(metric_name, {"mean": current_value * 0.8, "std": current_value * 0.1})
-    z_score = (current_value - baseline["mean"]) / baseline["std"] if baseline["std"] > 0 else 0
+    try:
+        adapter = get_telemetry_adapter()
+        records = await adapter.fetch_signals(
+            entity=service,
+            metric_names=[metric_name],
+            time_window_seconds=BASELINE_WINDOW_SECONDS,
+        )
+    except (TelemetrySourceError, ValueError) as e:
+        return json.dumps({"error": str(e), "evidence_gap": True, "metric_name": metric_name, "service": service})
+
+    samples = [r.value for r in records if r.metric_name == metric_name]
+    if any((r.tags or {}).get("simulated") for r in records):
+        return json.dumps(
+            {
+                "error": "Baseline source is simulated; refusing to present it as a real baseline.",
+                "evidence_gap": True,
+                "metric_name": metric_name,
+                "service": service,
+            }
+        )
+    return compute_baseline_result(metric_name, service, current_value, samples)
+
+
+BASELINE_WINDOW_SECONDS = 7 * 24 * 3600
+MIN_BASELINE_SAMPLES = 20
+
+
+def compute_baseline_result(metric_name: str, service: str, current_value: float, samples: list[float]) -> str:
+    """Build the z-score report from historical samples, or an evidence gap if too few."""
+    if len(samples) < MIN_BASELINE_SAMPLES:
+        return json.dumps(
+            {
+                "error": f"Insufficient baseline history ({len(samples)} samples, need {MIN_BASELINE_SAMPLES})",
+                "evidence_gap": True,
+                "metric_name": metric_name,
+                "service": service,
+            }
+        )
+
+    mean = float(np.mean(samples))
+    std = float(np.std(samples))
+    baseline = {"mean": mean, "std": std}
+    z_score = (current_value - mean) / std if std > 0 else 0.0
+    deviation_pct = ((current_value - mean) / mean) * 100 if mean else 0.0
 
     return json.dumps(
         {
@@ -112,12 +148,13 @@ async def baseline_compare(metric_name: str, current_value: float, service: str 
             "service": service,
             "current_value": current_value,
             "baseline": {
-                "mean": baseline["mean"],
-                "std": baseline["std"],
+                "mean": round(baseline["mean"], 6),
+                "std": round(baseline["std"], 6),
                 "window": "7d",
+                "samples": len(samples),
             },
             "z_score": round(z_score, 3),
-            "deviation_pct": round(((current_value - baseline["mean"]) / baseline["mean"]) * 100, 2),
+            "deviation_pct": round(deviation_pct, 2),
             "is_anomalous": abs(z_score) > 2.0,
             "severity": (
                 "critical"
@@ -208,8 +245,5 @@ async def anomaly_classifier(metrics_vector: list[float]) -> str:
 
 ALL_MONITORING_TOOLS = [
     prometheus_query,
-    kafka_lag_inspector,
-    fraud_signal_fetch,
     baseline_compare,
-    anomaly_classifier,
 ]

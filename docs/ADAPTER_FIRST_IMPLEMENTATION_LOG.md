@@ -16,7 +16,7 @@ Live adapters never fabricate data; mock data exists only in `SimulatorAdapter`.
 |---|------|--------|
 | 1 | Adapters fail loudly outside simulator mode; fix Splunk TLS | Done (commit `59c2688`) |
 | 2 | Alert-triggered intake (Alertmanager first) | Done (not yet committed) |
-| 3 | Remove/rewire fabricated monitoring tools; expand `gather_context` into a scoped timeline | Pending |
+| 3 | Remove/rewire fabricated monitoring tools; expand `gather_context` into a scoped timeline | Done (not yet committed) |
 | 4 | Provenance fields on normalized records; deploy-events source | Pending |
 | 5 | Hypothesis modelling | Pending |
 
@@ -47,6 +47,25 @@ Consumers: the verifier turns a raised connector error into `INCONCLUSIVE`; `gat
 - The endpoint runs diagnosis inside the request. It should move to a background task before real use, since Alertmanager webhook timeouts are short.
 - Dedupe uses the service-plus-type key, not the Alertmanager fingerprint.
 - `import orchestrator` fails in a bare interpreter on `langfuse.callback` (pre-existing; tests are unaffected).
+
+## Step 3 — No fabricated evidence; scoped timeline
+
+- `agents/monitoring/tools/monitoring_tools.py`:
+  - `prometheus_query`: synthetic fallback removed; failures return `{"evidence_gap": true}`.
+  - `kafka_lag_inspector`, `fraud_signal_fetch`: deleted (random data, no real source).
+  - `baseline_compare`: baseline now computed from 7 days of adapter history (`compute_baseline_result`); fewer than 20 samples, an adapter error, or a simulated source yields an evidence gap, not hard-coded numbers.
+  - `anomaly_classifier`: kept in the file but no longer registered for the LLM agent, since it trains on a synthetic reference distribution.
+  - `ALL_MONITORING_TOOLS` is now `prometheus_query` and `baseline_compare`; `agents/monitoring/prompts.py` updated, including a rule never to invent values for gaps.
+- `agents/diagnosis/evidence.py` (new): `collect_evidence` queries the adapter per service (up to 3) over a 15-minute window, returns a time-sorted timeline, flags `simulated` records, and reports gaps as `<source>:<service>:<metric|*>` for failed sources and for requested metrics that returned no samples. One failing service no longer drops the others.
+- `agents/diagnosis/graph.py`: `gather_context` uses `collect_evidence`.
+- `PrometheusAdapter.fetch_signals` now runs a range query over `time_window_seconds` (previously an instant query that ignored the window).
+- Tests: `test_tools.py` rewritten, new `test_evidence_collection.py`. Full unit suite: 113 passed.
+
+### Limitations
+- Timeline is metrics only; logs (Splunk) and deploy events are not yet pulled (step 4).
+- The window is a fixed 15 minutes, not anchored on the alert's `starts_at`.
+- The simulated-flag check relies on adapters tagging `simulated`; Datadog/Splunk range behaviour for `fetch_signals` was not changed.
+- The monitoring agent (`process_event` path) is no longer given Kafka-lag or fraud signals; those detection criteria were removed rather than backed.
 
 ## Open audit items (not yet scheduled)
 

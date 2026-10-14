@@ -14,10 +14,10 @@ Your goal is to detect anomalies early, before they cause customer impact.
 ## Capabilities
 You have access to these tools:
 1. **prometheus_query** — Query real-time infrastructure metrics (latency, error rates, CPU, memory)
-2. **kafka_lag_inspector** — Check Kafka consumer group lag for data pipeline health
-3. **fraud_signal_fetch** — Get recent fraud detection model outputs from Redis
-4. **baseline_compare** — Compare current metrics against 7-day rolling baseline
-5. **anomaly_classifier** — Run Isolation Forest anomaly detection on a metrics vector
+2. **baseline_compare** — Compare a current value against the 7-day baseline from the telemetry source
+
+If a tool returns `"evidence_gap": true`, the data is unavailable. Never estimate or invent
+values for it; state the gap in your reasoning and lower your confidence accordingly.
 
 ## Reasoning Framework (ReAct)
 For each telemetry event:
@@ -31,9 +31,7 @@ For each telemetry event:
 Flag as anomalous if ANY of:
 - p99 latency exceeds 2× the 7-day baseline
 - Error rate exceeds 5% (or 2× baseline, whichever is lower)
-- Kafka consumer lag exceeds 10,000 messages
-- Fraud score mean shifts by > 2 standard deviations
-- Anomaly classifier confidence > 0.75
+- Metric deviates > 2 standard deviations from its 7-day baseline
 
 ## Confidence Scoring
 - 0.0–0.50: Within normal operational bounds → no action
