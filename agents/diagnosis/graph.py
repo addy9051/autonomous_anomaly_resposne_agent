@@ -37,6 +37,8 @@ from shared.schemas import (
     ActionTier,
     AnomalyEvent,
     DiagnosisResult,
+    EvidenceRecord,
+    Hypothesis,
     RecommendedAction,
     RootCauseCategory,
     RunbookReference,
@@ -70,6 +72,8 @@ class DiagnosisState(TypedDict):
     runbook_matches: list[dict[str, Any]]
     required_experts: list[str]  # New: Determined by Supervisor
     sub_agent_reports: Annotated[dict[str, dict[str, Any]], merge_reports]
+    evidence_timeline: list[dict[str, Any]]
+    missing_sources: list[str]
 
     # Output
     diagnosis_result: dict[str, Any] | None
@@ -84,7 +88,8 @@ class DiagnosisState(TypedDict):
 async def gather_context(state: DiagnosisState) -> dict:
     """
     Node 1: Gather context for the anomaly.
-    Pulls metrics windows, recent deployments, and related alerts.
+    Queries the configured telemetry adapter for time-aligned metric signals
+    and asks LLM to summarize operational context.
     """
     settings = get_settings()
     llm = get_chat_model(
@@ -94,7 +99,45 @@ async def gather_context(state: DiagnosisState) -> dict:
     )
 
     anomaly = state["anomaly_event"]
-    prompt = CONTEXT_GATHER_PROMPT.format(anomaly_event=sanitize_for_llm(json.dumps(anomaly, indent=2, default=str)))
+    affected_services = anomaly.get("affected_services", ["payment-gateway"])
+
+    # P1 Blueprint: Connect telemetry adapters directly to investigation
+    evidence_records: list[dict[str, Any]] = []
+    missing_sources: list[str] = []
+
+    try:
+        from data_pipeline.connectors.adapters import get_telemetry_adapter
+
+        adapter = get_telemetry_adapter()
+        for service in affected_services[:2]:
+            signals = await adapter.fetch_signals(
+                entity=service,
+                metric_names=["latency_p99", "error_rate", "transaction_failure_rate"],
+                time_window_seconds=300,
+            )
+            for rec in signals:
+                is_mock = rec.tags.get("is_mock", False) or rec.tags.get("simulated_fallback", False)
+                if rec.tags.get("evidence_gap"):
+                    missing_sources.append(f"{adapter.source.value}:{rec.metric_name}")
+                evidence_records.append({
+                    "source": adapter.source.value,
+                    "query_or_ref": rec.metric_name,
+                    "observed_at": rec.timestamp.isoformat(),
+                    "value": rec.value,
+                    "unit": rec.unit,
+                    "is_contradictory": False,
+                    "description": f"Observed {rec.metric_name}={rec.value} {rec.unit}" + (" [MOCK]" if is_mock else ""),
+                    "tags": rec.tags,
+                })
+    except Exception as exc:
+        logger.warning("adapter_telemetry_fetch_failed", error=str(exc))
+        missing_sources.append("telemetry_adapter")
+
+    telemetry_evidence_str = json.dumps(evidence_records, indent=2) if evidence_records else "No adapter telemetry available."
+    prompt = (
+        CONTEXT_GATHER_PROMPT.format(anomaly_event=sanitize_for_llm(json.dumps(anomaly, indent=2, default=str)))
+        + f"\n\nLive Telemetry Evidence:\n{telemetry_evidence_str}"
+    )
 
     response = await llm.ainvoke(
         [
@@ -103,10 +146,12 @@ async def gather_context(state: DiagnosisState) -> dict:
         ]
     )
 
-    logger.info("context_gathered", event_id=anomaly.get("event_id"))
+    logger.info("context_gathered", event_id=anomaly.get("event_id"), evidence_count=len(evidence_records))
 
     return {
         "context": response.content,
+        "evidence_timeline": evidence_records,
+        "missing_sources": missing_sources,
         "messages": [HumanMessage(content=f"Context gathered: {response.content[:200]}...")],
     }
 
@@ -161,15 +206,24 @@ async def rag_runbook_lookup(state: DiagnosisState) -> dict:
     except Exception as e:
         logger.warning("rag_search_failed", error=str(e), event_id=anomaly.get("event_id"))
 
-    # Fallback to synthetic runbooks if real search returned nothing
+    # P0 Blueprint requirement: Do not inject synthetic runbooks as real runbooks in live mode
     if not runbooks:
-        runbooks = _get_synthetic_runbooks(anomaly_type, affected_services)
-        source = "synthetic"
-        logger.info(
-            "rag_fallback_to_synthetic",
-            num_matches=len(runbooks),
-            event_id=anomaly.get("event_id"),
-        )
+        settings = get_settings()
+        if settings.app.app_env == "development" and settings.integrations.telemetry_connector_mode == "simulator":
+            runbooks = _get_synthetic_runbooks(anomaly_type, affected_services)
+            source = "synthetic_simulation"
+            for rb in runbooks:
+                rb["is_synthetic"] = True
+                rb["source"] = "synthetic_simulation"
+            logger.info(
+                "rag_fallback_to_synthetic",
+                num_matches=len(runbooks),
+                event_id=anomaly.get("event_id"),
+            )
+        else:
+            runbooks = []
+            source = "runbook_source_unavailable"
+            logger.info("rag_runbooks_unavailable", event_id=anomaly.get("event_id"))
 
     logger.info(
         "runbook_lookup_complete",
@@ -366,6 +420,8 @@ class DiagnosisAgent:
                     "runbook_matches": [],
                     "required_experts": [],
                     "sub_agent_reports": {},
+                    "evidence_timeline": [],
+                    "missing_sources": [],
                     "diagnosis_result": None,
                     "messages": [],
                 }
@@ -399,11 +455,42 @@ class DiagnosisAgent:
 
                 diagnosis_dict = result.get("diagnosis_result") or {}
 
-                # Build DiagnosisResult
+                # Build DiagnosisResult with evidence and decision summary
+                evidence_list = [
+                    EvidenceRecord(
+                        source=e.get("source", "telemetry"),
+                        query_or_ref=e.get("query_or_ref", ""),
+                        value=e.get("value"),
+                        unit=e.get("unit", ""),
+                        description=e.get("description", ""),
+                        tags=e.get("tags", {}),
+                    )
+                    for e in result.get("evidence_timeline", [])
+                ]
+
+                hypotheses_list = [
+                    Hypothesis(
+                        hypothesis=h.get("hypothesis", ""),
+                        affected_scope=h.get("affected_scope", []),
+                        confidence_band=h.get("confidence_band", "medium"),
+                        next_safe_query=h.get("next_safe_query", ""),
+                    )
+                    for h in diagnosis_dict.get("hypotheses", [])
+                ]
+
+                decision_summary = diagnosis_dict.get("decision_summary") or (
+                    f"Conclusion: {diagnosis_dict.get('root_cause', 'Unknown')}. "
+                    f"Category: {diagnosis_dict.get('root_cause_category', 'unknown')}."
+                )
+
                 diagnosis = DiagnosisResult(
                     event_id=anomaly_event.event_id,
                     root_cause=diagnosis_dict.get("root_cause", "Unable to determine root cause"),
                     root_cause_category=RootCauseCategory(diagnosis_dict.get("root_cause_category", "unknown")),
+                    decision_summary=decision_summary,
+                    hypotheses=hypotheses_list,
+                    evidence_timeline=evidence_list,
+                    missing_sources=result.get("missing_sources", []) or diagnosis_dict.get("missing_sources", []),
                     runbook_references=[RunbookReference(**r) for r in diagnosis_dict.get("runbook_references", [])],
                     recommended_actions=[
                         RecommendedAction(
@@ -424,6 +511,7 @@ class DiagnosisAgent:
                     },
                     reasoning_chain=diagnosis_dict.get("reasoning_chain", ""),
                     confidence=diagnosis_dict.get("confidence", 0.5),
+                    confidence_band=diagnosis_dict.get("confidence_band", "medium"),
                     is_novel_incident=diagnosis_dict.get("is_novel_incident", False),
                 )
 
@@ -530,17 +618,27 @@ def _parse_diagnosis_response(
         elif "```" in content:
             json_str = content.split("```")[1].split("```")[0]
 
-        return json.loads(json_str)
-    except (json.JSONDecodeError, IndexError):
-        # Fallback: construct from available evidence
+        parsed = json.loads(json_str)
+        if isinstance(parsed, dict):
+            if "decision_summary" not in parsed:
+                parsed["decision_summary"] = (
+                    f"Conclusion: {parsed.get('root_cause', 'Unknown')}. "
+                    f"Category: {parsed.get('root_cause_category', 'unknown')}."
+                )
+            return parsed
+        raise ValueError("Parsed diagnosis is not a dictionary")
+    except (json.JSONDecodeError, IndexError, ValueError) as exc:
+        logger.warning("diagnosis_parsing_failed", error=str(exc))
+        # P0 Blueprint requirement: No fallback or parse error should create an executable action!
         return {
-            "root_cause": content[:500] if content else "Unable to determine root cause",
+            "root_cause": "diagnosis_unavailable: unable to parse model output",
             "root_cause_category": "unknown",
             "runbook_references": state.get("runbook_matches", []),
-            "recommended_actions": [
-                {"action": "scale_replicas", "tier": 1, "params": {"replicas": 3}},
-            ],
-            "reasoning_chain": content,
-            "confidence": 0.6,
-            "is_novel_incident": len(state.get("runbook_matches", [])) == 0,
+            "recommended_actions": [],  # Explicitly empty: no action-shaped fallbacks!
+            "decision_summary": "Diagnosis unavailable: Model output failed validation or parsing. Escalated to human on-call without automated action.",
+            "reasoning_chain": content[:1000] if content else "Model returned unparseable content.",
+            "confidence": 0.0,
+            "confidence_band": "uncalibrated",
+            "missing_sources": ["model_structured_output"],
+            "is_novel_incident": True,
         }

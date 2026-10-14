@@ -41,12 +41,21 @@ class ExpertAgent:
             ]
         )
 
+        # Extract observable telemetry signals from context for provenance
+        metrics = anomaly_context.get("metrics_snapshot", {})
+        observed_signals = {k: v for k, v in metrics.items() if v is not None} if isinstance(metrics, dict) else {}
+
         return {
             "agent_type": self.expert_type,
             "findings": response.content,
-            "severity": "high",  # Could be parsed from response
-            "confidence": 0.9,
-            "evidence": {},
+            "severity": anomaly_context.get("severity", "medium"),
+            "confidence": 0.75,  # Calibrated qualitative estimate for generated analysis
+            "evidence": {
+                "observed_signals": observed_signals,
+                "domain": self.expert_type,
+                "analysis_type": "generated_expert_assessment",
+                "is_verified_evidence": False,
+            },
         }
 
 

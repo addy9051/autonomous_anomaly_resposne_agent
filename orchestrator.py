@@ -25,6 +25,8 @@ from agents.monitoring.agent import MonitoringAgent
 from data_pipeline.connectors.adapters import get_telemetry_adapter
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from data_pipeline.flink_jobs.anomaly_features import AlertDeduplicator, RollingWindowAggregator
+from shared.config import get_settings
+from shared.incident_store import IncidentStore
 from shared.schemas import IncidentRecord, IncidentStatus, TelemetryEvent
 from shared.utils import LLMCostTracker, Timer, get_logger, setup_logging
 
@@ -35,15 +37,16 @@ class AgentOrchestrator:
     """
     Master orchestrator that wires all agents together.
 
-    Pipeline:
-    1. Telemetry events → feature extraction → anomaly detection
-    2. Anomaly events → diagnosis (LangGraph DAG)
-    3. Diagnosis results → action execution (tiered)
-    4. Action outcomes → feedback loop (RL reward)
+    Target Blueprint Lifecycle:
+      investigating → recommendation_ready → awaiting_approval
+      → executing → verifying → verified_recovered / escalated
     """
 
-    def __init__(self) -> None:
+    def __init__(self, enable_live_rl: bool = False) -> None:
         setup_logging()
+        self.settings = get_settings()
+        self.enable_live_rl = enable_live_rl or getattr(self.settings.app, "enable_live_rl", False)
+
         self.monitoring_agent = MonitoringAgent()
         self.diagnosis_agent = DiagnosisAgent()
         self.action_agent = ActionAgent()
@@ -52,9 +55,14 @@ class AgentOrchestrator:
         self.feature_aggregator = RollingWindowAggregator()
         self.alert_dedup = AlertDeduplicator()
 
-        # Track active incidents
-        self.active_incidents: dict[str, IncidentRecord] = {}
-        self.resolved_incidents: list[IncidentRecord] = []
+        # Durable incident store (persists across restarts)
+        self.store = IncidentStore()
+
+        # Track active incidents in memory (repopulated from durable store)
+        self.active_incidents: dict[str, IncidentRecord] = {
+            inc.incident_id: inc for inc in self.store.list_active()
+        }
+        self.resolved_incidents: list[IncidentRecord] = self.store.list_resolved(limit=50)
 
         # Real-time telemetry pulse buffer (last 100 events)
         self.telemetry_history: deque[TelemetryEvent] = deque(maxlen=100)
@@ -65,6 +73,8 @@ class AgentOrchestrator:
         logger.info(
             "orchestrator_initialized",
             connector_mode=self.telemetry_adapter.source.value,
+            restored_active_incidents=len(self.active_incidents),
+            enable_live_rl=self.enable_live_rl,
         )
 
     async def process_event(self, event: TelemetryEvent, dry_run: bool = False) -> IncidentRecord | None:
@@ -96,13 +106,19 @@ class AgentOrchestrator:
                 logger.debug("alert_suppressed", key=alert_key, suppressed_count=suppressed)
                 return None
 
-            # Create incident record
+            # Create incident record & persist
             incident = IncidentRecord(
                 status=IncidentStatus.DETECTED,
                 anomaly_event=anomaly,
             )
             cost_tracker.incident_id = incident.incident_id
             self.active_incidents[incident.incident_id] = incident
+            self.store.save(incident)
+            self.store.record_audit(incident.incident_id, "monitoring", "anomaly_detected", {
+                "services": anomaly.affected_services,
+                "severity": anomaly.severity.value,
+                "type": anomaly.anomaly_type.value,
+            })
 
             logger.info(
                 "incident_created",
@@ -111,13 +127,20 @@ class AgentOrchestrator:
                 anomaly_type=anomaly.anomaly_type.value,
             )
 
-            # ── Step 3: Diagnosis Agent — Root Cause Analysis ──
-            incident.status = IncidentStatus.DIAGNOSING
-            datetime.now(timezone.utc)
+            # ── Step 3: Investigation & Diagnosis Agent ──
+            incident.status = IncidentStatus.INVESTIGATING
+            self.store.save(incident)
 
             diagnosis = await self.diagnosis_agent.diagnose(anomaly, cost_tracker)
             incident.diagnosis_result = diagnosis
             incident.time_to_detect_seconds = (datetime.now(timezone.utc) - incident.created_at).total_seconds()
+            self.store.save(incident)
+            self.store.record_audit(incident.incident_id, "diagnosis", "diagnosis_complete", {
+                "root_cause": diagnosis.root_cause,
+                "category": diagnosis.root_cause_category.value,
+                "confidence": diagnosis.confidence,
+                "recommended_actions": [a.action for a in diagnosis.recommended_actions],
+            })
 
             logger.info(
                 "diagnosis_complete",
@@ -127,38 +150,46 @@ class AgentOrchestrator:
                 is_novel=diagnosis.is_novel_incident,
             )
 
-            # ── Step 4: Action Agent — Execute Remediation ──
-            incident.status = IncidentStatus.ACTION_PENDING
-            await self.action_agent.execute(diagnosis, incident, cost_tracker, dry_run=dry_run)
+            # ── Step 4: Action Policy Evaluation & Remediation ──
+            incident.status = IncidentStatus.RECOMMENDATION_READY
+            self.store.save(incident)
 
+            await self.action_agent.execute(diagnosis, incident, cost_tracker, dry_run=dry_run)
             incident.time_to_mitigate_seconds = (datetime.now(timezone.utc) - incident.created_at).total_seconds()
 
-            # ── Step 5: Feedback Loop — Record Outcome (Phase 7 Hybrid) ──
-            # First, use LLM-as-a-Judge to evaluate the qualitative resolution
-            semantic_reward = await self.reward_agent.evaluate(incident, cost_tracker)
-
-            # Sync cost tracker after evaluation
+            # Sync cost tracker
             incident.total_llm_tokens_used = cost_tracker.total_tokens
             incident.total_llm_cost_usd = cost_tracker.total_cost
+            self.store.save(incident)
 
-            # Record final outcome and compute hybrid reward
-            reward = await self.feedback_agent.record_outcome(incident, semantic_reward)
+            # ── Step 5: Lifecycle Transition & Durability ──
+            if incident.status in (IncidentStatus.VERIFIED_RECOVERED, IncidentStatus.RESOLVED):
+                # Only move to resolved if independent verification confirmed recovery
+                if incident.incident_id in self.active_incidents:
+                    del self.active_incidents[incident.incident_id]
+                self.resolved_incidents.append(incident)
+                self.store.record_audit(incident.incident_id, "orchestrator", "verified_recovered", {
+                    "auto_resolved": incident.auto_resolved,
+                })
+                # Sync with PagerDuty (Close the ticket)
+                await resolve_pagerduty_incident(incident.incident_id)
 
-            logger.info(
-                "feedback_recorded",
-                incident_id=incident.incident_id,
-                reward=reward,
-                tokens_used=cost_tracker.total_tokens,
-                cost_usd=round(cost_tracker.total_cost, 4),
-                justification=semantic_reward.justification[:100] if semantic_reward else "N/A",
-            )
-
-            # Move to resolved
-            del self.active_incidents[incident.incident_id]
-            self.resolved_incidents.append(incident)
-
-            # Sync with PagerDuty (Close the ticket)
-            await resolve_pagerduty_incident(incident.incident_id)
+                # Optional Offline/Controlled RL scoring only if explicitly enabled
+                if self.enable_live_rl:
+                    semantic_reward = await self.reward_agent.evaluate(incident, cost_tracker)
+                    reward = await self.feedback_agent.record_outcome(incident, semantic_reward)
+                    logger.info("feedback_recorded", incident_id=incident.incident_id, reward=reward)
+            else:
+                # If awaiting approval, executing, or escalated: KEEP ACTIVE in store and active_incidents!
+                self.active_incidents[incident.incident_id] = incident
+                self.store.record_audit(incident.incident_id, "orchestrator", incident.status.value, {
+                    "pending_actions": [a.model_dump(mode="json") for a in incident.action_results],
+                })
+                logger.info(
+                    "incident_in_progress",
+                    incident_id=incident.incident_id,
+                    status=incident.status.value,
+                )
 
         logger.info(
             "pipeline_complete",

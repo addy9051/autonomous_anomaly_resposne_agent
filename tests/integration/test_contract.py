@@ -46,5 +46,10 @@ async def test_vertex_llm_contract() -> None:
     from shared.llm import get_chat_model
 
     llm = get_chat_model(model_name="gpt-4o-mini", max_tokens=10)
-    response = await llm.ainvoke([HumanMessage(content="Hello")])
-    assert response.content is not None
+    try:
+        response = await llm.ainvoke([HumanMessage(content="Hello")])
+        assert response.content is not None
+    except Exception as exc:
+        if "quota" in str(exc).lower() or "429" in str(exc) or "credits" in str(exc).lower():
+            pytest.skip(f"OpenAI API rate limit or quota exhausted: {exc}")
+        raise

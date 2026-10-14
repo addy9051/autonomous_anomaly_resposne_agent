@@ -56,7 +56,10 @@ class DataConfig(BaseSettings):
     postgres_port: int = 5432
     postgres_db: str = "agent_kb"
     postgres_user: str = "postgres"
-    postgres_password: str = "agent_secret_2024"  # noqa: S105
+    postgres_password: str = Field(
+        default="",
+        description="PostgreSQL password. Must be supplied externally via POSTGRES_PASSWORD environment variable.",
+    )
 
     # Supabase (Cloud Alternative to local Postgres)
     supabase_url: str = ""
@@ -192,6 +195,8 @@ class AppConfig(BaseSettings):
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"  # noqa: S104
     api_port: int = 8000
+    api_auth_token: str = Field(default="", description="Token required for mutating API requests when set")
+    enable_live_rl: bool = Field(default=False, description="Pause live reinforcement learning on production outcomes")
     # Vowpal Wabbit Distributed Config
     vw_model_gcs_bucket: str | None = Field(None, alias="VW_MODEL_GCS_BUCKET")
     vw_is_trainer: bool = Field(False, alias="VW_IS_TRAINER")

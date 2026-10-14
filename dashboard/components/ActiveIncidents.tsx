@@ -19,10 +19,11 @@ import { IncidentRecord } from '@/lib/api';
 
 const STATUS_STEPS = [
   { id: 'detected', label: 'Detected', icon: AlertCircle },
-  { id: 'diagnosing', label: 'Diagnosing', icon: Search },
-  { id: 'action_pending', label: 'Analysis', icon: Settings },
-  { id: 'action_executing', label: 'Executing', icon: Play },
-  { id: 'resolved', label: 'Resolved', icon: CheckCircle2 },
+  { id: 'investigating', label: 'Investigating', icon: Search },
+  { id: 'awaiting_approval', label: 'Approval Required', icon: Settings },
+  { id: 'executing', label: 'Executing', icon: Play },
+  { id: 'verifying', label: 'Verifying', icon: Search },
+  { id: 'verified_recovered', label: 'Verified Recovered', icon: CheckCircle2 },
 ];
 
 interface Props {
@@ -45,8 +46,16 @@ export default function ActiveIncidents({ incidents }: Props) {
 function IncidentCard({ incident }: { incident: IncidentRecord }) {
   const [isExpanded, setIsExpanded] = useState(false);
   
-  // Find current step index
-  const currentStepIndex = STATUS_STEPS.findIndex(s => s.id === incident.status.toLowerCase());
+  // Map legacy / alternative status names to canonical railroad steps
+  const statusMapping: Record<string, string> = {
+    diagnosing: 'investigating',
+    recommendation_ready: 'awaiting_approval',
+    action_pending: 'awaiting_approval',
+    action_executing: 'executing',
+    resolved: 'verified_recovered',
+  };
+  const normalizedStatus = statusMapping[incident.status.toLowerCase()] || incident.status.toLowerCase();
+  const currentStepIndex = STATUS_STEPS.findIndex(s => s.id === normalizedStatus);
   const effectiveIndex = currentStepIndex === -1 ? 0 : currentStepIndex;
 
   return (
@@ -137,15 +146,21 @@ function IncidentCard({ incident }: { incident: IncidentRecord }) {
               )}
             </div>
             
-            {/* Detailed Chain of Thought */}
+            {/* Responder-Facing Decision Summary */}
             <div className="mt-8 p-6 glass-pill rounded-3xl bg-black/40">
                 <div className="flex items-center gap-2 mb-3">
                    <Terminal size={16} className="text-secondary" />
-                   <h4 className="text-xs uppercase font-bold tracking-widest text-secondary">Reasoning Chain</h4>
+                   <h4 className="text-xs uppercase font-bold tracking-widest text-secondary">Decision Summary</h4>
                 </div>
                 <p className="text-sm font-mono text-foreground/70 whitespace-pre-wrap leading-relaxed">
-                    {incident.diagnosis_result?.reasoning_chain || 'Thinking... awaiting analysis reports.'}
+                    {incident.diagnosis_result?.decision_summary || incident.diagnosis_result?.reasoning_chain || 'Investigation complete. Awaiting decision evaluation.'}
                 </p>
+                {incident.verification_result && (
+                  <div className="mt-4 pt-4 border-t border-white/5 text-xs">
+                    <span className="font-bold text-primary uppercase">Verification Result: </span>
+                    <span className="text-foreground/80">{incident.verification_result.outcome} — {incident.verification_result.details}</span>
+                  </div>
+                )}
             </div>
           </motion.div>
         )}

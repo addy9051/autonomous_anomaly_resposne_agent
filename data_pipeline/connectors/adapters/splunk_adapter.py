@@ -218,13 +218,9 @@ class SplunkAdapter(BaseTelemetryAdapter):
 
         default_query = "search index=main (status>=500 OR level=ERROR) | stats count by service"
         
-        # Inner helper coroutine to execute the polling cycle safely
-        async def _run() -> AsyncGenerator[NormalizedTelemetryRecord, None]:
-            while True:
-                records = await self.query_signal(query=default_query)
-                for rec in records:
-                    if not entities or rec.entity in entities:
-                        yield rec
-                await asyncio.sleep(poll_interval_seconds)
-
-        return _run()
+        while True:
+            records = await self.query_signal(query=default_query)
+            for rec in records:
+                if not entities or rec.entity in entities:
+                    yield rec
+            await asyncio.sleep(poll_interval_seconds)

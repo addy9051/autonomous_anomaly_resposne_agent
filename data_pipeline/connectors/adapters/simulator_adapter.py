@@ -140,7 +140,6 @@ class SimulatorAdapter(BaseTelemetryAdapter):
     ) -> AsyncGenerator[NormalizedTelemetryRecord, None]:
         """Continuously yield simulated normalized telemetry records."""
         target_entities = entities or self.default_entities
-
         while True:
             entity = self.rng.choice(target_entities)
             is_anomaly = self.rng.random() < 0.10
@@ -173,7 +172,7 @@ class SimulatorAdapter(BaseTelemetryAdapter):
                 baseline_mean=baseline,
                 deviation_sigma=sigma,
                 severity=severity,
-                tags={"environment": "production", "region": "us-east-1"},
+                tags={"environment": "production", "region": "us-east-1", "is_simulated": True},
             )
 
             await asyncio.sleep(poll_interval_seconds)

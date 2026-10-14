@@ -57,13 +57,22 @@ async function fetchStatus() {
 
 async function fetchIncidents() {
     try {
-        const res = await fetch(API.incidents);
-        if (!res.ok) return;
-        const data = await res.json();
-        
-        renderIncidentsTable(data.incidents);
-        renderApprovalsQueue(data.incidents);
-        
+        const [resResolved, resActive] = await Promise.all([
+            fetch(API.incidents),
+            fetch('/api/v1/incidents/active'),
+        ]);
+        const dataResolved = resResolved.ok ? await resResolved.json() : { incidents: [] };
+        const dataActive = resActive.ok ? await resActive.json() : { incidents: [] };
+
+        // Deduplicate: active incidents take precedence over resolved list
+        const activeIds = new Set((dataActive.incidents || []).map(i => i.incident_id));
+        const combined = [
+            ...(dataActive.incidents || []),
+            ...(dataResolved.incidents || []).filter(i => !activeIds.has(i.incident_id)),
+        ];
+
+        renderIncidentsTable(combined);
+        renderApprovalsQueue(combined);
     } catch (err) {
         console.error('Failed to fetch incidents:', err);
     }
@@ -119,8 +128,11 @@ function renderIncidentsTable(incidents) {
 function renderApprovalsQueue(incidents) {
     if (!incidents) return;
     
-    // Filter for action_pending
-    const pending = incidents.filter(i => i.status === 'ACTION_PENDING');
+    // Match awaiting_approval and action_pending (case-insensitive)
+    const pending = incidents.filter(i => {
+        const s = (i.status || '').toLowerCase();
+        return s === 'awaiting_approval' || s === 'action_pending';
+    });
     
     if (pending.length === 0) {
         DOM.approvalsContainer.innerHTML = `<div class="empty-state">No pending actions. System is stable.</div>`;
@@ -146,13 +158,14 @@ function renderApprovalsQueue(incidents) {
     pending.forEach(inc => {
         if (!inc.action_results || inc.action_results.length === 0) return;
         const action = inc.action_results[0];
+        const summary = inc.diagnosis_result?.decision_summary || inc.diagnosis_result?.reasoning_chain || 'Pending approval';
         
         const item = document.createElement('div');
         item.className = 'approval-item';
         item.innerHTML = `
             <h4>Action Required: ${action.action_taken}</h4>
             <p><strong>Incident:</strong> ${inc.incident_id}</p>
-            <p><strong>Reason:</strong> ${inc.diagnosis_result?.reasoning_chain.substring(0, 100)}...</p>
+            <p><strong>Decision Summary:</strong> ${summary.substring(0, 150)}...</p>
             <div class="code-block">${JSON.stringify(action.output?.recommended_params || {})}</div>
             
             <div class="approval-actions">

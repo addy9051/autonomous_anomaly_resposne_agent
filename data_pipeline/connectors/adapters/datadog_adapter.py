@@ -206,12 +206,10 @@ class DatadogAdapter(BaseTelemetryAdapter):
     ) -> AsyncGenerator[NormalizedTelemetryRecord, None]:
         """Poll Datadog on an interval and yield normalized signals."""
         queries = ["avg:trace.rack.request.errors{*}", "avg:system.cpu.user{*}"]
-        async def _run() -> AsyncGenerator[NormalizedTelemetryRecord, None]:
-            while True:
-                for q in queries:
-                    records = await self.query_signal(query=q)
-                    for rec in records:
-                        if not entities or rec.entity in entities:
-                            yield rec
-                await asyncio.sleep(poll_interval_seconds)
-        return _run()
+        while True:
+            for q in queries:
+                records = await self.query_signal(query=q)
+                for rec in records:
+                    if not entities or rec.entity in entities:
+                        yield rec
+            await asyncio.sleep(poll_interval_seconds)

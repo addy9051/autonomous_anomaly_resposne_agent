@@ -22,6 +22,7 @@ export interface IncidentRecord {
   anomaly_event?: any;
   diagnosis_result?: any;
   action_results: any[];
+  verification_result?: any;
   total_llm_cost_usd: number;
 }
 

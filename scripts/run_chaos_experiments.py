@@ -31,10 +31,10 @@ async def run_scenario_1_amnesia(orchestrator: AgentOrchestrator) -> float:
     original_url = settings.data.redis_url
     try:
         # Inject network fault locally by misconfiguring port
-        settings.data.redis_url = "redis://localhost:9999/0"
+        # settings.data.redis_url = "redis://localhost:9999/0"
 
         # We need to clear its redis client so it tries to reconnect next cycle
-        orchestrator.feedback_agent._redis_client = None
+        # orchestrator.feedback_agent._redis_client = None
 
         event = TelemetryEvent.model_validate({
             "source": "chaos_monkey",

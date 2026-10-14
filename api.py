@@ -16,12 +16,14 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from agents.action.pagerduty import resolve_pagerduty_incident
 from agents.action.tiers import ACTION_TIERS, get_tier_description
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from orchestrator import AgentOrchestrator
@@ -98,8 +100,29 @@ class ProcessEventRequest(BaseModel):
     payload: dict[str, Any] = {}
 
 
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_auth(api_key: str | None = Security(api_key_header)) -> str | None:
+    """
+    Enforce route authentication on sensitive action endpoints when configured.
+    Fails closed if API_AUTH_TOKEN is defined and the key is missing or invalid.
+    """
+    settings = get_settings()
+    auth_token = getattr(settings.app, "api_auth_token", "") or os.environ.get("API_AUTH_TOKEN", "")
+    if auth_token:
+        if not api_key or api_key != auth_token:
+            raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing X-API-Key header")
+    return api_key
+
+
 class ApproveActionRequest(BaseModel):
     approved: bool = True
+    approver: str = "sre-engineer"
+    action_name: str | None = None
+    params: dict[str, Any] | None = None
+    dry_run: bool = False
+    reason: str | None = None
 
 
 class RunDemoRequest(BaseModel):
@@ -282,13 +305,14 @@ async def get_recent_telemetry() -> dict[str, Any]:
 
 @app.get("/api/v1/incidents/active", tags=["Incidents"])
 async def list_active_incidents() -> dict[str, Any]:
-    """List incidents currently being processed (for state mapping)."""
+    """List incidents currently in-flight or awaiting approval."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
+    active = orchestrator.store.list_active()
     return {
-        "total": len(orchestrator.active_incidents),
-        "incidents": [inc.model_dump(mode="json") for inc in orchestrator.active_incidents.values()],
+        "total": len(active),
+        "incidents": [inc.model_dump(mode="json") for inc in active],
     }
 
 
@@ -298,14 +322,14 @@ async def get_incident(incident_id: str) -> dict[str, Any]:
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
-    # Check active incidents
+    # Check in-memory active incidents
     if incident_id in orchestrator.active_incidents:
         return orchestrator.active_incidents[incident_id].model_dump(mode="json")
 
-    # Check resolved incidents
-    for inc in orchestrator.resolved_incidents:
-        if inc.incident_id == incident_id:
-            return inc.model_dump(mode="json")
+    # Check durable store
+    incident = orchestrator.store.get(incident_id)
+    if incident:
+        return incident.model_dump(mode="json")
 
     raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
@@ -353,52 +377,138 @@ async def get_reward_history(limit: int = 100) -> dict[str, Any]:
 
 
 @app.post("/api/v1/incidents/{incident_id}/approve", tags=["Actions"])
-async def approve_tier2_action(incident_id: str, request: ApproveActionRequest) -> dict[str, Any]:
-    """Approve a pending Tier 2 action from the dashboard."""
+async def approve_tier2_action(
+    incident_id: str,
+    request: ApproveActionRequest,
+    _auth: str | None = Depends(verify_auth),
+) -> dict[str, Any]:
+    """
+    Approve or reject a pending action for an incident.
+    
+    Upon approval:
+      1. Executes the exact approved action with bounded parameters.
+      2. Transitions incident: awaiting_approval → executing → verifying.
+      3. Performs independent post-action recovery verification.
+      4. Only resolves if recovery is independently verified.
+    Upon rejection:
+      1. Records rejection without resolving the incident.
+      2. Transitions to escalated for human response.
+    """
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
-    incident = orchestrator.active_incidents.get(incident_id)
+    # Find incident in active map or durable store
+    incident = orchestrator.active_incidents.get(incident_id) or orchestrator.store.get(incident_id)
     if not incident:
-        # Check resolved just to be safe
-        from shared.schemas import IncidentStatus
-
-        for inc in orchestrator.resolved_incidents:
-            if inc.incident_id == incident_id:
-                raise HTTPException(status_code=400, detail="Incident already resolved")
+        # Check if already resolved
+        resolved_match = next((i for i in orchestrator.resolved_incidents if i.incident_id == incident_id), None)
+        if resolved_match:
+            raise HTTPException(status_code=400, detail="Incident already resolved")
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    from shared.schemas import IncidentStatus
+    from shared.schemas import IncidentStatus, VerificationOutcome
 
-    if incident.status != IncidentStatus.ACTION_PENDING:
-        detail = f"Incident is in status {incident.status.value}, expected ACTION_PENDING"
+    valid_pending_statuses = {
+        IncidentStatus.AWAITING_APPROVAL,
+        IncidentStatus.ACTION_PENDING,
+        IncidentStatus.RECOMMENDATION_READY,
+    }
+    if incident.status not in valid_pending_statuses:
+        detail = f"Incident is in status '{incident.status.value}', expected one of {[s.value for s in valid_pending_statuses]}"
         raise HTTPException(status_code=400, detail=detail)
 
-    # Move incident to resolved execution status upon approval
-    incident.status = IncidentStatus.RESOLVED
+    # ── Handle Rejection ──
+    if not request.approved:
+        incident.status = IncidentStatus.ESCALATED
+        incident.human_overrode = True
+        incident.human_feedback = f"Action rejected by {request.approver}. Reason: {request.reason or 'None provided'}"
+        
+        if incident.action_results:
+            incident.action_results[0].human_approved = False
+            incident.action_results[0].execution_status = "rejected"
 
-    if request.approved and incident.action_results:
-        action = incident.action_results[0]
-        action.human_approved = True
-        action.execution_status = "executed"
+        orchestrator.active_incidents[incident.incident_id] = incident
+        orchestrator.store.save(incident)
+        orchestrator.store.record_audit(
+            incident.incident_id,
+            request.approver,
+            "action_rejected",
+            {"reason": request.reason, "status": incident.status.value},
+        )
 
-    # Move to resolved map
-    del orchestrator.active_incidents[incident.incident_id]
-    orchestrator.resolved_incidents.append(incident)
+        return {
+            "status": "rejected",
+            "incident_id": incident_id,
+            "approved": False,
+            "incident_status": incident.status.value,
+        }
 
-    return {"status": "success", "incident_id": incident_id, "approved": request.approved}
+    # ── Handle Approval & Execution ──
+    # Resolve action name and parameters
+    action_name = request.action_name
+    params = request.params
+
+    if not action_name:
+        if incident.action_results:
+            action_name = incident.action_results[0].action_taken
+            params = params or incident.action_results[0].output.get("recommended_params", {})
+        elif incident.diagnosis_result and incident.diagnosis_result.recommended_actions:
+            action_name = incident.diagnosis_result.recommended_actions[0].action
+            params = params or incident.diagnosis_result.recommended_actions[0].params
+
+    if not action_name:
+        raise HTTPException(status_code=400, detail="No action specified or recommended for this incident")
+
+    params = params or {}
+
+    # Execute approved action and perform independent verification
+    action_result = await orchestrator.action_agent.execute_approved_action(
+        action_name=action_name,
+        params=params,
+        incident=incident,
+        approver=request.approver,
+        dry_run=request.dry_run,
+    )
+
+    if incident.status in (IncidentStatus.VERIFIED_RECOVERED, IncidentStatus.RESOLVED):
+        if incident.incident_id in orchestrator.active_incidents:
+            del orchestrator.active_incidents[incident.incident_id]
+        orchestrator.resolved_incidents.append(incident)
+        await resolve_pagerduty_incident(incident.incident_id)
+    else:
+        orchestrator.active_incidents[incident.incident_id] = incident
+
+    orchestrator.store.save(incident)
+    orchestrator.store.record_audit(
+        incident.incident_id,
+        request.approver,
+        "action_approved_and_verified",
+        {
+            "action": action_name,
+            "execution_status": action_result.execution_status,
+            "incident_status": incident.status.value,
+            "verification": incident.verification_result.model_dump(mode="json") if incident.verification_result else None,
+        },
+    )
+
+    return {
+        "status": "executed",
+        "incident_id": incident_id,
+        "approved": True,
+        "action_taken": action_name,
+        "execution_status": action_result.execution_status,
+        "incident_status": incident.status.value,
+        "verification": incident.verification_result.model_dump(mode="json") if incident.verification_result else None,
+    }
 
 
 @app.get("/api/v1/incidents", tags=["Incidents"])
 async def list_incidents(limit: int = 50, status: str | None = None) -> dict[str, Any]:
-    """List recent incidents."""
+    """List recent incidents from durable store."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
-    incidents = orchestrator.resolved_incidents[-limit:]
-
-    if status:
-        incidents = [i for i in incidents if i.status.value == status]
+    incidents = orchestrator.store.list_resolved(limit=limit, status=status)
 
     return {
         "total": len(incidents),

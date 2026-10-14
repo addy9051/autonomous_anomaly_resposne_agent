@@ -70,14 +70,34 @@ class ActionTier(int, Enum):
     TIER_3_HUMAN = 3
 
 
+class ActionPolicyDecision(StrEnum):
+    PERMITTED_AUTO = "permitted_auto"
+    APPROVAL_REQUIRED = "approval_required"
+    RECOMMEND_ONLY = "recommend_only"
+    DENIED = "denied"
+
+
+class VerificationOutcome(StrEnum):
+    VERIFIED_RECOVERY = "verified_recovery"
+    NOT_RECOVERED = "not_recovered"
+    INCONCLUSIVE = "inconclusive"
+
+
 class IncidentStatus(StrEnum):
     DETECTED = "detected"
-    DIAGNOSING = "diagnosing"
-    ACTION_PENDING = "action_pending"
-    ACTION_EXECUTING = "action_executing"
+    INVESTIGATING = "investigating"
+    DIAGNOSING = "diagnosing"  # backwards compatibility alias for investigating
+    RECOMMENDATION_READY = "recommendation_ready"
     AWAITING_APPROVAL = "awaiting_approval"
-    RESOLVED = "resolved"
+    ACTION_PENDING = "action_pending"  # backwards compatibility alias for awaiting_approval
+    EXECUTING = "executing"
+    ACTION_EXECUTING = "action_executing"  # backwards compatibility alias
+    VERIFYING = "verifying"
+    VERIFIED_RECOVERED = "verified_recovered"
+    RESOLVED = "resolved"  # backwards compatibility alias for verified_recovered
     ESCALATED = "escalated"
+    FAILED = "failed"
+    INCONCLUSIVE = "inconclusive"
     FALSE_POSITIVE = "false_positive"
 
 
@@ -127,6 +147,47 @@ class AnomalyEvent(BaseModel):
     )
 
 
+# ─── Evidence & Hypothesis Models ────────────────────────────────
+
+
+class EvidenceRecord(BaseModel):
+    """A single piece of time-aligned, source-linked evidence with provenance."""
+
+    source: str = Field(..., description="Source system (e.g. prometheus, datadog, k8s, logs)")
+    query_or_ref: str = Field(..., description="Query, metric name, or reference identifier")
+    observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    event_time: datetime | None = None
+    freshness_seconds: float | None = None
+    metric_name: str | None = None
+    value: Any = None
+    unit: str = ""
+    is_contradictory: bool = False
+    description: str = ""
+    tags: dict[str, Any] = Field(default_factory=dict)
+
+
+class Hypothesis(BaseModel):
+    """A candidate explanation for the incident with supporting and contradicting observations."""
+
+    hypothesis: str = Field(..., description="Concise statement of candidate cause")
+    affected_scope: list[str] = Field(default_factory=list, description="Affected services or resources")
+    supporting_evidence: list[EvidenceRecord] = Field(default_factory=list)
+    contradicting_evidence: list[EvidenceRecord] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    confidence_band: str = Field(default="medium", description="high, medium, low, or uncalibrated")
+    next_safe_query: str = Field(default="", description="Next safe query or human question to test this hypothesis")
+
+
+class VerificationResult(BaseModel):
+    """Independent verification report evaluating post-action service recovery."""
+
+    outcome: VerificationOutcome
+    checked_signals: dict[str, Any] = Field(default_factory=dict)
+    details: str = ""
+    stabilization_seconds: float = 0.0
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 # ─── Diagnosis Agent → Action Agent ─────────────────────────────
 
 
@@ -170,14 +231,22 @@ class DiagnosisResult(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     root_cause: str
     root_cause_category: RootCauseCategory
+    decision_summary: str = Field(
+        default="",
+        description="Responder-facing decision summary: conclusion, evidence references, assumptions, alternatives, next step",
+    )
+    hypotheses: list[Hypothesis] = Field(default_factory=list)
+    evidence_timeline: list[EvidenceRecord] = Field(default_factory=list)
+    missing_sources: list[str] = Field(default_factory=list)
     runbook_references: list[RunbookReference] = Field(default_factory=list)
     recommended_actions: list[RecommendedAction]
     sub_agent_reports: dict[str, SubAgentReport] = Field(default_factory=dict)
     reasoning_chain: str = Field(
-        ...,
-        description="Full chain-of-thought reasoning for the diagnosis",
+        default="",
+        description="Deprecated internal chain-of-thought, decision_summary preferred for responder display",
     )
     confidence: float = Field(ge=0.0, le=1.0)
+    confidence_band: str = Field(default="medium", description="high, medium, low, uncalibrated")
     is_novel_incident: bool = Field(
         default=False,
         description="True if no runbook matched with similarity >= 0.75",
@@ -196,11 +265,14 @@ class ActionResult(BaseModel):
     incident_id: str
     action_taken: str
     tier: ActionTier
-    execution_status: str  # "success", "failed", "skipped", "pending_approval"
+    execution_status: str  # "success", "failed", "skipped", "pending_approval", "rejected", "policy_denied", "recommend_only"
     execution_time_ms: float = 0.0
     output: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     human_approved: bool | None = None
+    approver: str | None = None
+    policy_decision: ActionPolicyDecision | None = None
+    is_simulated: bool = False
     slack_thread_ts: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -211,7 +283,7 @@ class ActionResult(BaseModel):
 class IncidentRecord(BaseModel):
     """
     Complete lifecycle record for an incident.
-    Stored in PostgreSQL/Spanner for durability.
+    Stored in persistent store / PostgreSQL for durability.
     """
 
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -223,6 +295,8 @@ class IncidentRecord(BaseModel):
     anomaly_event: AnomalyEvent | None = None
     diagnosis_result: DiagnosisResult | None = None
     action_results: list[ActionResult] = Field(default_factory=list)
+    verification_result: VerificationResult | None = None
+    audit_trail: list[dict[str, Any]] = Field(default_factory=list)
 
     # Resolution metadata
     resolved_at: datetime | None = None

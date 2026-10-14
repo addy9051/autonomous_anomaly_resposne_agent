@@ -111,7 +111,7 @@ class PrometheusAdapter(BaseTelemetryAdapter):
                     combined_tags = {**metric_meta, **(tags or {})}
                     
                     # Core Fix: Separate extraction flows for matrix vs vector types
-                    samples = []
+                    samples: list[list[Any]] = []
                     if result_type == "matrix":
                         # Multi-sample array response from range queries
                         samples = item.get("values", [])
@@ -147,6 +147,10 @@ class PrometheusAdapter(BaseTelemetryAdapter):
                 logger.warning("prometheus_query_non_200", status=resp.status_code, body=resp.text)
         except Exception as exc:
             logger.warning("prometheus_query_error", query=query, error=str(exc))
+            settings = get_settings()
+            if settings.app.app_env == "production":
+                # Blueprint: Forbid mock data in live production mode; propagate source error as evidence gap
+                raise RuntimeError(f"Prometheus query failed in live mode: {exc}") from exc
             records.append(
                 NormalizedTelemetryRecord(
                     timestamp=datetime.now(timezone.utc),
@@ -155,7 +159,13 @@ class PrometheusAdapter(BaseTelemetryAdapter):
                     signal_type=TelemetrySignalType.METRIC,
                     metric_name=query.split("{")[0],
                     value=0.0,
-                    tags={**(tags or {}), "error": str(exc), "simulated_fallback": True},
+                    tags={
+                        **(tags or {}),
+                        "error": str(exc),
+                        "is_mock": True,
+                        "simulated_fallback": True,
+                        "evidence_gap": True,
+                    },
                     raw_query=query,
                 )
             )
@@ -174,13 +184,10 @@ class PrometheusAdapter(BaseTelemetryAdapter):
             "container_cpu_usage_seconds_total",
         ]
         
-        # Inner helper coroutine to execute the polling cycle safely
-        async def _run() -> AsyncGenerator[NormalizedTelemetryRecord, None]:
-            while True:
-                for q in queries:
-                    records = await self.query_signal(query=q)
-                    for rec in records:
-                        if not entities or rec.entity in entities:
-                            yield rec
-                await asyncio.sleep(poll_interval_seconds)
-        return _run()
+        while True:
+            for q in queries:
+                records = await self.query_signal(query=q)
+                for rec in records:
+                    if not entities or rec.entity in entities:
+                        yield rec
+            await asyncio.sleep(poll_interval_seconds)

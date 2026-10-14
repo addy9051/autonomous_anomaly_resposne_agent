@@ -12,22 +12,26 @@ Uses N8n webhooks for action execution and Slack for notifications/approvals.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse.callback import CallbackHandler
 
+from agents.action.policy import DeterministicActionPolicy
 from agents.action.tiers import classify_action
 from agents.action.workflows import trigger_workflow
+from agents.verification.verifier import RecoveryVerifier
 from shared.config import get_settings
 from shared.llm import get_chat_model
 from shared.schemas import (
+    ActionPolicyDecision,
     ActionResult,
     ActionTier,
     DiagnosisResult,
     IncidentRecord,
     IncidentStatus,
     RecommendedAction,
+    VerificationOutcome,
 )
 from shared.utils import LLMCostTracker, Timer, get_logger, get_tracer
 
@@ -39,9 +43,9 @@ class ActionAgent:
     """
     Action Agent — executes tiered remediation actions.
 
-    Processes DiagnosisResult, classifies recommended actions by tier,
-    executes Tier 1 autonomously, requests approval for Tier 2,
-    and pages humans for Tier 3.
+    Enforces deterministic safety policy, requires explicit SRE approval for writes,
+    disables development auto-approval on live infrastructure, and independently
+    verifies post-action recovery.
     """
 
     def __init__(self) -> None:
@@ -51,6 +55,7 @@ class ActionAgent:
             temperature=0.1,
             max_tokens=2048,
         )
+        self.verifier = RecoveryVerifier(stabilization_window_seconds=0.1)
         logger.info("action_agent_initialized")
 
     async def execute(
@@ -61,40 +66,38 @@ class ActionAgent:
         dry_run: bool = False,
     ) -> list[ActionResult]:
         """
-        Execute recommended actions from a diagnosis result.
-
-        Args:
-            diagnosis: The root cause analysis with recommended actions
-            incident: The incident record to update
-            cost_tracker: Optional LLM cost tracker
-            dry_run: If True, simulate all actions without executing
-
-        Returns:
-            List of ActionResult objects for each action attempted.
+        Execute or propose recommended actions based on deterministic policy.
         """
         with tracer.start_as_current_span("action_agent.execute") as span:
             span.set_attribute("incident.id", diagnosis.incident_id)
             span.set_attribute("num_actions", len(diagnosis.recommended_actions))
 
-            results = []
-            incident.status = IncidentStatus.ACTION_EXECUTING
+            results: list[ActionResult] = []
+            incident.status = IncidentStatus.EXECUTING
+
+            service = "unknown"
+            if incident.anomaly_event and incident.anomaly_event.affected_services:
+                service = incident.anomaly_event.affected_services[0]
 
             for action in diagnosis.recommended_actions:
                 timer = Timer()
                 with timer:
-                    result = await self._execute_action(action, diagnosis, dry_run)
+                    result = await self._evaluate_and_execute_action(
+                        action, diagnosis, incident, service, dry_run=dry_run
+                    )
                     result.execution_time_ms = timer.elapsed_ms
                     results.append(result)
 
                 logger.info(
-                    "action_executed",
+                    "action_evaluated",
                     action=action.action,
                     tier=action.tier.value,
                     status=result.execution_status,
+                    policy_decision=result.policy_decision,
                     elapsed_ms=timer.elapsed_ms,
                 )
 
-            # Only initialize Langfuse if credentials are provided
+            # Langfuse observability
             handler = None
             if self.settings.observability.langfuse_public_key and self.settings.observability.langfuse_enabled:
                 try:
@@ -118,115 +121,156 @@ class ActionAgent:
 
             # Update incident record
             incident.action_results = results
-            if all(r.execution_status == "success" for r in results):
-                incident.status = IncidentStatus.RESOLVED
-                incident.auto_resolved = True
-                incident.resolved_at = datetime.utcnow()
-            elif any(r.execution_status == "pending_approval" for r in results):
+
+            # Determine incident lifecycle state based on policy and execution results
+            has_pending_approval = any(r.execution_status == "pending_approval" for r in results)
+            has_executed_actions = any(r.execution_status in ("success", "executed") for r in results)
+            all_recommend_only = len(results) > 0 and all(r.execution_status == "recommend_only" for r in results)
+
+            if has_pending_approval:
                 incident.status = IncidentStatus.AWAITING_APPROVAL
+            elif all_recommend_only:
+                incident.status = IncidentStatus.RECOMMENDATION_READY
+            elif has_executed_actions:
+                # P0 Blueprint requirement: Action completion is not recovery. Run independent verifier.
+                incident.status = IncidentStatus.VERIFYING
+                verification = await self.verifier.verify(incident, results, dry_run=dry_run)
+                incident.verification_result = verification
+                if verification.outcome == VerificationOutcome.VERIFIED_RECOVERY:
+                    incident.status = IncidentStatus.VERIFIED_RECOVERED
+                    incident.auto_resolved = True
+                    incident.resolved_at = datetime.now(timezone.utc)
+                else:
+                    incident.status = IncidentStatus.ESCALATED
             else:
                 incident.status = IncidentStatus.ESCALATED
 
             return results
 
-    async def _execute_action(
+    async def _evaluate_and_execute_action(
         self,
         action: RecommendedAction,
         diagnosis: DiagnosisResult,
+        incident: IncidentRecord,
+        service: str,
         dry_run: bool,
     ) -> ActionResult:
-        """Execute a single action based on its tier."""
-
+        """Evaluate action against deterministic policy gate and execute if permitted."""
         tier = classify_action(action.action)
 
-        if tier == ActionTier.TIER_1_AUTO:
-            return await self._execute_tier1(action, diagnosis, dry_run)
-        elif tier == ActionTier.TIER_2_APPROVE:
-            return await self._execute_tier2(action, diagnosis, dry_run)
-        else:
-            return await self._execute_tier3(action, diagnosis)
-
-    async def _execute_tier1(
-        self,
-        action: RecommendedAction,
-        diagnosis: DiagnosisResult,
-        dry_run: bool,
-    ) -> ActionResult:
-        """Execute Tier 1 action autonomously."""
-        logger.info("tier1_auto_execute", action=action.action)
-
-        result = await trigger_workflow(action.action, action.params, dry_run=dry_run)
-
-        return ActionResult(
-            incident_id=diagnosis.incident_id,
-            action_taken=action.action,
-            tier=ActionTier.TIER_1_AUTO,
-            execution_status=result.get("status", "failed"),
-            output=result,
-            human_approved=None,  # No approval needed
+        policy_eval = DeterministicActionPolicy.evaluate(
+            action_name=action.action,
+            service=service,
+            environment=self.settings.app.app_env,
+            params=action.params,
+            dry_run=dry_run,
         )
 
-    async def _execute_tier2(
-        self,
-        action: RecommendedAction,
-        diagnosis: DiagnosisResult,
-        dry_run: bool,
-    ) -> ActionResult:
-        """Request approval for Tier 2 action via Slack."""
-        logger.info("tier2_approval_requested", action=action.action)
-
-        # In development, simulate approval
-        if self.settings.app.app_env == "development":
-            # Auto-approve in dev
-            result = await trigger_workflow(action.action, action.params, dry_run=dry_run)
+        if policy_eval.decision == ActionPolicyDecision.DENIED:
+            logger.warning("action_policy_denied", action=action.action, reason=policy_eval.reason)
             return ActionResult(
                 incident_id=diagnosis.incident_id,
                 action_taken=action.action,
-                tier=ActionTier.TIER_2_APPROVE,
-                execution_status=result.get("status", "failed"),
-                output=result,
-                human_approved=True,
+                tier=tier,
+                execution_status="policy_denied",
+                policy_decision=ActionPolicyDecision.DENIED,
+                error=policy_eval.reason,
+                is_simulated=dry_run,
             )
 
-        # In production, this would post a Slack interactive message
-        # and wait for approval before executing
+        if policy_eval.decision == ActionPolicyDecision.RECOMMEND_ONLY:
+            logger.info("action_recommend_only", action=action.action)
+            return ActionResult(
+                incident_id=diagnosis.incident_id,
+                action_taken=action.action,
+                tier=tier,
+                execution_status="recommend_only",
+                policy_decision=ActionPolicyDecision.RECOMMEND_ONLY,
+                output={
+                    "message": policy_eval.reason,
+                    "recommended_params": action.params,
+                    "rollback_steps": action.rollback_steps,
+                    "estimated_impact": action.estimated_impact,
+                },
+                is_simulated=dry_run,
+            )
+
+        if policy_eval.decision == ActionPolicyDecision.APPROVAL_REQUIRED:
+            logger.info("action_approval_required", action=action.action)
+            return ActionResult(
+                incident_id=diagnosis.incident_id,
+                action_taken=action.action,
+                tier=tier,
+                execution_status="pending_approval",
+                policy_decision=ActionPolicyDecision.APPROVAL_REQUIRED,
+                output={
+                    "message": "Explicit SRE approval required before execution.",
+                    "recommended_params": action.params,
+                    "rollback_steps": action.rollback_steps,
+                    "policy_reason": policy_eval.reason,
+                },
+                human_approved=None,
+                is_simulated=dry_run,
+            )
+
+        # Action is PERMITTED_AUTO under deterministic policy constraints
+        logger.info("action_permitted_auto_executing", action=action.action, dry_run=dry_run)
+        res = await trigger_workflow(action.action, action.params, dry_run=dry_run)
         return ActionResult(
             incident_id=diagnosis.incident_id,
             action_taken=action.action,
-            tier=ActionTier.TIER_2_APPROVE,
-            execution_status="pending_approval",
-            output={"message": "Approval requested via Slack"},
+            tier=tier,
+            execution_status=res.get("status", "failed"),
+            policy_decision=ActionPolicyDecision.PERMITTED_AUTO,
+            output=res,
+            is_simulated=dry_run,
             human_approved=None,
         )
 
-    async def _execute_tier3(
+    async def execute_approved_action(
         self,
-        action: RecommendedAction,
-        diagnosis: DiagnosisResult,
+        action_name: str,
+        params: dict[str, Any],
+        incident: IncidentRecord,
+        approver: str = "sre-engineer",
+        dry_run: bool = False,
     ) -> ActionResult:
-        """Page on-call for Tier 3 action — never execute autonomously."""
-        logger.info("tier3_human_required", action=action.action)
+        """
+        Execute an action that has received explicit human approval.
+        Followed immediately by independent recovery verification.
+        """
+        logger.info("executing_approved_action", action=action_name, approver=approver, dry_run=dry_run)
+        incident.status = IncidentStatus.EXECUTING
 
-        from agents.action.pagerduty import trigger_pagerduty_incident
+        tier = classify_action(action_name)
+        result = await trigger_workflow(action_name, params, dry_run=dry_run)
+        status = "success" if result.get("status") == "success" else "failed"
 
-        pd_result = await trigger_pagerduty_incident(action, diagnosis)
-
-        output = {
-            "message": f"⚠️ Human action required: {action.action}",
-            "recommended_params": action.params,
-            "rollback_steps": action.rollback_steps,
-            "estimated_impact": action.estimated_impact,
-            "pagerduty": pd_result,
-        }
-
-        return ActionResult(
-            incident_id=diagnosis.incident_id,
-            action_taken=action.action,
-            tier=ActionTier.TIER_3_HUMAN,
-            execution_status="escalated",
-            output=output,
-            human_approved=None,
+        action_result = ActionResult(
+            incident_id=incident.incident_id,
+            action_taken=action_name,
+            tier=tier,
+            execution_status=status,
+            output=result,
+            human_approved=True,
+            approver=approver,
+            is_simulated=dry_run,
         )
+        incident.action_results.append(action_result)
+
+        # Independent verification
+        incident.status = IncidentStatus.VERIFYING
+        verification = await self.verifier.verify(incident, [action_result], dry_run=dry_run)
+        incident.verification_result = verification
+
+        if verification.outcome == VerificationOutcome.VERIFIED_RECOVERY:
+            incident.status = IncidentStatus.VERIFIED_RECOVERED
+            incident.auto_resolved = True
+            incident.resolved_at = datetime.now(timezone.utc)
+        else:
+            incident.status = IncidentStatus.ESCALATED
+
+        return action_result
 
     async def _generate_incident_summary(
         self,
