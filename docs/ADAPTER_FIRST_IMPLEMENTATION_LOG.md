@@ -96,3 +96,19 @@ Limitations: the deploy repo is global rather than mapped per service; deploys a
 - Tests: `tests/unit/test_hypotheses.py`. Full unit suite: 126 passed.
 
 Limitations: the caps are heuristic thresholds, not calibrated probabilities; the end-to-end LLM path (prompt -> parse -> grounding) is covered only by unit tests of the helpers, not by a live model run; the policy gate does not yet consume hypothesis confidence directly.
+
+## Reward rework (RL signal)
+
+Removed MTTR from the bandit reward. Speed rewards acting early rather than correctly and is dominated by approval latency; it stays a reported metric only.
+
+- `agents/feedback/reward.py`: reward is now verifier outcome (+0.6 recovered, -0.6 not recovered, inconclusive = no signal), regression (-0.5 re-fired, +0.1 confirmed stable), false positive (-0.6) and human override (-0.4). The `auto_resolved` bonus is gone because it rewarded unverified actions.
+- Judge missing = missing data: `RewardAgent.evaluate` returns `None` on failure (previously a neutral 0.5). With no judge the reward is the extrinsic signal alone; with a judge it is `0.6*extrinsic + 0.4*judge`.
+- Judge prompt no longer sees resolution time.
+- Stale `kafka_consumer_lag` and `fraud_score_mean` removed from `_extract_state_features` (now 5 anomaly features).
+- `IncidentRecord.regressed: bool | None` added.
+- Tests rewritten in `tests/unit/test_reward_and_tiers.py`; `scripts/verify_rl_learning.py` updated. 131 unit tests pass.
+
+Known limitations:
+- Nothing sets `regressed` yet; a recurrence detector (same fingerprint re-firing within a window) is needed.
+- The judge is uncalibrated, has no SRE-labelled set, and does not see the evidence timeline or hypotheses.
+- No RL fine-tuning of a judge exists; do not attempt it before real labelled incidents exist.

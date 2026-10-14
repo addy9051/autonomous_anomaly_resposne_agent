@@ -41,7 +41,7 @@ class RewardAgent:
             openai_api_key=self.settings.llm.openai_api_key,
         )
 
-    async def evaluate(self, incident: IncidentRecord, cost_tracker: LLMCostTracker) -> SemanticReward:
+    async def evaluate(self, incident: IncidentRecord, cost_tracker: LLMCostTracker) -> SemanticReward | None:
         """
         Evaluate the quality of an incident resolution.
 
@@ -50,7 +50,7 @@ class RewardAgent:
             cost_tracker: Tracker to record token usage for this evaluation.
 
         Returns:
-            SemanticReward containing multidimensional scores.
+            SemanticReward containing multidimensional scores, or None if the judge failed.
         """
         with tracer.start_as_current_span("reward_agent.evaluate") as span:
             prompt = self._build_prompt(incident)
@@ -98,14 +98,8 @@ class RewardAgent:
 
             except Exception as e:
                 logger.error("reward_evaluation_failed", error=str(e), incident_id=incident.incident_id)
-                # Fail-safe: neutral reward if evaluation crashes
-                return SemanticReward(
-                    logical_consistency=0.5,
-                    action_relevance=0.5,
-                    expert_accuracy=0.5,
-                    overall_quality_score=0.5,
-                    justification=f"Evaluation pipeline error: {str(e)}",
-                )
+                # Missing data, not a score: callers must treat None as "no judge signal"
+                return None
 
     def _build_prompt(self, incident: IncidentRecord) -> str:
         """Construct the prompt for LLM-as-a-Judge."""
@@ -136,7 +130,6 @@ Your goal is to determine if the agent made a logically sound diagnosis and took
 ### 3. ACTIONS EXECUTED
 - **Remediation Steps**: {json.dumps(actions_list, indent=2)}
 - **Agent Confidence**: {diagnosis.confidence if diagnosis else 0.0}
-- **Resolution Time**: {incident.time_to_mitigate_seconds} seconds
 
 ### EVALUATION REQUIREMENTS
 Rate the performance on a scale of 0.0 to 1.0 for these three dimensions:

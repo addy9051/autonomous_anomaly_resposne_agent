@@ -1,6 +1,6 @@
 # 24/7 Service Reliability & Anomaly-Response Agent System
 
-> End-to-end multi-agent AI system monitoring payment transaction flows at scale using **LangChain + LangGraph + CrewAI**, with autonomous detection, diagnosis, remediation, and continuous reinforcement learning.
+> An incident-response intelligence layer for SREs. Alerts from your existing monitoring (Alertmanager) trigger an investigation that reads evidence on demand from Prometheus, Datadog and Splunk adapters, produces evidence-cited hypotheses, and routes remediation through a policy gate, human approval, execution and independent verification. Built with **LangChain + LangGraph**.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue)
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-green)
@@ -35,7 +35,27 @@
 
 ## 🎯 Project Overview
 
-This project implements a **fully autonomous Site Reliability Engineering (SRE) agent** for FinTech payment systems. The system continuously ingests telemetry from payment gateways, infrastructure metrics, and fraud detection models, then autonomously detects anomalies, diagnoses root causes using RAG-augmented reasoning, executes tiered remediations, and learns from outcomes via online reinforcement learning.
+This project is an **intelligence layer and assistant for SREs** working on payment systems. It does not replace your monitoring stack: detection and storage stay in Datadog, Prometheus and Splunk. The agent takes over after an alert fires, gathers evidence, reasons about causes, proposes a fix, and verifies the outcome.
+
+> **Core principle:** alerts trigger investigations; adapters are an on-demand, read-only evidence layer; nothing fabricated is ever treated as evidence. Production is recommend-and-approve, not autonomous. See [docs/ADAPTER_FIRST_IMPLEMENTATION_LOG.md](docs/ADAPTER_FIRST_IMPLEMENTATION_LOG.md) for how the code was brought in line with this decision, and the Known Limitations section for what is still open. Older sections below that describe continuous ingestion, CrewAI or fully autonomous operation are historical and may not match the current code.
+
+### How it works today
+
+1. **Intake.** `POST /api/v1/alerts/alertmanager` (and `/api/v1/events/process`) turns an alert into an `AnomalyEvent`, deduplicates it, and opens an incident. Auth is API Gateway IAM plus a trusted identity header.
+2. **Evidence.** `agents/diagnosis/evidence.py` queries the telemetry adapter (Prometheus, Datadog, Splunk, or the simulator for tests) for up to 3 affected services over a 15-minute window, and adds recent GitHub deployments (`data_pipeline/connectors/deploy_events.py`, enabled by `GITHUB_DEPLOY_REPO`). Every record carries event time, ingestion time, freshness, `is_simulated` and `source_ref`. A failing source raises `TelemetrySourceError` and is recorded as an **evidence gap**, never filled with mock data.
+3. **Diagnosis.** A LangGraph flow: `gather_context` → `rag_runbook_lookup` → `supervisor` (selects database, network, security or application experts) → `synthesise_rca`. The model sees the evidence with citable ids (E1…En) and the list of unavailable sources, and proposes 2-3 competing hypotheses. `agents/diagnosis/hypotheses.py` resolves the citations against the real timeline (invented ids are dropped) and caps confidence: no real support gives at most "low"; a single supporting record or any contradiction gives at most "medium"; overall confidence is capped at 0.4 / 0.7 accordingly. If the output cannot be parsed, no action is proposed and the incident is escalated to a human.
+4. **Policy gate and approval.** Actions are tiered (1 safe, 2 needs SRE approval, 3 always human) and executed through n8n workflows with an audit trail.
+5. **Verification.** `agents/verification/verifier.py` independently re-reads metrics after the action using only authoritative records (simulator data and anything flagged `is_simulated` are excluded). Outcomes are recovered, not recovered, or inconclusive; any adapter error yields inconclusive.
+6. **Close-out.** PagerDuty and Slack updates, the incident store (hypotheses, queries, approvals), and a feedback loop that deliberately does not use MTTR or approval acceptance as a reward.
+
+| Directory | Role |
+|-----------|------|
+| `agents/` | `monitoring`, `diagnosis`, `action`, `verification`, `feedback` |
+| `data_pipeline/connectors/` | Telemetry adapters, Alertmanager intake, deploy events, synthetic producer and story simulation |
+| `shared/` | Schemas, config, incident store, LLM client, PII sanitising, Pub/Sub wrapper (GCP Pub/Sub, not Kafka) |
+| `automation/`, `infra/`, `knowledge_base/`, `observability/`, `dashboard/`, `ui/` | Workflows, deployment, runbooks, tracing, UI |
+
+Run the unit tests with `python -m pytest tests/unit -q`.
 
 ### Full System Architecture
 
@@ -710,6 +730,10 @@ The production-facing API uses SigV4 with API Gateway `AWS_IAM` authorization an
 | **Langfuse** | Import conditionally disabled; code is wired but not actively emitting traces | LLM observability layer inactive |
 | **Dashboard** | Overview page functional; Observability/KB/Security pages are placeholder nav links | Limited to single-page operational view |
 | **Load Testing** | `tests/load/` directory scaffolded but tests not authored | No validated throughput benchmarks |
+| **Alert intake** | Alertmanager cannot sign AWS IAM requests, so a gateway that injects the trusted identity header is required; diagnosis runs inside the webhook request; dedupe key is `service:anomaly_type`, not the Alertmanager fingerprint; anomaly type is a keyword guess; no PagerDuty intake | Not production-ready intake |
+| **Evidence window** | Fixed 15-minute window, not anchored on the alert's start time; metrics and deploys only; the GitHub deploy repo is global, not per service; Datadog/Splunk window handling unchanged | Partial incident timeline |
+| **Confidence** | Hypothesis caps (0.4 / 0.7) are heuristics, not calibrated; the policy gate does not yet read hypothesis confidence; the LLM path has not been run end to end against a live model | Treat confidence as an upper bound only |
+| **Open audit items** | `orchestrator.main()` stream mode references a nonexistent `args.dry_run`; the Slack summary LLM call is unguarded; several GET endpoints in `api.py` are unauthenticated; `trigger_workflow` returns `mocked` without `N8N_API_KEY`; a stray debug `print` remains in `/api/v1/events/process` | Fix before any production use |
 
 ### Future Roadmap
 

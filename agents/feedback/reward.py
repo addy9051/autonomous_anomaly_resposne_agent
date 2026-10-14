@@ -2,18 +2,22 @@
 Reward Function for the Feedback Loop Agent.
 
 Computes reward signals from incident outcomes to train the
-contextual bandit model. Reward is shaped by:
-- MTTR reduction vs. baseline
-- False positive penalty
-- Human override penalty (agent's decision was wrong)
-- Novel incident handling bonus
+contextual bandit model. Reward is shaped by correctness signals only:
+- Independent verifier outcome (recovered / not recovered; inconclusive is no signal)
+- Regression (same problem re-fired after the fix)
+- False positive and human override penalties
+- Optional LLM-as-a-Judge score
+
+Speed (MTTR/MTTA) is deliberately NOT part of the reward: it rewards acting early
+rather than acting correctly and is dominated by approval latency. Track it as a
+reported metric instead.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shared.schemas import IncidentStatus, RootCauseCategory
+from shared.schemas import IncidentStatus, RootCauseCategory, VerificationOutcome
 from shared.utils import get_logger
 
 if TYPE_CHECKING:
@@ -21,60 +25,57 @@ if TYPE_CHECKING:
 
 logger = get_logger("reward_function")
 
-# Baseline metrics (from historical data)
-BASELINE_TTM_SECONDS = 2700.0  # 45 minutes baseline MTTR
-BASELINE_TTD_SECONDS = 900.0  # 15 minutes baseline MTTA
+VERIFIED_RECOVERY_REWARD = 0.6
+NOT_RECOVERED_PENALTY = 0.6
+REGRESSION_PENALTY = 0.5
+NO_REGRESSION_BONUS = 0.1
+FALSE_POSITIVE_PENALTY = 0.6
+HUMAN_OVERRIDE_PENALTY = 0.4
+EXTRINSIC_WEIGHT = 0.6
+INTRINSIC_WEIGHT = 0.4
 
 
 def compute_reward(incident: IncidentRecord, semantic_reward: SemanticReward | None = None) -> float:
     """
-    Compute a hybrid reward for a resolved incident.
+    Compute the reward for a resolved incident.
 
-    Reward signal components:
-    - Extrinsic (60%): MTTR improvement, status success, resolution speed.
-    - Intrinsic (40%): Qualitative score from the RewardAgent (LLM-as-a-Judge).
-
-    Returns:
-        Hybrid reward value (-1.0 to +1.5)
+    - Extrinsic: verifier outcome, regression, false-positive and override signals.
+      Unknown signals (inconclusive verification, unknown regression) contribute nothing.
+    - Intrinsic: LLM-as-a-Judge score. When the judge is unavailable (None) the reward
+      is the extrinsic signal alone, not a diluted or neutral blend.
     """
     extrinsic_r = 0.0
 
-    # ── MTTR improvement reward ──
-    if incident.auto_resolved and incident.time_to_mitigate_seconds:
-        improvement = 1.0 - (incident.time_to_mitigate_seconds / BASELINE_TTM_SECONDS)
-        extrinsic_r += max(0.0, improvement)
+    verification = incident.verification_result
+    if verification is not None:
+        if verification.outcome == VerificationOutcome.VERIFIED_RECOVERY:
+            extrinsic_r += VERIFIED_RECOVERY_REWARD
+        elif verification.outcome == VerificationOutcome.NOT_RECOVERED:
+            extrinsic_r -= NOT_RECOVERED_PENALTY
 
-    # Status-based base rewards
-    if incident.auto_resolved:
-        extrinsic_r += 0.2
+    if incident.regressed is True:
+        extrinsic_r -= REGRESSION_PENALTY
+    elif incident.regressed is False and verification is not None:
+        extrinsic_r += NO_REGRESSION_BONUS
+
     if incident.false_positive:
-        extrinsic_r -= 0.6
+        extrinsic_r -= FALSE_POSITIVE_PENALTY
     if incident.human_overrode:
-        extrinsic_r -= 0.4
+        extrinsic_r -= HUMAN_OVERRIDE_PENALTY
 
-    # ── Intrinsic semantic assessment (Phase 7) ──
-    intrinsic_r = 0.0
-    if semantic_reward:
-        # Scale 0.0-1.0 score to a more impactful -1.0 to +1.0 signal
+    if semantic_reward is not None:
         intrinsic_r = (semantic_reward.overall_quality_score * 2.0) - 1.0
-        logger.info(
-            "intrinsic_reward_added",
-            score=semantic_reward.overall_quality_score,
-            scaled_reward=intrinsic_r,
-            justification=semantic_reward.justification[:100],
-        )
+        total_reward = extrinsic_r * EXTRINSIC_WEIGHT + intrinsic_r * INTRINSIC_WEIGHT
     else:
-        # If no semantic reward, we default to no intrinsic signal (neutral 0.0)
-        intrinsic_r = 0.0
-
-    # Weighted Hybrid Blend
-    total_reward = (extrinsic_r * 0.6) + (intrinsic_r * 0.4)
+        intrinsic_r = None
+        total_reward = extrinsic_r
 
     logger.info(
-        "hybrid_reward_computed",
+        "reward_computed",
         incident_id=incident.incident_id,
         extrinsic=round(extrinsic_r, 4),
-        intrinsic=round(intrinsic_r, 4),
+        intrinsic=None if intrinsic_r is None else round(intrinsic_r, 4),
+        judge_available=semantic_reward is not None,
         total=round(total_reward, 4),
     )
 
@@ -109,7 +110,7 @@ def _extract_state_features(incident: IncidentRecord) -> list[float]:
     """
     features = []
 
-    # 1. Anomaly dimensions (7 features)
+    # 1. Anomaly dimensions (5 features)
     if incident.anomaly_event:
         m = incident.anomaly_event.metrics_snapshot
         features.extend(
@@ -118,13 +119,11 @@ def _extract_state_features(incident: IncidentRecord) -> list[float]:
                 min(1.0, (m.error_rate or 0.0)),
                 (m.cpu_percent or 0.0) / 100.0,
                 (m.memory_percent or 0.0) / 100.0,
-                min(1.0, (m.kafka_consumer_lag or 0.0) / 50000.0),
-                (m.fraud_score_mean or 0.0),
                 incident.anomaly_event.confidence,
             ]
         )
     else:
-        features.extend([0.0] * 7)
+        features.extend([0.0] * 5)
 
     # 2. Diagnosis dimensions (4 features)
     if incident.diagnosis_result:

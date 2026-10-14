@@ -29,6 +29,8 @@ from shared.schemas import (  # noqa: E402
     RecommendedAction,
     RootCauseCategory,
     Severity,
+    VerificationOutcome,
+    VerificationResult,
 )
 from shared.utils import LLMCostTracker  # noqa: E402
 
@@ -120,7 +122,11 @@ async def simulate_learning() -> None:
             action_results=[action_result],
             auto_resolved=scenario["success"] and not scenario.get("is_fp", False),
             false_positive=scenario.get("is_fp", False),
-            time_to_mitigate_seconds=45 if scenario["success"] else None,
+            verification_result=VerificationResult(
+                outcome=VerificationOutcome.VERIFIED_RECOVERY
+                if scenario["success"]
+                else VerificationOutcome.NOT_RECOVERED
+            ),
             resolved_at=datetime.utcnow(),
         )
 
@@ -130,8 +136,11 @@ async def simulate_learning() -> None:
 
         semantic_reward = await orchestrator.reward_agent.evaluate(incident, cost_tracker)
 
-        print(f"   [Score] Quality Score: {semantic_reward.overall_quality_score:.2f}")
-        print(f"   [Justification] Justification: {semantic_reward.justification[:120]}...")
+        if semantic_reward is None:
+            print("   [Score] Judge unavailable; reward uses verifier signals only.")
+        else:
+            print(f"   [Score] Quality Score: {semantic_reward.overall_quality_score:.2f}")
+            print(f"   [Justification] Justification: {semantic_reward.justification[:120]}...")
 
         # 6. Record in Feedback Loop
         reward = await feedback.record_outcome(incident, semantic_reward)

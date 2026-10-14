@@ -312,6 +312,10 @@ class IncidentRecord(BaseModel):
     false_positive: bool = False
     human_overrode: bool = False
     human_feedback: str | None = None
+    regressed: bool | None = Field(
+        default=None,
+        description="True if the same alert re-fired after the fix, False if confirmed stable, None if unknown",
+    )
 
     # Cost tracking
     total_llm_tokens_used: int = 0
