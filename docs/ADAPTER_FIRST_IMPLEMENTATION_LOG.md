@@ -117,3 +117,10 @@ Known limitations:
 
 Three-layer eval suite (deterministic, regex guardrails, LLM-as-a-Judge with an 80% human-agreement gate) in `evals/`, CI in `.circleci/config.yml`. Full detail and limitations: [LLM_EVALS.md](LLM_EVALS.md). Status: layers 1-2 working and tested; layer 3 machinery tested with synthetic data; **no human labels yet, so the gate reports not-ready.**
 
+
+## Recurrence detector (sets `regressed`)
+
+- `agents/feedback/regression.py`: `RegressionDetector`. A new incident with the same alert key (services + anomaly type, shared with the deduplicator via `alert_key`) inside a 1-hour window after a verified recovery marks the earlier incident `regressed=True`. `settle()` marks recovered incidents `regressed=False` once the window passes with no re-fire. Both write an audit entry.
+- `IncidentStore.list_recovered` added. `Orchestrator.process_anomaly` calls the detector right after incident creation; failures are logged and never block the pipeline.
+- **Limits:** the match is by alert key, not causality, so an unrelated new problem on the same service and type inside the window counts as a regression. The window is a constant (not yet configurable). The reward is computed at resolution time, when `regressed` is still `None`, so the regression penalty is **not yet applied retroactively**. Re-scoring once `regressed` settles is the next step.
+

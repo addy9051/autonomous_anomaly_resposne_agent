@@ -202,6 +202,22 @@ class IncidentStore:
                     logger.warning("corrupted_incident_record", error=str(exc))
             return resolved
 
+    def list_recovered(self, limit: int = 1000) -> list[IncidentRecord]:
+        """Fetch incidents that were verified as recovered, newest first."""
+        statuses = (IncidentStatus.VERIFIED_RECOVERED.value, IncidentStatus.RESOLVED.value)
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT data FROM incidents WHERE status IN (?, ?) ORDER BY updated_at DESC LIMIT ?",
+                (*statuses, limit),
+            ).fetchall()
+        recovered = []
+        for r in rows:
+            try:
+                recovered.append(IncidentRecord.model_validate_json(r["data"]))
+            except Exception as exc:
+                logger.warning("corrupted_incident_record", error=str(exc))
+        return recovered
+
     def record_audit(self, incident_id: str, actor: str, action: str, details: dict[str, Any]) -> None:
         """Append an audit log entry for compliance and review."""
         now_iso = datetime.now(timezone.utc).isoformat()

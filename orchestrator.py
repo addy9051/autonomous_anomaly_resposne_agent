@@ -20,6 +20,7 @@ from agents.action.agent import ActionAgent
 from agents.action.pagerduty import resolve_pagerduty_incident
 from agents.diagnosis.graph import DiagnosisAgent
 from agents.feedback.agent import FeedbackLoopAgent
+from agents.feedback.regression import RegressionDetector, alert_key as make_alert_key
 from agents.feedback.reward_agent import RewardAgent
 from agents.monitoring.agent import MonitoringAgent
 from data_pipeline.connectors.adapters import get_telemetry_adapter
@@ -57,6 +58,7 @@ class AgentOrchestrator:
 
         # Durable incident store (persists across restarts)
         self.store = IncidentStore()
+        self.regression_detector = RegressionDetector(self.store)
 
         # Track active incidents in memory (repopulated from durable store)
         self.active_incidents: dict[str, IncidentRecord] = {
@@ -76,6 +78,19 @@ class AgentOrchestrator:
             restored_active_incidents=len(self.active_incidents),
             enable_live_rl=self.enable_live_rl,
         )
+
+    def _update_regressions(self, new_incident: IncidentRecord) -> None:
+        """Flag earlier fixes that did not hold, and settle those that did. Never blocks the pipeline."""
+        try:
+            changed = self.regression_detector.on_new_incident(new_incident)
+            changed += self.regression_detector.settle()
+        except Exception as exc:
+            logger.warning("regression_update_failed", error=str(exc))
+            return
+        by_id = {inc.incident_id: inc for inc in changed}
+        for known in self.resolved_incidents:
+            if known.incident_id in by_id:
+                known.regressed = by_id[known.incident_id].regressed
 
     async def process_event(self, event: TelemetryEvent, dry_run: bool = False) -> IncidentRecord | None:
         """
@@ -114,7 +129,7 @@ class AgentOrchestrator:
         total_timer = Timer()
         with total_timer:
             # Deduplicate alerts
-            alert_key = f"{':'.join(anomaly.affected_services)}:{anomaly.anomaly_type.value}"
+            alert_key = make_alert_key(anomaly)
             if not self.alert_dedup.should_fire(alert_key, anomaly.model_dump(mode="json")):
                 suppressed = self.alert_dedup.get_suppressed_count(alert_key)
                 logger.debug("alert_suppressed", key=alert_key, suppressed_count=suppressed)
@@ -128,6 +143,7 @@ class AgentOrchestrator:
             cost_tracker.incident_id = incident.incident_id
             self.active_incidents[incident.incident_id] = incident
             self.store.save(incident)
+            self._update_regressions(incident)
             self.store.record_audit(incident.incident_id, "monitoring", "anomaly_detected", {
                 "services": anomaly.affected_services,
                 "severity": anomaly.severity.value,
