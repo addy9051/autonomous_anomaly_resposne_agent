@@ -8,7 +8,7 @@ and normalizes vector/matrix results into NormalizedTelemetryRecord instances.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -60,11 +60,20 @@ class PrometheusAdapter(BaseTelemetryAdapter):
         metric_names: list[str],
         time_window_seconds: int = 300,
     ) -> list[NormalizedTelemetryRecord]:
-        """Fetch multiple metrics for an entity using PromQL."""
+        """Fetch multiple metrics for an entity over the lookback window (range query)."""
         records: list[NormalizedTelemetryRecord] = []
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(seconds=time_window_seconds)
+        step = f"{max(15, time_window_seconds // 30)}s"
         for metric in metric_names:
             query = f'{metric}{{service="{entity}"}}'
-            results = await self.query_signal(query=query, entity=entity)
+            results = await self.query_signal(
+                query=query,
+                entity=entity,
+                start_time=start,
+                end_time=end,
+                step=step,
+            )
             records.extend(results)
         return records
 

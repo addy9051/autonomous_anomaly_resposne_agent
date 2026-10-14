@@ -108,27 +108,10 @@ async def gather_context(state: DiagnosisState) -> dict:
     try:
         from data_pipeline.connectors.adapters import get_telemetry_adapter
 
+        from agents.diagnosis.evidence import collect_evidence
+
         adapter = get_telemetry_adapter()
-        for service in affected_services[:2]:
-            signals = await adapter.fetch_signals(
-                entity=service,
-                metric_names=["latency_p99", "error_rate", "transaction_failure_rate"],
-                time_window_seconds=300,
-            )
-            for rec in signals:
-                is_mock = rec.tags.get("is_mock", False) or rec.tags.get("simulated_fallback", False)
-                if rec.tags.get("evidence_gap"):
-                    missing_sources.append(f"{adapter.source.value}:{rec.metric_name}")
-                evidence_records.append({
-                    "source": adapter.source.value,
-                    "query_or_ref": rec.metric_name,
-                    "observed_at": rec.timestamp.isoformat(),
-                    "value": rec.value,
-                    "unit": rec.unit,
-                    "is_contradictory": False,
-                    "description": f"Observed {rec.metric_name}={rec.value} {rec.unit}" + (" [MOCK]" if is_mock else ""),
-                    "tags": rec.tags,
-                })
+        evidence_records, missing_sources = await collect_evidence(adapter, affected_services)
     except Exception as exc:
         logger.warning("adapter_telemetry_fetch_failed", error=str(exc))
         missing_sources.append("telemetry_adapter")
