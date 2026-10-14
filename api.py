@@ -178,12 +178,12 @@ async def process_event(request: ProcessEventRequest) -> dict[str, Any]:
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
-    event = TelemetryEvent(
-        source=request.source,
-        service_name=request.service_name,
-        event_type=request.event_type,
-        payload=request.payload,
-    )
+    event = TelemetryEvent.model_validate({
+        "source": request.source,
+        "service_name": request.service_name,
+        "event_type": request.event_type,
+        "payload": request.payload,
+    })
 
     incident = await orchestrator.process_event(event, dry_run=True)
 
@@ -213,6 +213,39 @@ async def run_demo(request: RunDemoRequest) -> dict[str, Any]:
         "incidents_detected": len(incidents),
         "incidents": [inc.model_dump(mode="json") for inc in incidents],
     }
+
+
+@app.get("/api/v1/demo/scenarios", tags=["Demo"])
+async def list_scenarios() -> dict[str, Any]:
+    """List available story-based incident simulation scenarios."""
+    from data_pipeline.connectors.story_simulation import StorySimulationEngine
+
+    return {"scenarios": StorySimulationEngine.list_scenarios()}
+
+
+@app.post("/api/v1/demo/scenarios/{scenario_name}/run", tags=["Demo"])
+async def run_scenario(scenario_name: str, dry_run: bool = True) -> dict[str, Any]:
+    """Execute a story-based incident narrative scenario."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+
+    from data_pipeline.connectors.story_simulation import StorySimulationEngine
+
+    engine = StorySimulationEngine()
+    try:
+        events = engine.get_scenario_events(scenario_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    incidents = await orchestrator.run_batch(events, dry_run=dry_run)
+
+    return {
+        "scenario": scenario_name,
+        "total_events": len(events),
+        "incidents_detected": len(incidents),
+        "incidents": [inc.model_dump(mode="json") for inc in incidents],
+    }
+
 
 
 @app.post("/api/v1/stream/start", tags=["Streaming"])

@@ -273,16 +273,44 @@ async def main() -> None:
         default=None,
         help="Observability platform telemetry connector adapter",
     )
+    parser.add_argument(
+        "--scenario",
+        choices=["bad_deploy", "database_lock"],
+        default=None,
+        help="Execute a specific story-based incident narrative scenario",
+    )
     args = parser.parse_args()
 
     orchestrator = AgentOrchestrator()
     if args.connector:
         orchestrator.telemetry_adapter = get_telemetry_adapter(args.connector)
 
+    if args.scenario:
+        from data_pipeline.connectors.story_simulation import StorySimulationEngine
+
+        engine = StorySimulationEngine()
+        events = engine.get_scenario_events(args.scenario)
+        print(f"\n🎬 Running Story-Based Simulation Scenario: '{args.scenario}' ({len(events)} timeline events)...\n")
+        incidents = await orchestrator.run_batch(events, dry_run=True)
+        print(f"\n{'=' * 60}")
+        print(f"📊 Scenario Evaluation Complete: {len(incidents)} incidents triggered from story narrative.")
+        for inc in incidents:
+            print(f"\n  🔴 Incident {inc.incident_id[:8]}...")
+            severity = inc.anomaly_event.severity.value if inc.anomaly_event else "UNKNOWN"
+            anomaly_type = inc.anomaly_event.anomaly_type.value if inc.anomaly_event else "UNKNOWN"
+            print(f"     Severity: {severity} | Type: {anomaly_type}")
+            if inc.diagnosis_result:
+                print(f"     Diagnosed Root Cause: {inc.diagnosis_result.root_cause}")
+                print(f"     Category: {inc.diagnosis_result.root_cause_category.value} | Confidence: {inc.diagnosis_result.confidence}")
+                for action in inc.diagnosis_result.recommended_actions:
+                    print(f"     Recommended Remediation: {action.action} (Tier {action.tier.value})")
+        return
+
     if args.mode == "demo":
         # Quick demo: generate 5 events with 2 anomalies
         producer = SyntheticTelemetryProducer(seed=42)
         events = [
+
             producer.generate_normal_metrics(),
             producer.generate_anomalous_event("latency_spike"),
             producer.generate_normal_transaction(),

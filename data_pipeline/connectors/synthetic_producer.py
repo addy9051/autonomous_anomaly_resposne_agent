@@ -55,11 +55,11 @@ class SyntheticTelemetryProducer:
         self.event_count += 1
         service = self.rng.choice(self.service_names[:3])  # Payment services
 
-        return TelemetryEvent(
-            source="payment_gateway",
-            service_name=service,
-            event_type="transaction",
-            payload={
+        return TelemetryEvent.model_validate({
+            "source": "payment_gateway",
+            "service_name": service,
+            "event_type": "transaction",
+            "payload": {
                 "txn_id": str(uuid.uuid4()),
                 "amount": round(float(self.rng.lognormal(4, 1.5)), 2),
                 "currency": self.rng.choice(["USD", "EUR", "GBP", "JPY"]),
@@ -70,18 +70,18 @@ class SyntheticTelemetryProducer:
                 "card_type": self.rng.choice(["visa", "mastercard", "amex"]),
                 "region": self.rng.choice(["us-east", "us-west", "eu-west", "ap-southeast"]),
             },
-        )
+        })
 
     def generate_normal_metrics(self) -> TelemetryEvent:
         """Generate normal infrastructure metrics."""
         self.event_count += 1
         service = self.rng.choice(self.service_names)
 
-        return TelemetryEvent(
-            source="infra_metrics",
-            service_name=service,
-            event_type="metric",
-            payload={
+        return TelemetryEvent.model_validate({
+            "source": "infra_metrics",
+            "service_name": service,
+            "event_type": "metric",
+            "payload": {
                 "pod_name": f"{service}-{self.rng.integers(1, 5)}-{uuid.uuid4().hex[:8]}",
                 "cpu_percent": round(float(self.rng.normal(45, 12)), 2),
                 "memory_percent": round(float(self.rng.normal(60, 8)), 2),
@@ -93,7 +93,7 @@ class SyntheticTelemetryProducer:
                 "active_connections": int(self.rng.poisson(200)),
                 "kafka_consumer_lag": int(self.rng.exponential(300)),
             },
-        )
+        })
 
     def generate_anomalous_event(self, anomaly_type: str = "latency_spike") -> TelemetryEvent:
         """
@@ -110,11 +110,11 @@ class SyntheticTelemetryProducer:
         service = self.rng.choice(self.service_names[:2])
 
         if anomaly_type == "latency_spike":
-            return TelemetryEvent(
-                source="infra_metrics",
-                service_name=service,
-                event_type="metric",
-                payload={
+            return TelemetryEvent.model_validate({
+                "source": "infra_metrics",
+                "service_name": service,
+                "event_type": "metric",
+                "payload": {
                     "pod_name": f"{service}-1-{uuid.uuid4().hex[:8]}",
                     "cpu_percent": round(float(self.rng.normal(75, 10)), 2),
                     "memory_percent": round(float(self.rng.normal(80, 5)), 2),
@@ -128,14 +128,14 @@ class SyntheticTelemetryProducer:
                     "_anomaly_injected": True,
                     "_anomaly_type": "latency_spike",
                 },
-            )
+            })
 
         elif anomaly_type == "error_rate":
-            return TelemetryEvent(
-                source="infra_metrics",
-                service_name=service,
-                event_type="metric",
-                payload={
+            return TelemetryEvent.model_validate({
+                "source": "infra_metrics",
+                "service_name": service,
+                "event_type": "metric",
+                "payload": {
                     "pod_name": f"{service}-2-{uuid.uuid4().hex[:8]}",
                     "cpu_percent": round(float(self.rng.normal(60, 10)), 2),
                     "memory_percent": round(float(self.rng.normal(70, 5)), 2),
@@ -147,14 +147,14 @@ class SyntheticTelemetryProducer:
                     "_anomaly_injected": True,
                     "_anomaly_type": "error_rate",
                 },
-            )
+            })
 
         elif anomaly_type == "fraud_signal":
-            return TelemetryEvent(
-                source="fraud_api",
-                service_name="fraud-api",
-                event_type="metric",
-                payload={
+            return TelemetryEvent.model_validate({
+                "source": "fraud_api",
+                "service_name": "fraud-api",
+                "event_type": "metric",
+                "payload": {
                     "fraud_score_mean": round(float(self.rng.normal(0.12, 0.03)), 4),  # 3x normal
                     "fraud_score_p95": round(float(self.rng.normal(0.45, 0.1)), 4),
                     "flagged_transactions": int(self.rng.poisson(150)),  # 5x normal
@@ -163,14 +163,14 @@ class SyntheticTelemetryProducer:
                     "_anomaly_injected": True,
                     "_anomaly_type": "fraud_signal",
                 },
-            )
+            })
 
         elif anomaly_type == "resource_saturation":
-            return TelemetryEvent(
-                source="infra_metrics",
-                service_name=service,
-                event_type="metric",
-                payload={
+            return TelemetryEvent.model_validate({
+                "source": "infra_metrics",
+                "service_name": service,
+                "event_type": "metric",
+                "payload": {
                     "pod_name": f"{service}-3-{uuid.uuid4().hex[:8]}",
                     "cpu_percent": round(float(self.rng.normal(95, 3)), 2),  # Near 100%
                     "memory_percent": round(float(self.rng.normal(92, 2)), 2),
@@ -180,14 +180,14 @@ class SyntheticTelemetryProducer:
                     "_anomaly_injected": True,
                     "_anomaly_type": "resource_saturation",
                 },
-            )
+            })
 
         else:  # volume_anomaly
-            return TelemetryEvent(
-                source="payment_gateway",
-                service_name=service,
-                event_type="metric",
-                payload={
+            return TelemetryEvent.model_validate({
+                "source": "payment_gateway",
+                "service_name": service,
+                "event_type": "metric",
+                "payload": {
                     "request_rate": round(float(self.rng.poisson(15000)), 2),  # 3x normal
                     "latency_p99_ms": round(float(self.rng.normal(350, 60)), 2),
                     "error_rate": round(float(self.rng.normal(0.03, 0.01)), 4),
@@ -195,7 +195,7 @@ class SyntheticTelemetryProducer:
                     "_anomaly_injected": True,
                     "_anomaly_type": "volume_anomaly",
                 },
-            )
+            })
 
     async def stream_events(
         self,

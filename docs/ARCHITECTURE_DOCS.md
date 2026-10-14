@@ -6,7 +6,7 @@
 The **Autonomous Anomaly Response Agent System** is an enterprise-grade 24/7 service reliability and automated incident response platform. Built with Python 3.11+, FastAPI, LangChain, LangGraph, CrewAI, Vowpal Wabbit, and Next.js, the system ingests infrastructure telemetry, detects anomalous operational patterns, performs multi-perspective root cause analysis (RCA), executes tiered remediation actions, and continuously learns via reinforcement learning (RL) contextual bandits and LLM-as-a-Judge feedback.
 
 ### Architecture Overview & Tech Stack
-- **API & Orchestration:** FastAPI, Uvicorn, LangGraph (4-node state DAG with in-memory checkpointer), CrewAI (Specialist SRE sub-agents).
+- **API & Orchestration:** FastAPI, Uvicorn, LangGraph (4-node state DAG with in-memory checkpointer)
 - **LLM Engine & Routing:** Multi-provider integration supporting OpenAI (`gpt-4o`, `gpt-4o-mini`), Google Vertex AI (`gemini-2.5-flash-lite`), and Anthropic (`claude-3-5-sonnet`). Includes automated regex-based PII sanitization.
 - **RAG & Knowledge Base:** Hybrid retrieval using PostgreSQL (`pgvector` dense vector cosine search + BM25 trigram sparse search), Reciprocal Rank Fusion (RRF), and Cohere Cross-Encoder Reranking (`rerank-english-v3.0`).
 - **Reinforcement Learning:** Vowpal Wabbit (`cb_explore_adf` contextual bandit) for online policy learning, combined with a hybrid reward model (60% extrinsic MTTR reduction + 40% intrinsic LLM-as-a-Judge semantic scoring).

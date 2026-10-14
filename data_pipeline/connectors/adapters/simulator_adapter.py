@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter
+from data_pipeline.connectors.story_simulation import StorySimulationEngine
 from shared.schemas import (
     NormalizedTelemetryRecord,
     Severity,
@@ -39,6 +40,7 @@ class SimulatorAdapter(BaseTelemetryAdapter):
     def __init__(self, seed: int = 42) -> None:
         super().__init__(source=TelemetryConnectorSource.SIMULATOR)
         self.rng = np.random.default_rng(seed)
+        self.story_engine = StorySimulationEngine()
         self.default_entities = [
             "payment-service-prod",
             "checkout-api",
@@ -47,6 +49,24 @@ class SimulatorAdapter(BaseTelemetryAdapter):
             "settlement-engine",
         ]
         logger.info("simulator_adapter_initialized")
+
+    def get_story_scenario(self, scenario: str) -> list[NormalizedTelemetryRecord]:
+        """Fetch deterministic incident story scenario events."""
+        return self.story_engine.get_scenario_events(scenario)
+
+    async def stream_story_scenario(
+        self,
+        scenario: str,
+        delay_between_steps: float = 1.0,
+    ) -> AsyncGenerator[NormalizedTelemetryRecord, None]:
+        """Stream deterministic incident story scenario events."""
+        async for event in self.story_engine.stream_scenario(scenario, delay_between_steps):
+            yield event
+
+    def list_story_scenarios(self) -> list[dict[str, Any]]:
+        """List metadata of available story scenarios."""
+        return self.story_engine.list_scenarios()
+
 
     async def health_check(self) -> bool:
         """Simulator is always available in local and demo environments."""
