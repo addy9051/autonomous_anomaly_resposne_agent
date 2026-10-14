@@ -7,6 +7,9 @@
 #    docker compose down -v        # Stop and remove volumes
 #    docker compose logs -f kafka  # Tail specific service logs
 # ═══════════════════════════════════════════════════════════════
+#  Local-only credential fallbacks. Override these values before use;
+#  never reuse the development defaults in a deployed environment.
+# ═══════════════════════════════════════════════════════════════
 
 services:
 
@@ -80,7 +83,7 @@ services:
     environment:
       POSTGRES_DB: agent_kb
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: agent_secret_2024
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_only_not_for_production}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./knowledge_base/migrations:/docker-entrypoint-initdb.d
@@ -194,7 +197,7 @@ services:
     container_name: anomaly-langfuse-db
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-dev_only_not_for_production}
       - POSTGRES_DB=postgres
     volumes:
       - langfuse-data:/var/lib/postgresql/data

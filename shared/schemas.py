@@ -273,6 +273,10 @@ class ActionResult(BaseModel):
     approver: str | None = None
     policy_decision: ActionPolicyDecision | None = None
     is_simulated: bool = False
+    proposal_hash: str | None = None
+    verification_criteria: dict[str, Any] = Field(default_factory=dict)
+    proposed_service: str | None = None
+    proposed_environment: str | None = None
     slack_thread_ts: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

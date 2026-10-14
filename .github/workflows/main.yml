@@ -2,9 +2,12 @@ name: Agent System CI/CD
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+
+permissions:
+  contents: read
 
 env:
   PYTHON_VERSION: "3.11"
@@ -57,12 +60,10 @@ jobs:
           cache: "pip"
 
       - name: Install Poetry
-        run: |
-          pip install poetry
+        run: pip install poetry
 
       - name: Install dependencies
-        run: |
-          poetry install --with dev
+        run: poetry install --with dev
 
       - name: Run Unit Tests
         run: poetry run pytest tests/unit -v --tb=short --junitxml=reports/unit-results.xml
@@ -81,66 +82,59 @@ jobs:
           name: test-reports
           path: reports/
 
-  build-and-push:
-    name: Build & Push Docker Image
+  deploy-to-aws:
+    name: Build, Push & Deploy to AWS ECS
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ENABLED == 'true'
+    concurrency:
+      group: aws-pilot-deployment
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.AWS_ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.AWS_ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.AWS_ECS_SERVICE }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Configure Docker for Artifact Registry
+      - name: Build and push commit and pilot tags
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
-          echo '${{ secrets.GCP_CREDENTIALS }}' | docker login -u _json_key --password-stdin us-central1-docker.pkg.dev
-
-      - name: Build Docker image
-        run: |
-          docker build \
-            -f infra/docker/Dockerfile \
-            -t us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:${{ github.sha }} \
-            -t us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:latest \
+          set -euo pipefail
+          test -n "$AWS_REGION"
+          test -n "$ECR_REPOSITORY"
+          IMAGE_URI="$REGISTRY/$ECR_REPOSITORY"
+          docker build -f infra/docker/Dockerfile \
+            -t "$IMAGE_URI:$GITHUB_SHA" \
+            -t "$IMAGE_URI:pilot" \
             .
+          docker push "$IMAGE_URI:$GITHUB_SHA"
+          docker push "$IMAGE_URI:pilot"
 
-      - name: Push to Artifact Registry
+      - name: Deploy to ECS and wait for stability
         run: |
-          docker push us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:${{ github.sha }}
-          docker push us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:latest
-
-  deploy-to-gke:
-    name: Deploy to GKE
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
-
-      - name: Get GKE Credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: anomaly-agents-dev
-          location: us-central1
-
-      - name: Deploy to GKE
-        run: |
-          sed -i "s|us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:latest|us-central1-docker.pkg.dev/amex-autonomouse-expense-ai/anomaly-agents-dev/agent-api:${{ github.sha }}|g" infra/k8s/deployment.yaml
-          kubectl apply -f infra/k8s/deployment.yaml
-
-      - name: Wait for Rollout
-        run: |
-          kubectl rollout status deployment/anomaly-agent-trainer --timeout=300s
-          kubectl rollout status deployment/anomaly-agent-predictor --timeout=300s
+          set -euo pipefail
+          test -n "$ECS_CLUSTER"
+          test -n "$ECS_SERVICE"
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"

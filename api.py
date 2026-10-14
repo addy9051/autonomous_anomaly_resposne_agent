@@ -12,29 +12,31 @@ Provides endpoints for:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi import Depends, FastAPI, HTTPException, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from agents.action.pagerduty import resolve_pagerduty_incident
 from agents.action.tiers import ACTION_TIERS, get_tier_description
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from orchestrator import AgentOrchestrator
 from shared.config import get_settings
-from shared.schemas import TelemetryEvent
-from shared.utils import setup_logging
+from shared.schemas import ActionPolicyDecision, TelemetryEvent
+from shared.utils import get_logger, setup_logging
 
 # ─── Global State ────────────────────────────────────────────────
 
 orchestrator: AgentOrchestrator | None = None
 producer = SyntheticTelemetryProducer()
+logger = get_logger("api")
 
 
 @asynccontextmanager
@@ -44,7 +46,12 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
     setup_logging()
     orchestrator = AgentOrchestrator()
 
-    # Background Heartbeat: Keep the dashboard pulse alive
+    settings = get_settings()
+    heartbeat_enabled = (
+        settings.app.enable_synthetic_heartbeat
+        or settings.app.app_env.lower() == "development"
+    )
+
     async def pulse_heartbeat() -> None:
         while orchestrator is not None:
             try:
@@ -55,11 +62,12 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
             except Exception:
                 await asyncio.sleep(5.0)
 
-    heartbeat_task = asyncio.create_task(pulse_heartbeat())
+    heartbeat_task = asyncio.create_task(pulse_heartbeat()) if heartbeat_enabled else None
 
     yield
 
-    heartbeat_task.cancel()
+    if heartbeat_task is not None:
+        heartbeat_task.cancel()
     orchestrator = None
 
 
@@ -85,6 +93,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def _strip_api_gateway_stage_prefix(path: str, prefix: str) -> str:
+    normalized_prefix = prefix.rstrip("/")
+    if not normalized_prefix:
+        return path
+    if path == normalized_prefix:
+        return "/"
+    if path.startswith(f"{normalized_prefix}/"):
+        return path[len(normalized_prefix) :]
+    return path
+
+
+@app.middleware("http")
+async def strip_api_gateway_stage_prefix(request: Request, call_next: Any) -> Any:
+    prefix = get_settings().app.api_gateway_stage_prefix
+    path = request.scope["path"]
+    stripped_path = _strip_api_gateway_stage_prefix(path, prefix)
+    if stripped_path != path:
+        request.scope["path"] = stripped_path
+        raw_path = request.scope.get("raw_path")
+        if raw_path is not None:
+            prefix_length = len(prefix.rstrip("/").encode())
+            request.scope["raw_path"] = raw_path[prefix_length:] or b"/"
+    return await call_next(request)
+
+
 ui_dir = os.path.join(os.path.dirname(__file__), "ui")
 os.makedirs(ui_dir, exist_ok=True)
 app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
@@ -103,25 +137,40 @@ class ProcessEventRequest(BaseModel):
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-async def verify_auth(api_key: str | None = Security(api_key_header)) -> str | None:
+async def verify_auth(
+    request: Request,
+    api_key: str | None = Security(api_key_header),
+) -> str:
     """
-    Enforce route authentication on sensitive action endpoints when configured.
-    Fails closed if API_AUTH_TOKEN is defined and the key is missing or invalid.
+    Resolve caller identity from the trusted gateway, or a development-only API key.
     """
     settings = get_settings()
-    auth_token = getattr(settings.app, "api_auth_token", "") or os.environ.get("API_AUTH_TOKEN", "")
+    config = settings.app
+    environment = config.app_env.lower()
+    identity = request.headers.get(config.trusted_identity_header)
+    if identity and identity.strip():
+        return identity.strip()
+
+    if environment != "development" or config.require_gateway_auth:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing trusted gateway identity; requests must use authenticated API Gateway ingress.",
+        )
+
+    auth_token = config.api_auth_token or os.environ.get("API_AUTH_TOKEN", "")
     if auth_token:
-        if not api_key or api_key != auth_token:
+        if not api_key or not hmac.compare_digest(api_key, auth_token):
             raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing X-API-Key header")
-    return api_key
+        return "dev-api-key-user"
+
+    logger.warning("auth_bypassed_development", tip="Configure API_AUTH_TOKEN or require gateway authentication")
+    return "anonymous-dev"
 
 
 class ApproveActionRequest(BaseModel):
-    approved: bool = True
-    approver: str = "sre-engineer"
-    action_name: str | None = None
-    params: dict[str, Any] | None = None
-    dry_run: bool = False
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool
     reason: str | None = None
 
 
@@ -195,7 +244,7 @@ async def detailed_health() -> dict[str, Any]:
 
 
 @app.post("/api/v1/events/process", tags=["Events"])
-async def process_event(request: ProcessEventRequest) -> dict[str, Any]:
+async def process_event(request: ProcessEventRequest, _auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Submit a single telemetry event for processing."""
     print(f"DEBUG: Processing inbound UI event from {request.source}")
     if not orchestrator:
@@ -219,7 +268,7 @@ async def process_event(request: ProcessEventRequest) -> dict[str, Any]:
 
 
 @app.post("/api/v1/demo/run", tags=["Demo"])
-async def run_demo(request: RunDemoRequest) -> dict[str, Any]:
+async def run_demo(request: RunDemoRequest, _auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Run a demo with synthetic telemetry events."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -247,7 +296,11 @@ async def list_scenarios() -> dict[str, Any]:
 
 
 @app.post("/api/v1/demo/scenarios/{scenario_name}/run", tags=["Demo"])
-async def run_scenario(scenario_name: str, dry_run: bool = True) -> dict[str, Any]:
+async def run_scenario(
+    scenario_name: str,
+    dry_run: bool = True,
+    _auth: str = Depends(verify_auth),
+) -> dict[str, Any]:
     """Execute a story-based incident narrative scenario."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -272,7 +325,7 @@ async def run_scenario(scenario_name: str, dry_run: bool = True) -> dict[str, An
 
 
 @app.post("/api/v1/stream/start", tags=["Streaming"])
-async def start_stream(request: StreamRequest) -> dict[str, Any]:
+async def start_stream(request: StreamRequest, _auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Start streaming synthetic telemetry."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -380,11 +433,11 @@ async def get_reward_history(limit: int = 100) -> dict[str, Any]:
 async def approve_tier2_action(
     incident_id: str,
     request: ApproveActionRequest,
-    _auth: str | None = Depends(verify_auth),
+    approver: str = Depends(verify_auth),
 ) -> dict[str, Any]:
     """
     Approve or reject a pending action for an incident.
-    
+
     Upon approval:
       1. Executes the exact approved action with bounded parameters.
       2. Transitions incident: awaiting_approval → executing → verifying.
@@ -406,36 +459,72 @@ async def approve_tier2_action(
             raise HTTPException(status_code=400, detail="Incident already resolved")
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    from shared.schemas import IncidentStatus, VerificationOutcome
+    from shared.schemas import IncidentStatus
 
     valid_pending_statuses = {
         IncidentStatus.AWAITING_APPROVAL,
         IncidentStatus.ACTION_PENDING,
-        IncidentStatus.RECOMMENDATION_READY,
     }
     if incident.status not in valid_pending_statuses:
-        detail = f"Incident is in status '{incident.status.value}', expected one of {[s.value for s in valid_pending_statuses]}"
+        expected = [status.value for status in valid_pending_statuses]
+        detail = f"Incident is in status '{incident.status.value}', expected one of {expected}"
         raise HTTPException(status_code=400, detail=detail)
 
-    # ── Handle Rejection ──
-    if not request.approved:
-        incident.status = IncidentStatus.ESCALATED
-        incident.human_overrode = True
-        incident.human_feedback = f"Action rejected by {request.approver}. Reason: {request.reason or 'None provided'}"
-        
-        if incident.action_results:
-            incident.action_results[0].human_approved = False
-            incident.action_results[0].execution_status = "rejected"
+    pending_actions = [
+        action
+        for action in incident.action_results
+        if action.execution_status == "pending_approval"
+    ]
+    if len(pending_actions) != 1:
+        raise HTTPException(status_code=409, detail="Incident must have exactly one pending action proposal.")
+    proposal = pending_actions[0]
+    action_name = proposal.action_taken
+    params = proposal.output.get("recommended_params")
+    if (
+        not isinstance(params, dict)
+        or not proposal.proposal_hash
+        or proposal.policy_decision != ActionPolicyDecision.APPROVAL_REQUIRED
+        or not proposal.proposed_service
+        or not proposal.proposed_environment
+    ):
+        raise HTTPException(status_code=409, detail="Stored action proposal is incomplete and cannot be approved.")
 
-        orchestrator.active_incidents[incident.incident_id] = incident
-        orchestrator.store.save(incident)
+    from agents.action.policy import compute_proposal_hash
+
+    try:
+        expected_proposal_hash = compute_proposal_hash(
+            action_name,
+            params,
+            service=proposal.proposed_service,
+            environment=proposal.proposed_environment,
+            dry_run=proposal.is_simulated,
+            policy_decision=proposal.policy_decision.value if proposal.policy_decision else None,
+            verification_criteria=proposal.verification_criteria,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="Stored proposal cannot be validated.") from exc
+    if not hmac.compare_digest(expected_proposal_hash, proposal.proposal_hash):
+        raise HTTPException(status_code=409, detail="Stored proposal integrity check failed.")
+
+    claimed_incident = orchestrator.store.claim_pending_approval(
+        incident_id,
+        proposal.proposal_hash,
+        approved=request.approved,
+        actor=approver,
+        reason=request.reason,
+    )
+    if claimed_incident is None:
+        raise HTTPException(status_code=409, detail="Proposal is no longer pending or has already been consumed.")
+    incident = claimed_incident
+    orchestrator.active_incidents[incident.incident_id] = incident
+
+    if not request.approved:
         orchestrator.store.record_audit(
             incident.incident_id,
-            request.approver,
+            approver,
             "action_rejected",
             {"reason": request.reason, "status": incident.status.value},
         )
-
         return {
             "status": "rejected",
             "incident_id": incident_id,
@@ -443,32 +532,31 @@ async def approve_tier2_action(
             "incident_status": incident.status.value,
         }
 
-    # ── Handle Approval & Execution ──
-    # Resolve action name and parameters
-    action_name = request.action_name
-    params = request.params
-
-    if not action_name:
-        if incident.action_results:
-            action_name = incident.action_results[0].action_taken
-            params = params or incident.action_results[0].output.get("recommended_params", {})
-        elif incident.diagnosis_result and incident.diagnosis_result.recommended_actions:
-            action_name = incident.diagnosis_result.recommended_actions[0].action
-            params = params or incident.diagnosis_result.recommended_actions[0].params
-
-    if not action_name:
-        raise HTTPException(status_code=400, detail="No action specified or recommended for this incident")
-
-    params = params or {}
-
-    # Execute approved action and perform independent verification
-    action_result = await orchestrator.action_agent.execute_approved_action(
-        action_name=action_name,
-        params=params,
-        incident=incident,
-        approver=request.approver,
-        dry_run=request.dry_run,
-    )
+    try:
+        action_result = await orchestrator.action_agent.execute_approved_action(
+            action_name=action_name,
+            params=params,
+            incident=incident,
+            approver=approver,
+            proposal_hash=proposal.proposal_hash,
+            dry_run=proposal.is_simulated,
+        )
+    except ValueError as exc:
+        incident.status = IncidentStatus.ESCALATED
+        incident.human_feedback = f"Approved proposal was blocked before execution: {exc}"
+        for action in incident.action_results:
+            if action.execution_status == "pending_approval" and action.proposal_hash == proposal.proposal_hash:
+                action.execution_status = "policy_denied"
+                action.error = str(exc)
+        orchestrator.active_incidents[incident.incident_id] = incident
+        orchestrator.store.save(incident)
+        orchestrator.store.record_audit(
+            incident.incident_id,
+            approver,
+            "approved_action_blocked",
+            {"reason": str(exc), "status": incident.status.value},
+        )
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     if incident.status in (IncidentStatus.VERIFIED_RECOVERED, IncidentStatus.RESOLVED):
         if incident.incident_id in orchestrator.active_incidents:
@@ -481,18 +569,22 @@ async def approve_tier2_action(
     orchestrator.store.save(incident)
     orchestrator.store.record_audit(
         incident.incident_id,
-        request.approver,
-        "action_approved_and_verified",
+        approver,
+        "action_approval_processed",
         {
             "action": action_name,
             "execution_status": action_result.execution_status,
             "incident_status": incident.status.value,
-            "verification": incident.verification_result.model_dump(mode="json") if incident.verification_result else None,
+            "verification": (
+                incident.verification_result.model_dump(mode="json")
+                if incident.verification_result
+                else None
+            ),
         },
     )
 
     return {
-        "status": "executed",
+        "status": action_result.execution_status,
         "incident_id": incident_id,
         "approved": True,
         "action_taken": action_name,
@@ -526,7 +618,7 @@ class KBSearchRequest(BaseModel):
 
 
 @app.post("/api/v1/knowledge/seed", tags=["Knowledge Base"])
-async def seed_knowledge_base() -> dict[str, Any]:
+async def seed_knowledge_base(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Ingest sample runbooks into the pgvector knowledge base."""
     from knowledge_base.ingestion.pipeline import RunbookIngestionPipeline
 

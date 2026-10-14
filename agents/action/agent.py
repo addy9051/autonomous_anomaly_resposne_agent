@@ -18,7 +18,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse.callback import CallbackHandler
 
-from agents.action.policy import DeterministicActionPolicy
+from agents.action.policy import DeterministicActionPolicy, compute_proposal_hash
 from agents.action.tiers import classify_action
 from agents.action.workflows import trigger_workflow
 from agents.verification.verifier import RecoveryVerifier
@@ -27,7 +27,6 @@ from shared.llm import get_chat_model
 from shared.schemas import (
     ActionPolicyDecision,
     ActionResult,
-    ActionTier,
     DiagnosisResult,
     IncidentRecord,
     IncidentStatus,
@@ -56,7 +55,10 @@ class ActionAgent:
             temperature=0.1,
             max_tokens=2048,
         )
-        self.verifier = RecoveryVerifier(stabilization_window_seconds=0.1)
+        self.verifier = RecoveryVerifier(
+            stabilization_window_seconds=self.settings.agent.stabilization_window_seconds,
+            stabilization_window_seconds_dry_run=self.settings.agent.stabilization_window_seconds_dry_run,
+        )
         logger.info("action_agent_initialized")
 
     async def execute(
@@ -135,7 +137,12 @@ class ActionAgent:
             elif has_executed_actions:
                 # P0 Blueprint requirement: Action completion is not recovery. Run independent verifier.
                 incident.status = IncidentStatus.VERIFYING
-                verification = await self.verifier.verify(incident, results, dry_run=dry_run)
+                verification = await self.verifier.verify(
+                    incident,
+                    results,
+                    dry_run=dry_run,
+                    verification_criteria=results[0].verification_criteria if results else None,
+                )
                 incident.verification_result = verification
                 if verification.outcome == VerificationOutcome.VERIFIED_RECOVERY:
                     incident.status = IncidentStatus.VERIFIED_RECOVERED
@@ -203,15 +210,27 @@ class ActionAgent:
                 action_taken=action.action,
                 tier=tier,
                 execution_status="pending_approval",
-                policy_decision=ActionPolicyDecision.APPROVAL_REQUIRED,
+                policy_decision=policy_eval.decision,
                 output={
                     "message": "Explicit SRE approval required before execution.",
-                    "recommended_params": action.params,
+                    "recommended_params": policy_eval.validated_params,
                     "rollback_steps": action.rollback_steps,
                     "policy_reason": policy_eval.reason,
                 },
                 human_approved=None,
                 is_simulated=dry_run,
+                proposal_hash=compute_proposal_hash(
+                    action.action,
+                    policy_eval.validated_params,
+                    service=service,
+                    environment=self.settings.app.app_env,
+                    dry_run=dry_run,
+                    policy_decision=policy_eval.decision.value,
+                    verification_criteria=policy_eval.verification_criteria,
+                ),
+                verification_criteria=policy_eval.verification_criteria,
+                proposed_service=service,
+                proposed_environment=self.settings.app.app_env,
             )
 
         # Action is PERMITTED_AUTO under deterministic policy constraints
@@ -226,6 +245,7 @@ class ActionAgent:
             output=res,
             is_simulated=dry_run,
             human_approved=None,
+            verification_criteria=policy_eval.verification_criteria,
         )
 
     async def execute_approved_action(
@@ -233,17 +253,77 @@ class ActionAgent:
         action_name: str,
         params: dict[str, Any],
         incident: IncidentRecord,
-        approver: str = "sre-engineer",
+        approver: str,
+        proposal_hash: str,
         dry_run: bool = False,
     ) -> ActionResult:
         """
         Execute an action that has received explicit human approval.
         Followed immediately by independent recovery verification.
         """
+        service = "unknown"
+        if incident.anomaly_event and incident.anomaly_event.affected_services:
+            service = incident.anomaly_event.affected_services[0]
+
+        existing_proposals = [
+            item
+            for item in incident.action_results
+            if item.execution_status == "pending_approval" and item.proposal_hash == proposal_hash
+        ]
+        if len(existing_proposals) != 1 or existing_proposals[0].action_taken != action_name:
+            raise ValueError("No unique pending proposal matches this approval.")
+        proposal = existing_proposals[0]
+        if (
+            proposal.proposed_service != service
+            or not proposal.proposed_environment
+            or proposal.proposed_environment.lower() != self.settings.app.app_env.lower()
+        ):
+            raise ValueError("Approval proposal service or environment does not match the stored incident context.")
+        if proposal.is_simulated != dry_run:
+            raise ValueError("Approval execution mode does not match the stored proposal.")
+        expected_hash = compute_proposal_hash(
+            action_name,
+            params,
+            service=proposal.proposed_service,
+            environment=proposal.proposed_environment,
+            dry_run=proposal.is_simulated,
+            policy_decision=proposal.policy_decision.value if proposal.policy_decision else None,
+            verification_criteria=proposal.verification_criteria,
+        )
+        if expected_hash != proposal_hash:
+            raise ValueError("Approval proposal hash does not match the stored proposal.")
+
+        policy_eval = DeterministicActionPolicy.evaluate(
+            action_name=action_name,
+            service=service,
+            environment=self.settings.app.app_env,
+            params=params,
+            dry_run=dry_run,
+        )
+        tier = classify_action(action_name)
+        if policy_eval.decision != ActionPolicyDecision.APPROVAL_REQUIRED:
+            action_result = ActionResult(
+                incident_id=incident.incident_id,
+                action_taken=action_name,
+                tier=tier,
+                execution_status="policy_denied",
+                error=f"Approval-time policy recheck denied execution: {policy_eval.reason}",
+                policy_decision=policy_eval.decision,
+                human_approved=True,
+                approver=approver,
+                is_simulated=dry_run,
+                proposal_hash=proposal_hash,
+                verification_criteria=proposal.verification_criteria,
+                proposed_service=proposal.proposed_service,
+                proposed_environment=proposal.proposed_environment,
+            )
+            proposal_index = incident.action_results.index(existing_proposals[0])
+            incident.action_results[proposal_index] = action_result
+            incident.status = IncidentStatus.ESCALATED
+            return action_result
+
         logger.info("executing_approved_action", action=action_name, approver=approver, dry_run=dry_run)
         incident.status = IncidentStatus.EXECUTING
-
-        tier = classify_action(action_name)
         result = await trigger_workflow(action_name, params, dry_run=dry_run)
         status = "success" if result.get("status") == "success" else "failed"
 
@@ -256,12 +336,21 @@ class ActionAgent:
             human_approved=True,
             approver=approver,
             is_simulated=dry_run,
+            policy_decision=policy_eval.decision,
+            proposal_hash=proposal_hash,
+            verification_criteria=policy_eval.verification_criteria,
         )
-        incident.action_results.append(action_result)
+        proposal_index = incident.action_results.index(existing_proposals[0])
+        incident.action_results[proposal_index] = action_result
 
         # Independent verification
         incident.status = IncidentStatus.VERIFYING
-        verification = await self.verifier.verify(incident, [action_result], dry_run=dry_run)
+        verification = await self.verifier.verify(
+            incident,
+            [action_result],
+            dry_run=dry_run,
+            verification_criteria=policy_eval.verification_criteria,
+        )
         incident.verification_result = verification
 
         if verification.outcome == VerificationOutcome.VERIFIED_RECOVERY:

@@ -17,7 +17,20 @@ For the blueprint’s initial product stages:
 - Enforce policy by action, service, environment, target, and parameters—not just action name.
 - Disable development auto-approval in any deployment that can reach real infrastructure.
 - Keep simulation mode visibly separate from live execution; never represent a simulated result as a real action or recovery.
-- Add authentication and authorization to sensitive endpoints, especially action approval and routes that can trigger processing. I don’t see route-level authentication in the FastAPI code; an upstream gateway might provide it, but don’t assume that without verifying deployment configuration.
+- Use AWS IAM permissions for caller identity and endpoint authorization, with gated access through AWS networking. The FastAPI app currently has no mandatory route-level authentication; an upstream gateway might provide it, but do not assume that without verifying deployment configuration.
+
+#### Chosen AWS authentication and network boundary
+
+Use **IAM for identity and authorization** and **VPC controls for network reachability**; these are complementary controls, not substitutes:
+
+- Put the API behind an AWS API Gateway endpoint configured for `AWS_IAM` authorization (SigV4). Grant callers least-privilege IAM permissions for only the routes and methods they need. Keep action approval separate from ordinary read or event-ingestion access.
+- Keep the backend private in the VPC, reachable only through the intended API Gateway integration (for example, a VPC Link to a private load balancer). Restrict ingress with security groups and subnet routing; do not expose the FastAPI origin directly to the public internet.
+- Treat IAM-authenticated caller identity and action authorization as separate checks. The deterministic application policy must still authorize each action against the environment, service, target, exact parameters, preconditions, and approval requirements. IAM permission to call an API route must not itself grant permission to execute arbitrary remediation.
+- Derive the approver identity from trusted gateway-authenticated context, never from a request-body field. If identity is forwarded in a header, the gateway must overwrite any client-supplied value and the backend must accept traffic only from that trusted gateway path.
+- Give the agent/workload its own IAM role with narrowly scoped permissions for configured integrations. Do not reuse caller credentials, grant broad account permissions, or expose AWS credentials to the model.
+- Fail closed if the trusted IAM-authenticated ingress or identity context is unavailable. Apply authentication/authorization consistently to every sensitive route, including event processing, demos, streaming, and knowledge-base administration, with explicit route-specific permissions.
+
+VPC membership, private subnets, and security groups limit which network paths can reach a service; they do **not** authenticate a human or workload or prove that a requested action is authorized. Do not rely on VPC placement alone as the API authentication mechanism.
 
 ### P0 — Repair the approval and incident lifecycle
 

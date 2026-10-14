@@ -29,6 +29,7 @@ ACTIVE_STATUSES = {
     IncidentStatus.EXECUTING.value,
     IncidentStatus.ACTION_EXECUTING.value,
     IncidentStatus.VERIFYING.value,
+    IncidentStatus.ESCALATED.value,
 }
 
 
@@ -117,6 +118,57 @@ class IncidentStore:
             if row:
                 return IncidentRecord.model_validate_json(row["data"])
         return None
+
+    def claim_pending_approval(
+        self,
+        incident_id: str,
+        proposal_hash: str,
+        *,
+        approved: bool,
+        actor: str,
+        reason: str | None = None,
+    ) -> IncidentRecord | None:
+        """Atomically consume one pending approval so concurrent retries cannot replay it."""
+        with self._get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT data FROM incidents WHERE incident_id = ?",
+                (incident_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            incident = IncidentRecord.model_validate_json(row["data"])
+            if incident.status not in {IncidentStatus.AWAITING_APPROVAL, IncidentStatus.ACTION_PENDING}:
+                return None
+
+            pending = [
+                action
+                for action in incident.action_results
+                if action.execution_status == "pending_approval"
+            ]
+            if len(pending) != 1 or pending[0].proposal_hash != proposal_hash:
+                return None
+
+            action = pending[0]
+            action.human_approved = approved
+            action.approver = actor
+            if approved:
+                incident.status = IncidentStatus.EXECUTING
+            else:
+                action.execution_status = "rejected"
+                incident.status = IncidentStatus.ESCALATED
+                incident.human_overrode = True
+                incident.human_feedback = f"Action rejected by {actor}. Reason: {reason or 'None provided'}"
+
+            now = datetime.now(timezone.utc)
+            incident.updated_at = now
+            conn.execute(
+                "UPDATE incidents SET status = ?, data = ?, updated_at = ? WHERE incident_id = ?",
+                (incident.status.value, incident.model_dump_json(), now.isoformat(), incident_id),
+            )
+            conn.commit()
+            return incident
 
     def list_active(self) -> list[IncidentRecord]:
         """Fetch all currently active / in-flight incidents."""

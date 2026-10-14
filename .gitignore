@@ -50,4 +50,6 @@ htmlcov/
 *.tfstate.backup
 *.tfvars
 *.tfplan
+tfplan*
 .terraform.lock.hcl
+!infra/aws/terraform/.terraform.lock.hcl

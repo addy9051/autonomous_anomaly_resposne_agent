@@ -29,6 +29,14 @@ data/
 # Infrastructure & Tools
 infra/terraform/.terraform/
 infra/terraform/terraform.tfstate*
+infra/aws/terraform/.terraform/
+infra/aws/terraform/*.tfstate*
+infra/aws/terraform/*.tfplan
+infra/aws/terraform/*.tfvars
+**/.terraform/
+**/*.tfstate*
+**/*.tfplan
+**/*.tfvars
 bin/
 tools/
 terraform.exe*

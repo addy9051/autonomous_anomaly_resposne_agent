@@ -112,6 +112,14 @@ class AgentConfig(BaseSettings):
     rag_similarity_threshold: float = 0.75
     embedding_chunk_size: int = 512
     embedding_chunk_overlap: int = 64
+    stabilization_window_seconds: float = Field(
+        default=30.0,
+        description="Post-action stabilization window before verification in production (seconds)",
+    )
+    stabilization_window_seconds_dry_run: float = Field(
+        default=0.1,
+        description="Stabilization window for dry-run / simulation verification (seconds)",
+    )
 
 
 class IntegrationConfig(BaseSettings):
@@ -191,11 +199,27 @@ class AppConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
-    app_env: str = "development"
+    app_env: str = "production"
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"  # noqa: S104
     api_port: int = 8000
-    api_auth_token: str = Field(default="", description="Token required for mutating API requests when set")
+    api_auth_token: str = Field(default="", description="Fallback API key for development when gateway is unavailable")
+    trusted_identity_header: str = Field(
+        default="X-Authenticated-User",
+        description="Header set by API Gateway containing the authenticated caller identity",
+    )
+    api_gateway_stage_prefix: str = Field(
+        default="",
+        description="Optional API Gateway stage path prefix to strip from private integration requests",
+    )
+    require_gateway_auth: bool = Field(
+        default=True,
+        description="Require gateway-provided identity header in non-development environments",
+    )
+    enable_synthetic_heartbeat: bool = Field(
+        default=False,
+        description="Enable synthetic telemetry heartbeat. Auto-enabled in development if not explicitly set.",
+    )
     enable_live_rl: bool = Field(default=False, description="Pause live reinforcement learning on production outcomes")
     # Vowpal Wabbit Distributed Config
     vw_model_gcs_bucket: str | None = Field(None, alias="VW_MODEL_GCS_BUCKET")

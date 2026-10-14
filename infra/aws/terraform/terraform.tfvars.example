@@ -1,0 +1,30 @@
+aws_region               = "us-east-1"
+github_repository        = "addy9051/autonomous_anomaly_resposne_agent"
+github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+name                  = "sre-agent"
+vpc_cidr              = "10.40.0.0/16"
+allowed_client_cidrs = ["10.40.0.0/16"]
+
+# Store actual credentials in Secrets Manager; never put secret values in this file.
+secret_arns = {
+  OPENAI_API_KEY = "arn:aws:secretsmanager:us-east-1:123456789012:secret:sre-agent/openai-key-REPLACE"
+}
+
+# Add existing customer-managed KMS key ARNs here if used to encrypt the secrets above.
+kms_key_arns = []
+
+# Pilot default uses the simulator. Set the selected telemetry connector and its
+# non-secret endpoint/configuration here when ready to test real adapter ingestion.
+application_environment = {
+  TELEMETRY_CONNECTOR_MODE = "simulator"
+}
+
+api_stage_name     = "prod"
+desired_count      = 1
+task_cpu           = 1024
+task_memory        = 2048
+log_retention_days = 30
+tags = {
+  Application = "sre-agent"
+  Environment = "production"
+}

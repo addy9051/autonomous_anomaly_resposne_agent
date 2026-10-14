@@ -5,12 +5,14 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue)
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![GKE](https://img.shields.io/badge/GKE-Autopilot-blue)
+![AWS](https://img.shields.io/badge/AWS-ECS%20Fargate-orange)
 ![VW](https://img.shields.io/badge/RL-VowpalWabbit-orange)
 ![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-purple)
 ![License](https://img.shields.io/badge/License-Private-red)
 
 ---
+
+> **Deployment status:** AWS ECS/Fargate is the selected pilot target; the stack has not yet been provisioned. The previous GCP/GKE files are inactive and retained only for reference and cleanup; they are not used by CI/CD.
 
 ## Table of Contents
 
@@ -93,7 +95,7 @@ The foundational blueprint covering all 8 phases of the system lifecycle:
 - **Phase 03**: Low-Level Design — Per-agent internals, tool specs, API contracts, RAG pipeline, prompt engineering strategies
 - **Phase 04**: Development — Repository structure, structured output enforcement, cost budget tracking, per-agent model routing
 - **Phase 05**: Testing — Unit/integration/eval/chaos/load/property-based/adversarial test strategy
-- **Phase 06**: Production — GKE Autopilot, Terraform IaC, Secret Manager CSI, Helm charts, CI/CD pipeline
+- **Phase 06**: Original deployment design — GKE Autopilot, Terraform IaC, Secret Manager CSI, Helm charts, CI/CD pipeline (historical; current pilot deployment uses AWS)
 - **Phase 07**: Post-Production — Grafana dashboards, weekly ops reviews, scaling roadmap
 
 ### Phase 2 — v1 Implementation (Core Agent Pipeline)
@@ -104,7 +106,7 @@ Translated the design into a working codebase with several strategic architectur
 2. **Local-First RAG**: Bypassed costly Vertex AI Matching Engine with **pgvector** running alongside agents.
 3. **API-First Stream Processing**: Replaced Apache Flink clusters with lightweight Python orchestration (`RollingWindowAggregator`, `AlertDeduplicator`).
 4. **Action Engine Abstraction**: N8n workflows gracefully mocked via Python dry-runs; the 3-tier classification logic remains fully intact.
-5. **Consolidated Serverless Footprint**: Consolidated onto **GKE Autopilot** instead of fragmented GKE + Cloud Run deployments.
+5. **Deployment evolution**: The original GKE deployment design is retained as historical context; the active pilot target is AWS ECS/Fargate.
 
 ### Phase 3 — v2 Architecture: LLM Observability (`agentic-ai-architecture-obs.html`)
 
@@ -127,7 +129,7 @@ A comprehensive code-vs-design validation produced a maturity scorecard and iden
 | Reinforcement Learning (VW Bandit) | ⬛⬛⬛⬛⬜ 4/5 |
 | LLM Observability (Langfuse) | ⬛⬛⬛⬜⬜ 3/5 |
 | RAG Pipeline (Knowledge Base) | ⬛⬛⬜⬜⬜ 2/5 |
-| Infrastructure (GKE/Terraform) | ⬛⬛⬛⬛⬜ 4/5 |
+| Infrastructure (AWS pilot IaC; not yet applied) | ⬛⬛⬜⬜⬜ 2/5 |
 | CI/CD (GitHub Actions) | ⬛⬛⬜⬜⬜ 2/5 |
 
 ### Phase 5 — Gap Remediation (Priority 1/2/3 Fixes)
@@ -170,8 +172,8 @@ Fixed and hardened the GitHub Actions pipeline:
 - Fixed `PYTHONPATH` configuration for proper module resolution in CI
 - Added Redis service container for integration tests
 - Implemented JUnit XML test report uploads as build artifacts
-- Stabilized the Docker build → Artifact Registry → GKE deploy chain
-- Added `kubectl rollout status` monitoring for zero-downtime deployments
+- The original Docker build → Artifact Registry → GKE deploy chain is now inactive; see the AWS pilot pipeline below.
+- The previous GKE workflow used `kubectl rollout status`; the current AWS pilot workflow waits for ECS service stability.
 
 ---
 
@@ -179,19 +181,28 @@ Fixed and hardened the GitHub Actions pipeline:
 
 ```mermaid
 graph TD
-    subgraph "Telemetry Sources"
-        SYN[Synthetic Producer] --> PS[Google Pub/Sub]
-        PG_LOGS[Payment Gateway Logs] --> PS
-        INFRA[Infrastructure Metrics] --> PS
-        FRAUD[Fraud Model Output] --> PS
+    subgraph "Alert and Telemetry Sources"
+        EVENT["Alert / bounded telemetry event"] --> AGG[RollingWindowAggregator]
+        PROM["Prometheus API"]
+        DD["Datadog API"]
+        SPLUNK["Splunk REST API"]
+        SIM["Local Simulator"]
     end
 
-    subgraph "Ingestion & Feature Engineering"
-        PS --> AGG[RollingWindowAggregator]
+    subgraph "Read-only Adapter Ingestion"
+        PROM --> ADAPTER["Configured telemetry adapter"]
+        DD --> ADAPTER
+        SPLUNK --> ADAPTER
+        SIM --> ADAPTER
+        ADAPTER -->|Normalized, time-bounded evidence| DIAG
+        ADAPTER -->|Independent signal checks| VERIFY
+    end
+
+    subgraph "Event Processing"
         AGG --> DEDUP[AlertDeduplicator]
     end
 
-    subgraph "GKE Autopilot — Agent Pipeline"
+    subgraph "AWS ECS/Fargate — Agent Pipeline (pilot target)"
         DEDUP --> MON["🔭 Monitoring Agent<br/>(LangChain ReAct)"]
         MON -->|AnomalyEvent| DIAG["🔬 Diagnosis Agent<br/>(LangGraph Supervisor-Expert)"]
         DIAG -->|DiagnosisResult| ACT["⚙️ Action Agent<br/>(3-Tier Classification)"]
@@ -201,9 +212,10 @@ graph TD
 
     subgraph "Knowledge & State Layer"
         DIAG -->|RAG Query| KB["📚 pgvector<br/>(Hybrid Search + RRF)"]
-        FB -->|Model Weights| GCS["☁️ Google Cloud Storage"]
+        FB -->|Pilot state| EFS["☁️ Amazon EFS"]
         DEDUP -->|Dedup Lock| REDIS["🔴 Redis"]
         DIAG -->|Checkpoint| REDIS
+        ACT --> VERIFY["🛡️ Independent Verifier"]
     end
 
     subgraph "Action & Integration Layer"
@@ -221,7 +233,7 @@ graph TD
     end
 
     subgraph "SRE Dashboard (Next.js)"
-        API["FastAPI REST API"] --> DASH["🖥️ Mission Control UI"]
+        API["Private FastAPI behind API Gateway"] --> DASH["🖥️ Mission Control UI"]
         DASH -->|Poll /telemetry| MON
         DASH -->|Poll /incidents| ACT
         DASH -->|Poll /rewards| FB
@@ -233,10 +245,8 @@ graph TD
 ```mermaid
 graph LR
     subgraph "Learning Layer"
-        T["🏋️ Trainer Pod<br/>(Singleton)"] -->|Upload .vw Binary| GCS["☁️ GCS Bucket"]
-        GCS -->|Periodic Reload| P1["🔮 Predictor Pod 1"]
-        GCS -->|Periodic Reload| P2["🔮 Predictor Pod 2"]
-        GCS -->|Periodic Reload| P3["🔮 Predictor Pod N"]
+        T["🏋️ Trainer (design target)"] -->|Upload .vw Binary| GCS["☁️ GCS Bucket (legacy option)"]
+        GCS -->|Periodic Reload| P1["🔮 Predictor (design target)"]
     end
 
     subgraph "A/B Router"
@@ -257,7 +267,7 @@ graph LR
 | **Monitoring** | LangChain ReAct | `gpt-4o-mini` | Isolation Forest, 5 custom SRE tools, confidence threshold 0.75 | `agents/monitoring/agent.py`, `agents/monitoring/tools.py` |
 | **Diagnosis** | LangGraph (Supervisor-Expert) | `gpt-4o` | Parallel domain experts, RAG runbook retrieval, Redis checkpointing | `agents/diagnosis/graph.py`, `agents/diagnosis/experts.py` |
 | **Action** | N8n + Slack + PagerDuty | `gpt-4o` | 3-tier classification, idempotency keys, automatic rollbacks | `agents/action/agent.py`, `agents/action/pagerduty.py` |
-| **Feedback** | Vowpal Wabbit | `gpt-4o-mini` | `cb_explore_adf` contextual bandits, GCS model sync, epsilon-greedy exploration | `agents/feedback/agent.py` |
+| **Feedback** | Vowpal Wabbit | `gpt-4o-mini` | `cb_explore_adf` contextual bandits, optional legacy GCS model sync, epsilon-greedy exploration | `agents/feedback/agent.py` |
 | **Reward** | LLM-as-Judge | `gpt-4o-mini` | 3-dimension qualitative evaluation (correctness, speed, impact) | `agents/feedback/reward_agent.py` |
 
 ### Diagnosis Agent — Supervisor-Expert Pattern
@@ -362,12 +372,11 @@ This section documents every significant implementation step taken during the pr
   - Adversarial Injection (prompt injection in telemetry)
 - Added PII masking middleware (`shared/pii.py`)
 
-### Stage 9 — Production Deployment
-- Deployed to **GKE Autopilot** with Terraform IaC (`infra/terraform/`)
-- Configured **GCP Secret Manager CSI Driver** for volume-mounted secrets
-- Implemented **Workload Identity (ADC)** for keyless pod authentication
-- Created separate Trainer and Predictor K8s deployments with fine-tuned health probes
-- Built Docker multi-stage image (`infra/docker/Dockerfile`)
+### Stage 9 — Original GCP Deployment Configuration (Inactive)
+- Added GKE, Cloud SQL, Pub/Sub, Artifact Registry, and GCP IAM Terraform configuration under `infra/terraform/`
+- Added GKE/Helm/Argo CD deployment manifests; these are retained only for reference and potential resource cleanup
+- The current GitHub Actions workflow no longer deploys to GCP
+- Built the container image using `infra/docker/Dockerfile`
 
 ### Stage 10 — SRE Mission Control Dashboard
 - Built **Next.js 16** cyberpunk-themed dashboard with Tailwind CSS and Recharts
@@ -383,11 +392,11 @@ This section documents every significant implementation step taken during the pr
 - Hardened CORS policy to support localhost, 127.0.0.1, and IPv6 origins
 
 ### Stage 11 — CI/CD Pipeline Stabilization
-- Created GitHub Actions workflow (`.github/workflows/main.yml`) with 4 stages:
+- Created GitHub Actions workflow (`.github/workflows/main.yml`) with CI and AWS pilot deployment:
   1. **Lint & Format Check**: Pinned `ruff` version for reproducible linting
   2. **Unit, Integration & Eval Tests**: Redis service container, Poetry install, JUnit XML reports
-  3. **Build & Push Docker Image**: Multi-tag strategy (SHA + latest) to Google Artifact Registry
-  4. **Deploy to GKE**: `sed`-based image tag injection into K8s manifests, rollout status monitoring
+  3. **Build & Push Docker Image**: Git SHA and `pilot` tags to Amazon ECR using GitHub OIDC
+  4. **Deploy to ECS/Fargate**: Force a new service deployment and wait for ECS stability
 - Fixed module resolution issues (`PYTHONPATH` configuration)
 - Added test report artifact uploads
 
@@ -425,15 +434,15 @@ Then open **http://localhost:3000** in your browser.
 
 ## 🚢 CI/CD Pipeline
 
-The project uses GitHub Actions for automated testing and deployment to GKE Autopilot.
+The project uses GitHub Actions for checks on pull requests and AWS ECS/Fargate deployment on pushes to `main`. AWS access uses GitHub OIDC; pull requests do not receive AWS credentials. See [AWS pilot deployment instructions](docs/DEPLOYMENT_SECURITY.md).
 
 ```mermaid
 graph LR
     A["📝 Push to main"] --> B["🔍 Lint & Format<br/>(ruff)"]
     B --> C["🧪 Test Suite<br/>(pytest + Redis)"]
-    C --> D["🐳 Docker Build<br/>(Artifact Registry)"]
-    D --> E["🚀 Deploy to GKE<br/>(kubectl apply)"]
-    E --> F["✅ Rollout Status<br/>(Zero-Downtime)"]
+    C --> D["🐳 Docker Build<br/>(Amazon ECR)"]
+    D --> E["🚀 Deploy to ECS/Fargate<br/>(force new deployment)"]
+    E --> F["✅ ECS Service Stability"]
 ```
 
 ### Pipeline Stages
@@ -442,8 +451,8 @@ graph LR
 |-------|---------|---------|
 | **Lint & Format** | Every push/PR | `ruff check`, `ruff format --check` |
 | **Test** | After lint passes | Unit tests, integration tests (with Redis service), eval suite |
-| **Build & Push** | Main branch only | Multi-stage Docker build → Google Artifact Registry |
-| **Deploy to GKE** | After successful build | Image tag injection → `kubectl apply` → rollout status monitoring |
+| **Build & Push** | Main branch only | Docker build → ECR Git SHA and `pilot` tags (GitHub OIDC) |
+| **Deploy to AWS** | After successful build | Force ECS deployment → wait for service stability |
 
 ---
 
@@ -537,10 +546,11 @@ poetry run pytest tests/ -v
 ├── observability/           # Prometheus, Grafana, Tempo, OTel configs
 ├── infra/
 │   ├── docker/              # Dockerfile (multi-stage)
-│   ├── k8s/                 # K8s manifests (deployment, service, secrets)
-│   ├── terraform/           # GKE Autopilot, Pub/Sub, Artifact Registry IaC
-│   ├── argocd/              # GitOps application manifests
-│   └── helm_charts/         # Helm chart templates
+│   ├── aws/terraform/       # Active AWS pilot: private API Gateway, VPC, ECS/Fargate, EFS, ECR
+│   ├── terraform/           # Inactive legacy GCP IaC; retained for reference/cleanup
+│   ├── k8s/                 # Inactive legacy GKE manifests
+│   ├── argocd/              # Inactive legacy GKE GitOps manifest
+│   └── helm_charts/         # Inactive legacy GKE Helm chart
 ├── scripts/                 # Utility & validation scripts
 │   ├── run_chaos_experiments.py    # Chaos engineering suite
 │   ├── verify_rl_learning.py      # RL policy validation
@@ -669,20 +679,11 @@ poetry run python scripts/verify_rag.py
 | Method | Environment | Details |
 |--------|-------------|---------|
 | **`.env` file** | Local development | API keys loaded via `pydantic-settings` |
-| **GCP Secret Manager CSI** | Production (GKE) | Secrets mounted as files at `/mnt/secrets`, auto-synced to `os.environ` |
-| **Workload Identity (ADC)** | GKE pods | Keyless authentication to Vertex AI, Pub/Sub, GCS via IAM roles |
+| **AWS Secrets Manager** | AWS ECS/Fargate pilot | ECS injects configured secret ARNs into the container at startup |
+| **GitHub OIDC** | CI deployment | Short-lived AWS role session; no stored AWS access key |
+| **AWS IAM task role** | ECS task | Scoped to the task's EFS access point; add service permissions only when needed |
 
-### Google Cloud Authentication
-
-We use **Application Default Credentials (ADC)**. Do **NOT** hardcode service account JSON keys.
-
-```bash
-# Local development
-gcloud auth application-default login
-
-# GKE — uses attached service account automatically
-# Ensure service account has: Vertex AI User, Storage Object Viewer
-```
+The production-facing API uses SigV4 with API Gateway `AWS_IAM` authorization and a private VPC endpoint. See [AWS pilot deployment instructions](docs/DEPLOYMENT_SECURITY.md).
 
 ### API Keys Required
 
@@ -694,7 +695,7 @@ gcloud auth application-default login
 | **Slack** | Optional | ✅ | Tier 2 approval notifications |
 | **PagerDuty** | Optional | 14-day trial | Tier 3 incident escalations |
 | **Cohere** | Recommended | ✅ 1K/mo | Cross-encoder reranking for RAG (`rerank-english-v3.0`) |
-| **Google Cloud** | Optional | $300 credit | Vertex AI, GKE, GCS, Pub/Sub |
+| **Google Cloud** | Optional | Varies | Optional Gemini provider only; not used for deployment |
 
 ---
 
