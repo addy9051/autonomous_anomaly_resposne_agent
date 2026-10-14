@@ -75,12 +75,27 @@ SYNTHESIS_PROMPT = """Synthesize a root cause analysis from all gathered evidenc
 ## Sub-Agent Reports
 {sub_agent_reports}
 
+## Citable Evidence (cite by id)
+{evidence_index}
+
+## Unavailable Sources (evidence gaps)
+{missing_sources}
+
 Produce a complete DiagnosisResult with:
 1. Clear root cause statement
 2. Root cause category (network/database/application/external/infrastructure/unknown)
 3. Recommended actions with appropriate tiers
 4. Full reasoning chain
 5. Confidence score
+6. `hypotheses`: 2-3 competing candidate causes, each as
+   {{"hypothesis": "...", "affected_scope": [...], "supporting_evidence_ids": ["E1"],
+   "contradicting_evidence_ids": [], "missing_evidence": [...], "confidence_band": "low|medium|high",
+   "next_safe_query": "read-only query or human question that would discriminate"}}
+
+Rules for hypotheses:
+- Cite only ids listed above; never invent evidence. Evidence marked [SIMULATED] is not proof.
+- Include at least one alternative hypothesis, and cite contradicting evidence where it exists.
+- If evidence is thin or sources are unavailable, say so and use a low confidence band.
 """
 
 

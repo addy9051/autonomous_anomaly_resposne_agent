@@ -25,6 +25,11 @@ if TYPE_CHECKING:
     from langgraph.checkpoint.base import BaseCheckpointSaver
     from langgraph.graph.state import CompiledStateGraph
 
+from agents.diagnosis.hypotheses import (
+    build_evidence_index,
+    cap_overall_confidence,
+    ground_hypotheses,
+)
 from agents.diagnosis.prompts import (
     CONTEXT_GATHER_PROMPT,
     DIAGNOSIS_SYSTEM_PROMPT,
@@ -38,7 +43,6 @@ from shared.schemas import (
     AnomalyEvent,
     DiagnosisResult,
     EvidenceRecord,
-    Hypothesis,
     RecommendedAction,
     RootCauseCategory,
     RunbookReference,
@@ -325,6 +329,8 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
         context=sanitize_for_llm(state.get("context", "No additional context gathered.")),
         runbook_matches=json.dumps(state.get("runbook_matches", []), indent=2),
         sub_agent_reports=sanitize_for_llm(json.dumps(state.get("sub_agent_reports", {}), indent=2, default=str)),
+        evidence_index=build_evidence_index(state.get("evidence_timeline", [])),
+        missing_sources=", ".join(state.get("missing_sources", [])) or "none",
     )
 
     response = await llm.ainvoke(
@@ -459,15 +465,18 @@ class DiagnosisAgent:
                     for e in result.get("evidence_timeline", [])
                 ]
 
-                hypotheses_list = [
-                    Hypothesis(
-                        hypothesis=h.get("hypothesis", ""),
-                        affected_scope=h.get("affected_scope", []),
-                        confidence_band=h.get("confidence_band", "medium"),
-                        next_safe_query=h.get("next_safe_query", ""),
-                    )
-                    for h in diagnosis_dict.get("hypotheses", [])
-                ]
+                gaps = result.get("missing_sources", []) or diagnosis_dict.get("missing_sources", [])
+                hypotheses_list = ground_hypotheses(
+                    diagnosis_dict.get("hypotheses", []),
+                    result.get("evidence_timeline", []),
+                    gaps,
+                )
+                overall_conf, overall_band = cap_overall_confidence(
+                    float(diagnosis_dict.get("confidence", 0.5)),
+                    str(diagnosis_dict.get("confidence_band", "medium")),
+                    hypotheses_list,
+                    result.get("evidence_timeline", []),
+                )
 
                 decision_summary = diagnosis_dict.get("decision_summary") or (
                     f"Conclusion: {diagnosis_dict.get('root_cause', 'Unknown')}. "
@@ -481,7 +490,7 @@ class DiagnosisAgent:
                     decision_summary=decision_summary,
                     hypotheses=hypotheses_list,
                     evidence_timeline=evidence_list,
-                    missing_sources=result.get("missing_sources", []) or diagnosis_dict.get("missing_sources", []),
+                    missing_sources=gaps,
                     runbook_references=[RunbookReference(**r) for r in diagnosis_dict.get("runbook_references", [])],
                     recommended_actions=[
                         RecommendedAction(
@@ -501,8 +510,8 @@ class DiagnosisAgent:
                         for k, v in result.get("sub_agent_reports", {}).items()
                     },
                     reasoning_chain=diagnosis_dict.get("reasoning_chain", ""),
-                    confidence=diagnosis_dict.get("confidence", 0.5),
-                    confidence_band=diagnosis_dict.get("confidence_band", "medium"),
+                    confidence=overall_conf,
+                    confidence_band=overall_band,
                     is_novel_incident=diagnosis_dict.get("is_novel_incident", False),
                 )
 

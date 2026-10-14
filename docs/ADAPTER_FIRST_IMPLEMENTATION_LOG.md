@@ -1,4 +1,4 @@
-# Adapter-First Evidence Layer — Implementation Log
+﻿# Adapter-First Evidence Layer â€” Implementation Log
 
 Living document. Tracks the agreed plan and what has actually been implemented.
 Strategy source of truth: [SRE_AGENT_PRODUCT_STRATEGY_BLUEPRINT.md](./SRE_AGENT_PRODUCT_STRATEGY_BLUEPRINT.md)
@@ -18,9 +18,9 @@ Live adapters never fabricate data; mock data exists only in `SimulatorAdapter`.
 | 2 | Alert-triggered intake (Alertmanager first) | Done (not yet committed) |
 | 3 | Remove/rewire fabricated monitoring tools; expand `gather_context` into a scoped timeline | Done (not yet committed) |
 | 4 | Provenance fields on normalized records; deploy-events source | Done (not yet committed) |
-| 5 | Hypothesis modelling | Pending |
+| 5 | Hypothesis modelling | Done (not yet committed) |
 
-## Step 1 — Adapters fail loudly
+## Step 1 â€” Adapters fail loudly
 
 - `TelemetrySourceError` added in `data_pipeline/connectors/adapters/base.py`.
 - Datadog and Splunk raise it on missing credentials, non-200 responses and network errors (Datadog also on parse errors). Prometheus raises on non-200 and network errors in every environment. The old mock records are removed.
@@ -33,7 +33,7 @@ Live adapters never fabricate data; mock data exists only in `SimulatorAdapter`.
 
 Consumers: the verifier turns a raised connector error into `INCONCLUSIVE`; `gather_context` in `agents/diagnosis/graph.py` records it as a missing source.
 
-## Step 2 — Alert-triggered intake (Alertmanager)
+## Step 2 â€” Alert-triggered intake (Alertmanager)
 
 - Endpoint: `POST /api/v1/alerts/alertmanager` in `api.py` (existing auth dependency; `dry_run` query param, default `true`).
 - Parser: `data_pipeline/connectors/alertmanager_intake.py` converts each **firing** alert with a service-identifying label into an `AnomalyEvent`. Resolved and unscoped alerts are skipped. Fingerprint, labels, annotations, start time and generator URL are preserved in `raw_event`.
@@ -48,7 +48,7 @@ Consumers: the verifier turns a raised connector error into `INCONCLUSIVE`; `gat
 - Dedupe uses the service-plus-type key, not the Alertmanager fingerprint.
 - `import orchestrator` fails in a bare interpreter on `langfuse.callback` (pre-existing; tests are unaffected).
 
-## Step 3 — No fabricated evidence; scoped timeline
+## Step 3 â€” No fabricated evidence; scoped timeline
 
 - `agents/monitoring/tools/monitoring_tools.py`:
   - `prometheus_query`: synthetic fallback removed; failures return `{"evidence_gap": true}`.
@@ -86,3 +86,13 @@ Consumers: the verifier turns a raised connector error into `INCONCLUSIVE`; `gat
 - Tests: `tests/unit/test_provenance_and_deploys.py`. Full unit suite: 120 passed.
 
 Limitations: the deploy repo is global rather than mapped per service; deploys are not yet correlated to the alert start time.
+
+## Step 5: Evidence-grounded hypotheses
+
+- New `agents/diagnosis/hypotheses.py`. The synthesis prompt now lists the evidence timeline with citable ids (E1..En) plus the unavailable sources, and asks for 2-3 competing hypotheses that cite supporting and contradicting ids.
+- `ground_hypotheses` resolves citations against the real timeline (unknown ids are dropped), fills `supporting_evidence`, `contradicting_evidence` and `missing_evidence` (including source gaps), and caps each hypothesis' band: no authoritative (non-simulated) support -> low; a single supporting record or any contradiction -> at most medium. Hypotheses are ordered by net support.
+- `cap_overall_confidence` limits the diagnosis confidence (0.4 low / 0.7 medium) to what the top hypothesis justifies, and to low when there is no real evidence.
+- Previously, hypotheses carried no evidence at all and the LLM's self-reported confidence was passed through unchanged.
+- Tests: `tests/unit/test_hypotheses.py`. Full unit suite: 126 passed.
+
+Limitations: the caps are heuristic thresholds, not calibrated probabilities; the end-to-end LLM path (prompt -> parse -> grounding) is covered only by unit tests of the helpers, not by a live model run; the policy gate does not yet consume hypothesis confidence directly.
