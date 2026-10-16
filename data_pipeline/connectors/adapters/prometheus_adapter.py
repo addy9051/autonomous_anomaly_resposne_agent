@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter, TelemetrySourceError
+from data_pipeline.connectors.query_templates import resolve_query
 from shared.config import get_settings
 from shared.schemas import (
     NormalizedTelemetryRecord,
@@ -38,8 +39,13 @@ class PrometheusAdapter(BaseTelemetryAdapter):
         super().__init__(source=TelemetryConnectorSource.PROMETHEUS)
         settings = get_settings()
         self.base_url = (base_url or settings.integration.prometheus_url).rstrip("/")
-        self.client = httpx.AsyncClient(timeout=10.0)
+        self.client = httpx.AsyncClient(timeout=10.0, headers=self._auth_headers(settings))
         logger.info("prometheus_adapter_initialized", base_url=self.base_url)
+
+    @staticmethod
+    def _auth_headers(settings: Any) -> dict[str, str]:
+        token = settings.integration.prometheus_bearer_token
+        return {"Authorization": f"Bearer {token}"} if token else {}
 
     async def close(self) -> None:
         """Close internal HTTP client."""
@@ -66,13 +72,15 @@ class PrometheusAdapter(BaseTelemetryAdapter):
         start = end - timedelta(seconds=time_window_seconds)
         step = f"{max(15, time_window_seconds // 30)}s"
         for metric in metric_names:
-            query = f'{metric}{{service="{entity}"}}'
+            templated = resolve_query("prometheus", metric, entity)
+            query = templated or f'{metric}{{service="{entity}"}}'
             results = await self.query_signal(
                 query=query,
                 entity=entity,
                 start_time=start,
                 end_time=end,
                 step=step,
+                metric_name=metric if templated else None,
             )
             records.extend(results)
         return records
@@ -86,6 +94,7 @@ class PrometheusAdapter(BaseTelemetryAdapter):
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         step: str | None = None,
+        metric_name: str | None = None,
     ) -> list[NormalizedTelemetryRecord]:
         """Execute a PromQL query (instant or range) and normalize the results."""
         # Dynamically determine the endpoint based on parameters
@@ -116,7 +125,7 @@ class PrometheusAdapter(BaseTelemetryAdapter):
                 for item in results:
                     metric_meta = item.get("metric", {})
                     target_entity = entity or metric_meta.get("service") or metric_meta.get("job") or "unknown"
-                    metric_name = metric_meta.get("__name__", query.split("{")[0])
+                    record_metric = metric_name or metric_meta.get("__name__", query.split("{")[0])
                     combined_tags = {**metric_meta, **(tags or {})}
                     
                     # Core Fix: Separate extraction flows for matrix vs vector types
@@ -144,9 +153,9 @@ class PrometheusAdapter(BaseTelemetryAdapter):
                                 entity=target_entity,
                                 connector_source=self.source,
                                 signal_type=TelemetrySignalType.METRIC,
-                                metric_name=metric_name,
+                                metric_name=record_metric,
                                 value=val,
-                                unit="count" if "count" in metric_name else "value",
+                                unit="count" if "count" in record_metric else "value",
                                 severity=Severity.HIGH if val > 100.0 else Severity.LOW,
                                 tags=combined_tags,
                                 raw_query=query,

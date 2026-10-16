@@ -165,6 +165,25 @@ class IntegrationConfig(BaseSettings):
         validation_alias=AliasChoices("CONNECTOR_MODE", "TELEMETRY_CONNECTOR_MODE"),
     )
 
+    # Combined live ingestion: comma-separated vendors (e.g. "prometheus,datadog,splunk").
+    # Empty falls back to the single telemetry_connector_mode.
+    telemetry_connector_modes: str = Field(
+        default="",
+        validation_alias=AliasChoices("CONNECTOR_MODES", "TELEMETRY_CONNECTOR_MODES"),
+    )
+    enable_live_ingestion: bool = False
+    ingestion_poll_interval_seconds: float = 15.0
+    ingestion_services: str = Field(default="", description="Comma-separated services to watch in live ingestion")
+    ingestion_dry_run: bool = Field(default=True, description="Run escalated incidents in dry-run (no real actions)")
+    ingestion_escalation_cooldown_seconds: float = 300.0
+    ingestion_zscore_threshold: float = 3.0
+    ingestion_min_samples: int = 8
+    # JSON: {"prometheus": {"error_rate": "promql with {entity}"}, ...}; overrides built-in defaults
+    telemetry_query_templates: str = ""
+
+    # Prometheus optional auth
+    prometheus_bearer_token: str = ""
+
     # Datadog API
     datadog_api_key: str = ""
     datadog_app_key: str = ""

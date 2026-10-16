@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
 import { LayoutDashboard, Activity, Database, Zap, Shield, Play, Wifi, WifiOff, AlertCircle } from 'lucide-react';
 import StatusCards from './StatusCards';
 import TelemetryPulse from './TelemetryPulse';
@@ -104,6 +105,9 @@ export default function Dashboard() {
         
         <div className="hidden lg:flex items-center gap-8 ml-12">
            <NavLink icon={<LayoutDashboard size={18} />} label="Overview" active />
+           <Link href="/connectors">
+             <NavLink icon={<Database size={18} />} label="Connectors" />
+           </Link>
            <NavLink icon={<Activity size={18} />} label="Observability" />
            <NavLink icon={<Database size={18} />} label="Knowledge Base" />
            <NavLink icon={<Shield size={18} />} label="Security" />

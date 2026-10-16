@@ -4,7 +4,12 @@
  */
 
 // Use localhost consistently to match the browser's address bar and resolve CORS issues on Windows
-const API_BASE = "http://localhost:8050/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8050/api/v1";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY;
+
+function authHeaders(): Record<string, string> {
+  return API_KEY ? { "X-API-Key": API_KEY } : {};
+}
 
 export interface TelemetryEvent {
   event_id: string;
@@ -77,6 +82,87 @@ export async function fetchRewardHistory(): Promise<RewardHistoryEntry[]> {
 
 export async function fetchDetailedHealth() {
   return fetchWithLogs(`${API_BASE}/health/detailed`, { cache: 'no-store' });
+}
+
+export interface ConnectorField {
+  key: string;
+  label: string;
+  kind: "text" | "password" | "number" | "boolean";
+  secret: boolean;
+  required: boolean;
+  placeholder: string;
+  help: string;
+  value?: string | number | boolean;
+  is_set?: boolean;
+}
+
+export interface ConnectorInfo {
+  id: string;
+  label: string;
+  description: string;
+  selected: boolean;
+  configured: boolean;
+  missing: string[];
+  fields: ConnectorField[];
+}
+
+export interface VendorStatus {
+  last_success_age_seconds: number | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  records_ingested: number;
+}
+
+export interface ConnectorsView {
+  connectors: ConnectorInfo[];
+  selected: string[];
+  connector_modes: string;
+  ingestion: { enabled: boolean; services: string; dry_run: boolean; poll_interval_seconds: number };
+  active: boolean;
+  status?: { services: string[]; escalations: number; vendors: Record<string, VendorStatus> };
+}
+
+function jsonRequest(method: string, body?: unknown): RequestInit {
+  return {
+    method,
+    cache: "no-store",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  };
+}
+
+export async function fetchConnectors(): Promise<ConnectorsView> {
+  return fetchWithLogs(`${API_BASE}/connectors`, jsonRequest("GET"));
+}
+
+export async function saveConnectorSelection(connectors: string[]): Promise<ConnectorsView> {
+  return fetchWithLogs(`${API_BASE}/connectors/selection`, jsonRequest("PUT", { connectors }));
+}
+
+export async function saveConnectorCredentials(
+  vendor: string,
+  values: Record<string, unknown>,
+): Promise<ConnectorsView> {
+  return fetchWithLogs(`${API_BASE}/connectors/${vendor}/credentials`, jsonRequest("PUT", { values }));
+}
+
+export async function testConnector(
+  vendor: string,
+  values: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: string }> {
+  return fetchWithLogs(`${API_BASE}/connectors/${vendor}/test`, jsonRequest("POST", { values }));
+}
+
+export async function activateIngestion(body: {
+  services: string;
+  dry_run: boolean;
+  poll_interval_seconds: number;
+}): Promise<ConnectorsView> {
+  return fetchWithLogs(`${API_BASE}/connectors/activate`, jsonRequest("POST", body));
+}
+
+export async function deactivateIngestion(): Promise<ConnectorsView> {
+  return fetchWithLogs(`${API_BASE}/connectors/deactivate`, jsonRequest("POST"));
 }
 
 export async function approveAction(incidentId: string, approved: boolean) {

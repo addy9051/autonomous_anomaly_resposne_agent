@@ -17,6 +17,7 @@ import json
 import httpx
 
 from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter, TelemetrySourceError
+from data_pipeline.connectors.query_templates import resolve_query
 from shared.config import get_settings
 from shared.schemas import (
     NormalizedTelemetryRecord,
@@ -101,7 +102,24 @@ class SplunkAdapter(BaseTelemetryAdapter):
         metric_names: list[str],
         time_window_seconds: int = 300,
     ) -> list[NormalizedTelemetryRecord]:
-        """Fetch aggregated log metrics (e.g. failed transactions) for an entity."""
+        """Fetch canonical metrics (templated searches) or the legacy error-log summary for an entity."""
+        records: list[NormalizedTelemetryRecord] = []
+        templated_any = False
+        for metric in metric_names:
+            query = resolve_query("splunk", metric, entity)
+            if query is None:
+                continue
+            templated_any = True
+            records.extend(
+                await self.query_signal(
+                    query=query,
+                    entity=entity,
+                    time_window_seconds=time_window_seconds,
+                    metric_name=metric,
+                )
+            )
+        if templated_any:
+            return records
         search_query = (
             f"search index=* service={entity} status>=500 "
             f"| stats count as failure_count by error_code"
@@ -116,6 +134,7 @@ class SplunkAdapter(BaseTelemetryAdapter):
         entity: str | None = None,
         tags: dict[str, Any] | None = None,
         time_window_seconds: int = 300,
+        metric_name: str | None = None,
     ) -> list[NormalizedTelemetryRecord]:
         """Execute a Splunk search export and return normalized log summary records."""
         endpoint = f"{self.base_url}/services/search/jobs/export"
@@ -163,8 +182,44 @@ class SplunkAdapter(BaseTelemetryAdapter):
                         if not result:
                             continue
                             
+                        if metric_name:
+                            raw_val = result.get(metric_name)
+                            if raw_val in (None, ""):
+                                continue
+                            records.append(
+                                NormalizedTelemetryRecord(
+                                    timestamp=datetime.now(timezone.utc),
+                                    entity=entity or result.get("service", "unknown"),
+                                    connector_source=self.source,
+                                    signal_type=TelemetrySignalType.METRIC,
+                                    metric_name=metric_name,
+                                    value=float(raw_val),
+                                    tags=dict(tags or {}),
+                                    raw_query=query,
+                                )
+                            )
+                            continue
+
                         # Dynamic value lookup strategy: handles structural changes 
                         # in your `stats count as X` alias automatically.
+                        if metric_name:
+                            raw_val = result.get(metric_name)
+                            if raw_val in (None, ""):
+                                continue
+                            records.append(
+                                NormalizedTelemetryRecord(
+                                    timestamp=datetime.now(timezone.utc),
+                                    entity=entity or result.get("service", "unknown"),
+                                    connector_source=self.source,
+                                    signal_type=TelemetrySignalType.METRIC,
+                                    metric_name=metric_name,
+                                    value=float(raw_val),
+                                    tags=dict(tags or {}),
+                                    raw_query=query,
+                                )
+                            )
+                            continue
+
                         count_val = 1.0
                         for target_key in ["count", "failure_count", "sum"]:
                             if target_key in result:

@@ -26,7 +26,10 @@ from pydantic import BaseModel, ConfigDict
 
 from agents.action.pagerduty import resolve_pagerduty_incident
 from agents.action.tiers import ACTION_TIERS, get_tier_description
+from data_pipeline.connectors.adapters import get_active_modes, get_telemetry_adapter, validate_modes
 from data_pipeline.connectors.alertmanager_intake import parse_alertmanager_payload
+from data_pipeline.connectors.connector_store import connector_store
+from data_pipeline.connectors.ingestion import TelemetryIngestionService
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from orchestrator import AgentOrchestrator
 from shared.config import get_settings
@@ -36,6 +39,7 @@ from shared.utils import LLMCostTracker, get_logger, setup_logging
 # ─── Global State ────────────────────────────────────────────────
 
 orchestrator: AgentOrchestrator | None = None
+ingestion: TelemetryIngestionService | None = None
 producer = SyntheticTelemetryProducer()
 logger = get_logger("api")
 
@@ -45,6 +49,7 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
     """Application lifespan: startup and shutdown."""
     global orchestrator
     setup_logging()
+    connector_store.load()
     orchestrator = AgentOrchestrator()
 
     settings = get_settings()
@@ -65,11 +70,46 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
 
     heartbeat_task = asyncio.create_task(pulse_heartbeat()) if heartbeat_enabled else None
 
+    global ingestion
+    ingestion = None
+    if settings.integration.enable_live_ingestion:
+        ingestion = _build_ingestion_service(orchestrator)
+        if ingestion is not None:
+            ingestion.start()
+
     yield
 
+    if ingestion is not None:
+        await ingestion.stop()
+        ingestion = None
     if heartbeat_task is not None:
         heartbeat_task.cancel()
     orchestrator = None
+
+
+def _build_ingestion_service(orch: AgentOrchestrator) -> TelemetryIngestionService | None:
+    cfg = get_settings().integration
+    services = [s.strip() for s in cfg.ingestion_services.split(",") if s.strip()]
+    if not services:
+        logger.warning("live_ingestion_disabled_no_services", hint="set INGESTION_SERVICES")
+        return None
+    modes = get_active_modes()
+    try:
+        validate_modes(modes)
+    except ValueError as exc:
+        logger.warning("live_ingestion_disabled_invalid_connectors", reason=str(exc))
+        return None
+    adapters = {m: get_telemetry_adapter(m) for m in modes}
+    return TelemetryIngestionService(
+        orch,
+        adapters,
+        services,
+        poll_interval_seconds=cfg.ingestion_poll_interval_seconds,
+        z_threshold=cfg.ingestion_zscore_threshold,
+        min_samples=cfg.ingestion_min_samples,
+        dry_run=cfg.ingestion_dry_run,
+        cooldown_seconds=cfg.ingestion_escalation_cooldown_seconds,
+    )
 
 
 # ─── App Setup ───────────────────────────────────────────────────
@@ -373,6 +413,130 @@ async def start_stream(request: StreamRequest, _auth: str = Depends(verify_auth)
         "incidents_detected": len(incidents),
         "incidents": [inc.model_dump(mode="json") for inc in incidents],
     }
+
+
+@app.get("/api/v1/ingestion/status", tags=["Monitoring"])
+async def ingestion_status() -> dict[str, Any]:
+    """Per-vendor live ingestion health (last success, errors, backoff state)."""
+    if ingestion is None:
+        return {"enabled": False}
+    return {"enabled": True, **ingestion.snapshot()}
+
+
+class ConnectorSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    connectors: list[str]
+
+
+class ConnectorCredentialsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    values: dict[str, Any] = {}
+
+
+class IngestionActivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    services: str
+    dry_run: bool = True
+    poll_interval_seconds: float = 15.0
+
+
+def _connector_view() -> dict[str, Any]:
+    view = connector_store.view()
+    view["active"] = ingestion is not None
+    if ingestion is not None:
+        view["status"] = ingestion.snapshot()
+    return view
+
+
+async def _restart_ingestion() -> None:
+    global ingestion
+    if ingestion is not None:
+        await ingestion.stop()
+        ingestion = None
+    if orchestrator is None or not get_settings().integration.enable_live_ingestion:
+        return
+    modes = get_active_modes()
+    if modes:
+        orchestrator.telemetry_adapter = get_telemetry_adapter()
+    ingestion = _build_ingestion_service(orchestrator)
+    if ingestion is not None:
+        ingestion.start()
+
+
+@app.get("/api/v1/connectors", tags=["Connectors"])
+async def get_connectors(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
+    """Connector catalog with the SRE's selection; secrets are reported only as is_set."""
+    return _connector_view()
+
+
+@app.put("/api/v1/connectors/selection", tags=["Connectors"])
+async def set_connector_selection(
+    request: ConnectorSelectionRequest, _auth: str = Depends(verify_auth)
+) -> dict[str, Any]:
+    try:
+        connector_store.set_selection(request.connectors)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _connector_view()
+
+
+@app.put("/api/v1/connectors/{vendor}/credentials", tags=["Connectors"])
+async def set_connector_credentials(
+    vendor: str, request: ConnectorCredentialsRequest, _auth: str = Depends(verify_auth)
+) -> dict[str, Any]:
+    try:
+        connector_store.set_credentials(vendor, request.values)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _connector_view()
+
+
+@app.post("/api/v1/connectors/{vendor}/test", tags=["Connectors"])
+async def test_connector(
+    vendor: str, request: ConnectorCredentialsRequest, _auth: str = Depends(verify_auth)
+) -> dict[str, Any]:
+    """Health-check a connector using unsaved form values merged over stored ones."""
+    try:
+        return await connector_store.test_connection(vendor, request.values)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/connectors/activate", tags=["Connectors"])
+async def activate_ingestion(
+    request: IngestionActivationRequest, _auth: str = Depends(verify_auth)
+) -> dict[str, Any]:
+    """Build CONNECTOR_MODES from the selection and (re)start combined live ingestion."""
+    try:
+        connector_store.set_ingestion(
+            services=request.services,
+            dry_run=request.dry_run,
+            poll_interval_seconds=request.poll_interval_seconds,
+            enabled=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    problems = connector_store.activation_problems()
+    if problems:
+        raise HTTPException(status_code=422, detail="; ".join(problems))
+    await _restart_ingestion()
+    return _connector_view()
+
+
+@app.post("/api/v1/connectors/deactivate", tags=["Connectors"])
+async def deactivate_ingestion(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
+    ing = connector_store.state["ingestion"]
+    connector_store.set_ingestion(
+        services=ing.get("services", ""),
+        dry_run=bool(ing.get("dry_run", True)),
+        poll_interval_seconds=float(ing.get("poll_interval_seconds", 15.0)),
+        enabled=False,
+    )
+    await _restart_ingestion()
+    return _connector_view()
 
 
 @app.get("/api/v1/telemetry/recent", tags=["Monitoring"])

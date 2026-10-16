@@ -53,3 +53,5 @@ htmlcov/
 tfplan*
 .terraform.lock.hcl
 !infra/aws/terraform/.terraform.lock.hcl
+
+.connector_state.json

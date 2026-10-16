@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter, TelemetrySourceError
+from data_pipeline.connectors.query_templates import resolve_query
 from shared.config import get_settings
 from shared.schemas import (
     NormalizedTelemetryRecord,
@@ -84,17 +85,25 @@ class DatadogAdapter(BaseTelemetryAdapter):
         """Fetch metric timeseries for an entity via Datadog Query API."""
         records: list[NormalizedTelemetryRecord] = []
         for metric in metric_names:
-            query = f"avg:{metric}{{service:{entity}}}"
-            records.extend(await self.query_signal(query=query, entity=entity))
+            templated = resolve_query("datadog", metric, entity)
+            query = templated or f"avg:{metric}{{service:{entity}}}"
+            records.extend(
+                await self.query_signal(
+                    query=query,
+                    entity=entity,
+                    time_window_seconds=time_window_seconds,
+                    metric_name=metric if templated else None,
+                )
+            )
         return records
 
-    
-    
     async def query_signal(
         self,
         query: str,
         entity: str | None = None,
         tags: dict[str, Any] | None = None,
+        time_window_seconds: int = 300,
+        metric_name: str | None = None,
     ) -> list[NormalizedTelemetryRecord]:
         """Query Datadog v2 API for modern metric series evaluation."""
         # Upgrading to the recommended V2 API path for production parity
@@ -102,7 +111,7 @@ class DatadogAdapter(BaseTelemetryAdapter):
         records: list[NormalizedTelemetryRecord] = []
         
         now_ms = int(time.time() * 1000)
-        from_ms = now_ms - (300 * 1000) # 5 minutes window
+        from_ms = now_ms - (int(time_window_seconds) * 1000)
 
         if not (self.api_key and self.app_key):
             raise TelemetrySourceError("Datadog API/application keys are not configured")
@@ -140,18 +149,21 @@ class DatadogAdapter(BaseTelemetryAdapter):
 
         try:
             data = resp.json()
-            series_list = data.get("data", {}).get("attributes", {}).get("series", [])
+            attrs = data.get("data", {}).get("attributes", {})
+            series_list = attrs.get("series", [])
+            times = attrs.get("times", [])
+            value_rows = attrs.get("values", [])
 
-            for series in series_list:
-                # In V2, timeseries data arrays map coordinates directly
-                values = series.get("values", [])
-                times = data.get("data", {}).get("attributes", {}).get("times", [])
+            for idx, series in enumerate(series_list):
+                values = series.get("values")
+                if values is None:
+                    values = value_rows[idx] if idx < len(value_rows) else []
 
-                metric_name = series.get("query_index", query)
+                record_metric = metric_name or series.get("metric") or query
                 series_tags = series.get("tags", [])
 
-                latest_val = float(values[-1]) if values else 0.0
                 all_vals = [float(v) for v in values if v is not None]
+                latest_val = all_vals[-1] if all_vals else 0.0
                 baseline = sum(all_vals) / len(all_vals) if all_vals else latest_val
 
                 raw_ts_ms = times[-1] if times else now_ms
@@ -174,7 +186,7 @@ class DatadogAdapter(BaseTelemetryAdapter):
                         entity=entity or parsed_tags.get("service", "datadog_scope"),
                         connector_source=self.source,
                         signal_type=TelemetrySignalType.METRIC,
-                        metric_name=metric_name,
+                        metric_name=record_metric,
                         value=round(latest_val, 2),
                         baseline_mean=round(baseline, 2),
                         tags=combined_tags,
@@ -197,7 +209,10 @@ class DatadogAdapter(BaseTelemetryAdapter):
         queries = ["avg:trace.rack.request.errors{*}", "avg:system.cpu.user{*}"]
         while True:
             for q in queries:
-                records = await self.query_signal(query=q)
+                try:
+                    records = await self.query_signal(query=q)
+                except TelemetrySourceError:
+                    continue
                 for rec in records:
                     if not entities or rec.entity in entities:
                         yield rec
