@@ -1,5 +1,6 @@
 """
-Judge promotion gate. Exit codes: 0 = gate passed, 1 = gate failed, 2 = not ready (too few human labels).
+Judge promotion gate. Exit codes: 0 = gate passed, 1 = gate failed, 2 = not ready (too few human labels),
+3 = blocked (judge is not from a different provider than the agents; prompts on a TTY, fails otherwise).
 
   python -m evals.run_judge_gate                       # call the judge live (needs the in-VPC LLM server)
   python -m evals.run_judge_gate --judge-scores f.json # reuse cached judge scores, no network
@@ -23,6 +24,7 @@ from evals.agreement import (
     evaluate_gate,
 )
 from evals.judge import LLMJudge, local_judge_fn
+from evals.provider_check import JudgeIndependenceError, choose_independent_judge
 from shared.config import get_settings
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -60,6 +62,11 @@ async def score_cases(judge: LLMJudge, cases: list[dict[str, Any]]) -> dict[str,
 
 
 async def run(args: argparse.Namespace) -> int:
+    try:
+        args.model = choose_independent_judge(args.model, get_settings().llm)
+    except JudgeIndependenceError as exc:
+        print(f"BLOCKED: {exc}")
+        return 3
     cases = load_cases(Path(args.cases))
     human = aggregate_human_labels(load_labels(Path(args.labels)))
     anchors, eval_cases = split_cases(cases, human)

@@ -167,7 +167,7 @@ poetry run python scripts/run_chaos_experiments.py
 python -m evals.run_judge_gate              # judge agreement gate, needs the in-VPC LLM server
 ```
 
-The judge calls the local model (`JUDGE_MODEL`). Re-baseline agreement with human labels before trusting scores. The golden dataset test checks dataset integrity only; retrieval quality must be measured against the live knowledge base once it is ingested.
+The judge calls the local model (`JUDGE_MODEL`) and must come from a different provider than every agent model. `evals/provider_check.py` checks this deterministically from model names (unknown models fail; declare them with `MODEL_PROVIDER_MAP`). `local_judge_fn` refuses to run on a clash, and `run_judge_gate` prompts you to pick another provider (exit code 3 when non-interactive). Re-baseline agreement with human labels before trusting scores. The golden dataset test checks dataset integrity only; retrieval quality must be measured against the live knowledge base once it is ingested.
 
 ## Security
 

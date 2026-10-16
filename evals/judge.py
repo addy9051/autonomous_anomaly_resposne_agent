@@ -94,8 +94,11 @@ def local_judge_fn(model: str) -> JudgeFn:
     """temperature=0 call to the in-VPC inference server; imported lazily so offline tests need no deps."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
+    from evals.provider_check import assert_judge_independent
+    from shared.config import get_settings
     from shared.llm import get_chat_model
 
+    assert_judge_independent(model, get_settings().llm)
     llm = get_chat_model(model, temperature=0)
 
     async def call(system: str, user: str) -> str:

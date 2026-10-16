@@ -169,7 +169,7 @@ class TestRunner:
             cases=str(CASES_PATH),
             labels=str(empty),
             judge_scores=str(scores_file),
-            model="m",
+            model="qwen2.5-72b-instruct",
             threshold=0.8,
             min_cases=30,
             out=None,

@@ -40,7 +40,7 @@ class LLMConfig(BaseSettings):
     diagnosis_agent_model: str = "llama-3.1-70b-instruct"
     action_agent_model: str = "llama-3.1-70b-instruct"
     feedback_agent_model: str = "llama-3.1-8b-instruct"
-    judge_model: str = "llama-3.1-70b-instruct"
+    judge_model: str = "qwen2.5-72b-instruct"  # must be a different provider than every agent model
 
     @property
     def embeddings_url(self) -> str:
