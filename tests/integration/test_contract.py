@@ -31,25 +31,20 @@ async def test_n8n_webhook_contract() -> None:
 @pytest.mark.asyncio
 async def test_vertex_llm_contract() -> None:
     """
-    Contract test interacting with OpenAI / LLM backbone briefly.
+    Contract test against the in-VPC LLM server; skipped when it is unreachable.
     """
-    settings = get_settings()
-    if (
-        not settings.llm.openai_api_key
-        or settings.llm.openai_api_key.startswith("sk-mock")
-        or "your-openai-api-key" in settings.llm.openai_api_key
-    ):
-        pytest.skip("No real OpenAI key provided.")
+    import httpx
 
     from langchain_core.messages import HumanMessage
 
     from shared.llm import get_chat_model
 
-    llm = get_chat_model(model_name="gpt-4o-mini", max_tokens=10)
+    settings = get_settings()
     try:
-        response = await llm.ainvoke([HumanMessage(content="Hello")])
-        assert response.content is not None
-    except Exception as exc:
-        if "quota" in str(exc).lower() or "429" in str(exc) or "credits" in str(exc).lower():
-            pytest.skip(f"OpenAI API rate limit or quota exhausted: {exc}")
-        raise
+        httpx.get(settings.llm.base_url.rstrip("/") + "/models", timeout=2.0).raise_for_status()
+    except Exception:
+        pytest.skip("Local LLM server not reachable.")
+
+    llm = get_chat_model(max_tokens=10)
+    response = await llm.ainvoke([HumanMessage(content="Hello")])
+    assert response.content is not None

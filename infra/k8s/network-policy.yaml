@@ -1,0 +1,29 @@
+# Default-deny egress for the agent. Pods may only reach: cluster DNS, in-cluster services
+# (Postgres, Redis, the self-hosted LLM server) and private VPC ranges that hold the observability
+# backends. There is no 0.0.0.0/0 rule, so the model can never reach the public internet.
+# Tune the CIDR to your VPC; add a narrow ipBlock for any SaaS endpoint you explicitly allow
+# (and the matching EGRESS_ALLOWED_HOSTS entry).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: anomaly-agent-egress-allowlist
+spec:
+  podSelector:
+    matchLabels:
+      app: anomaly-agent
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector: {}
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8

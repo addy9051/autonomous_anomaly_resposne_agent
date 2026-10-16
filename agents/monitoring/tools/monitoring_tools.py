@@ -21,6 +21,7 @@ from langchain_core.tools import tool
 from sklearn.ensemble import IsolationForest
 
 from shared.config import get_settings
+from shared.egress import guarded_async_client
 from shared.utils import get_logger
 
 logger = get_logger(__name__)
@@ -44,7 +45,7 @@ async def prometheus_query(query: str, time_range: str = "5m") -> str:
     settings = get_settings()
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with guarded_async_client(timeout=10.0) as client:
             response = await client.get(
                 f"{settings.integrations.prometheus_url}/api/v1/query",
                 params={"query": query},

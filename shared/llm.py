@@ -1,8 +1,9 @@
 """
-LLM Factory — unified interface for multi-provider LLM support.
+LLM factory for the sandboxed deployment.
 
-Routes model requests to the appropriate provider (OpenAI, Anthropic, Google)
-based on the model name prefix and handles credential mapping.
+Every model is served by a self-hosted OpenAI-compatible inference server (vLLM / Ollama)
+inside the VPC. There is no external provider path: the endpoint is validated against the
+egress policy, so pointing it at a public API fails closed.
 """
 
 from __future__ import annotations
@@ -10,79 +11,45 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from shared.config import get_settings
+from shared.egress import check_url
 
 if TYPE_CHECKING:
+    from langchain_core.embeddings import Embeddings
     from langchain_core.language_models.chat_models import BaseChatModel
 
 
 def get_chat_model(
-    model_name: str,
+    model_name: str | None = None,
     temperature: float = 0.1,
     max_tokens: int | None = None,
     **kwargs: Any,  # noqa: ANN401
 ) -> BaseChatModel:
-    """
-    Factory function to get a LangChain chat model based on the model name.
+    """Return a chat model backed by the in-VPC inference server."""
+    settings = get_settings().llm
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError:
+        raise ImportError("langchain-openai (OpenAI-compatible client) is required: pip install langchain-openai") from None
+    return ChatOpenAI(
+        model=model_name or settings.default_model,
+        base_url=check_url(settings.base_url),
+        api_key=settings.api_key,
+        temperature=temperature,
+        max_tokens=max_tokens or 2048,
+        timeout=settings.request_timeout_seconds,
+        **kwargs,
+    )
 
-    Args:
-        model_name: The name of the model (e.g., 'gpt-4o', 'claude-3-5-sonnet-latest')
-        temperature: Sampling temperature
-        max_tokens: Max tokens to generate
-        **kwargs: Additional provider-specific arguments
 
-    Returns:
-        An instance of a LangChain BaseChatModel.
-    """
-    settings = get_settings()
+def get_embeddings() -> Embeddings:
+    """Return an embeddings client backed by the in-VPC inference server."""
+    settings = get_settings().llm
+    from langchain_openai import OpenAIEmbeddings
 
-    model_lower = model_name.lower()
-
-    # 1. Anthropic (Claude)
-    if model_lower.startswith("claude-"):
-        try:
-            from langchain_anthropic import ChatAnthropic
-        except ImportError:
-            raise ImportError(
-                "langchain-anthropic package is required for Claude models. "
-                "Install it with: pip install langchain-anthropic"
-            ) from None
-        return ChatAnthropic(
-            model=model_name,
-            anthropic_api_key=settings.llm.anthropic_api_key,
-            temperature=temperature,
-            max_tokens_to_sample=max_tokens or 2048,
-            **kwargs,
-        )
-
-    # 2. Google (Gemini)
-    elif model_lower.startswith("gemini-"):
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-        except ImportError:
-            raise ImportError(
-                "langchain-google-genai package is required for Gemini models. "
-                "Install it with: pip install langchain-google-genai"
-            ) from None
-        return ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=settings.llm.google_application_credentials or "",  # Prioritize key if set
-            temperature=temperature,
-            max_output_tokens=max_tokens or 2048,
-            **kwargs,
-        )
-
-    # 3. OpenAI (Default)
-    else:
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError:
-            raise ImportError(
-                "langchain-openai package is required for OpenAI models. Install it with: pip install langchain-openai"
-            ) from None
-        return ChatOpenAI(
-            model=model_name,
-            api_key=settings.llm.openai_api_key,
-            temperature=temperature,
-            max_tokens=max_tokens or 2048,
-            **kwargs,
-        )
+    return OpenAIEmbeddings(
+        model=settings.embedding_model,
+        base_url=check_url(settings.embeddings_url),
+        api_key=settings.api_key,
+        dimensions=settings.embedding_dimensions,
+        check_embedding_ctx_length=False,
+    )

@@ -321,7 +321,12 @@ class IncidentRecord(BaseModel):
     total_llm_tokens_used: int = 0
     total_llm_cost_usd: float = 0.0
 
-
+    # Sandboxed intelligence layer: memory linkage and the SRE-facing brief
+    episode_id: str | None = None
+    duplicate_of: str | None = None
+    handling_branch: str | None = None  # critical_rca | auto_fix | recommend
+    skills_used: list[str] = Field(default_factory=list)
+    brief: dict[str, Any] | None = None
 # ─── Normalized Telemetry Schema (Universal Observability API Contract) ─
 
 

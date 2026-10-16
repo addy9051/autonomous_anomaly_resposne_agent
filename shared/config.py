@@ -23,27 +23,28 @@ class LLMConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
-    # OpenAI
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o"
+    # Self-hosted, OpenAI-compatible inference server inside the VPC (vLLM / Ollama).
+    # No external provider is supported: the sandbox has no internet egress.
+    base_url: str = Field(default="http://localhost:8001/v1", validation_alias="LLM_BASE_URL")
+    api_key: str = Field(default="not-needed", validation_alias="LLM_API_KEY")
+    request_timeout_seconds: float = 60.0
 
-    # Cohere (For cross-encoder reranking)
-    cohere_api_key: str = ""
+    # Embeddings served by the same (or a sibling) in-VPC server.
+    embedding_base_url: str = Field(default="", validation_alias="EMBEDDING_BASE_URL")
+    embedding_model: str = "nomic-embed-text"
+    embedding_dimensions: int = 768
 
-    # Google / Vertex AI
-    google_application_credentials: str | None = None
-    google_project_id: str = ""
-    google_region: str = "us-central1"
-    vertex_ai_model: str = "gemini-2.5-flash-lite"
+    # Per-agent model routing (names of models served by the local server)
+    default_model: str = "llama-3.1-8b-instruct"
+    monitoring_agent_model: str = "llama-3.1-8b-instruct"
+    diagnosis_agent_model: str = "llama-3.1-70b-instruct"
+    action_agent_model: str = "llama-3.1-70b-instruct"
+    feedback_agent_model: str = "llama-3.1-8b-instruct"
+    judge_model: str = "llama-3.1-70b-instruct"
 
-    # Anthropic
-    anthropic_api_key: str = ""
-
-    # Per-agent model routing
-    monitoring_agent_model: str = "gpt-4o-mini"
-    diagnosis_agent_model: str = "gpt-4o"
-    action_agent_model: str = "gpt-4o"
-    feedback_agent_model: str = "gpt-4o-mini"
+    @property
+    def embeddings_url(self) -> str:
+        return self.embedding_base_url or self.base_url
 
 
 class DataConfig(BaseSettings):
@@ -119,6 +120,22 @@ class AgentConfig(BaseSettings):
     stabilization_window_seconds_dry_run: float = Field(
         default=0.1,
         description="Stabilization window for dry-run / simulation verification (seconds)",
+    )
+    auto_remediation_enabled: bool = Field(
+        default=False,
+        description="Allow the agent to execute allowlisted reversible actions on non-critical incidents",
+    )
+    auto_action_allowlist: str = Field(
+        default="restart_unhealthy_pod,scale_replicas,clear_cache",
+        description="Comma-separated reversible actions the agent may execute without approval",
+    )
+    auto_action_target_services: str = Field(
+        default="",
+        description="Comma-separated services where auto-remediation is permitted (empty = none; '*' = all)",
+    )
+    auto_action_max_per_hour: int = Field(default=3, description="Max auto-executed actions per service per hour")
+    duplicate_window_minutes: int = Field(
+        default=60, description="Window in which an identical fingerprint is treated as a duplicate episode"
     )
 
 
@@ -246,11 +263,13 @@ class AppConfig(BaseSettings):
         default=False,
         description="Enable synthetic telemetry heartbeat. Auto-enabled in development if not explicitly set.",
     )
-    enable_live_rl: bool = Field(default=False, description="Pause live reinforcement learning on production outcomes")
-    # Vowpal Wabbit Distributed Config
-    vw_model_gcs_bucket: str | None = Field(None, alias="VW_MODEL_GCS_BUCKET")
-    vw_is_trainer: bool = Field(False, alias="VW_IS_TRAINER")
-    vw_sync_interval_seconds: int = 300
+    egress_enforce: bool = Field(default=True, description="Fail closed on outbound calls outside the allowlist")
+    egress_allowed_hosts: str = Field(
+        default="", description="Comma-separated extra hosts (supports *.suffix), e.g. vendor SaaS endpoints"
+    )
+    egress_allowed_cidrs: str = Field(
+        default="", description="Comma-separated extra CIDRs; private ranges are always allowed"
+    )
 
 
 class Settings(BaseModel):
@@ -288,7 +307,7 @@ def get_settings() -> Settings:
     if secret_mount_path.exists():
         # Map filenames to setting attributes and environment variables
         secret_map = {
-            "openai-api-key": ("llm", "openai_api_key", "OPENAI_API_KEY"),
+            "llm-api-key": ("llm", "api_key", "LLM_API_KEY"),
             "pagerduty-api-key": ("integrations", "pagerduty_api_key", "PAGERDUTY_API_KEY"),
             "slack-bot-token": ("integrations", "slack_bot_token", "SLACK_BOT_TOKEN"),
             "n8n-api-key": ("integrations", "n8n_api_key", "N8N_API_KEY"),

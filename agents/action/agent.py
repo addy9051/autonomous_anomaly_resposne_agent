@@ -75,6 +75,12 @@ class ActionAgent:
             span.set_attribute("incident.id", diagnosis.incident_id)
             span.set_attribute("num_actions", len(diagnosis.recommended_actions))
 
+            # Critical incidents are RCA-only; the policy gate also denies, this is the structural guard.
+            if incident.anomaly_event and incident.anomaly_event.severity.value == "critical":
+                incident.action_results = []
+                incident.status = IncidentStatus.ESCALATED
+                return []
+
             results: list[ActionResult] = []
             incident.status = IncidentStatus.EXECUTING
 
@@ -172,6 +178,7 @@ class ActionAgent:
             environment=self.settings.app.app_env,
             params=action.params,
             dry_run=dry_run,
+            severity=incident.anomaly_event.severity.value if incident.anomaly_event else None,
         )
 
         if policy_eval.decision == ActionPolicyDecision.DENIED:
@@ -236,6 +243,8 @@ class ActionAgent:
         # Action is PERMITTED_AUTO under deterministic policy constraints
         logger.info("action_permitted_auto_executing", action=action.action, dry_run=dry_run)
         res = await trigger_workflow(action.action, action.params, dry_run=dry_run)
+        if not dry_run:
+            DeterministicActionPolicy.record_auto_execution(service)
         return ActionResult(
             incident_id=diagnosis.incident_id,
             action_taken=action.action,

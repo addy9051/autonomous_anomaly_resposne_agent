@@ -1,7 +1,7 @@
 """
 Judge promotion gate. Exit codes: 0 = gate passed, 1 = gate failed, 2 = not ready (too few human labels).
 
-  python -m evals.run_judge_gate                       # call the judge live (needs OPENAI_API_KEY)
+  python -m evals.run_judge_gate                       # call the judge live (needs the in-VPC LLM server)
   python -m evals.run_judge_gate --judge-scores f.json # reuse cached judge scores, no network
 """
 
@@ -22,7 +22,8 @@ from evals.agreement import (
     compute_agreement,
     evaluate_gate,
 )
-from evals.judge import LLMJudge, openai_judge_fn
+from evals.judge import LLMJudge, local_judge_fn
+from shared.config import get_settings
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -67,11 +68,7 @@ async def run(args: argparse.Namespace) -> int:
         payload = json.loads(Path(args.judge_scores).read_text(encoding="utf-8"))
         judge_scores, fingerprint = payload["scores"], payload.get("fingerprint", "cached")
     else:
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            print("OPENAI_API_KEY is not set; pass --judge-scores to use cached scores.", file=sys.stderr)
-            return 1
-        judge = LLMJudge(openai_judge_fn(args.model, api_key), args.model, anchors)
+        judge = LLMJudge(local_judge_fn(args.model), args.model, anchors)
         judge_scores, fingerprint = await score_cases(judge, eval_cases), judge.fingerprint
 
     eval_ids = {c["id"] for c in eval_cases}
@@ -108,7 +105,7 @@ def main() -> None:
     p.add_argument("--cases", default=str(DATA_DIR / "golden_cases.json"))
     p.add_argument("--labels", default=str(DATA_DIR / "human_labels.jsonl"))
     p.add_argument("--judge-scores", default=None)
-    p.add_argument("--model", default=os.environ.get("JUDGE_MODEL", "gpt-4o"))
+    p.add_argument("--model", default=os.environ.get("JUDGE_MODEL") or get_settings().llm.judge_model)
     p.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     p.add_argument("--min-cases", type=int, default=DEFAULT_MIN_CASES)
     p.add_argument("--out", default="evals/reports/judge_gate.json")

@@ -6,10 +6,10 @@ import { Activity, Shield, Cpu, Zap, Box } from 'lucide-react';
 interface StatsProps {
   activeIncidents: number;
   resolvedIncidents: number;
-  policyVersion: string;
+  memoryDegraded: boolean;
 }
 
-export default function StatusCards({ activeIncidents, resolvedIncidents, policyVersion }: StatsProps) {
+export default function StatusCards({ activeIncidents, resolvedIncidents, memoryDegraded }: StatsProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
       <Card 
@@ -26,10 +26,11 @@ export default function StatusCards({ activeIncidents, resolvedIncidents, policy
         trend="+12% from yesterday"
       />
       <Card 
-        title="RL Policy Version" 
-        value={policyVersion} 
+        title="Episodic Memory" 
+        value={memoryDegraded ? "Degraded" : "Postgres"} 
         icon={<Shield className="text-accent" />}
-        trend="v2.0.0-vw-stable"
+        trend={memoryDegraded ? "In-process fallback: duplicates are not durable" : "Duplicate handling durable"}
+        trendColor={memoryDegraded ? "text-danger" : "text-foreground/50"}
       />
       <Card 
         title="Agent Uptime" 

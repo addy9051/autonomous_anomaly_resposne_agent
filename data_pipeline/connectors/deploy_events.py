@@ -14,6 +14,7 @@ import httpx
 
 from data_pipeline.connectors.adapters.base import TelemetrySourceError
 from shared.config import get_settings
+from shared.egress import guarded_async_client
 from shared.schemas import (
     NormalizedTelemetryRecord,
     Severity,
@@ -49,7 +50,7 @@ async def fetch_recent_deployments(
     params = {"environment": cfg.github_deploy_environment, "per_page": 30}
 
     owns_client = client is None
-    http = client or httpx.AsyncClient(timeout=10.0)
+    http = client or guarded_async_client(timeout=10.0)
     try:
         resp = await http.get(url, headers=headers, params=params)
         if resp.status_code != 200:

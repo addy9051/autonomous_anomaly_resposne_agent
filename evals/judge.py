@@ -90,12 +90,13 @@ class LLMJudge:
         return parse_response(case["id"], raw)
 
 
-def openai_judge_fn(model: str, api_key: str) -> JudgeFn:
-    """temperature=0 OpenAI-backed call; imported lazily so offline tests need no network deps."""
+def local_judge_fn(model: str) -> JudgeFn:
+    """temperature=0 call to the in-VPC inference server; imported lazily so offline tests need no deps."""
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model=model, temperature=0, openai_api_key=api_key)
+    from shared.llm import get_chat_model
+
+    llm = get_chat_model(model, temperature=0)
 
     async def call(system: str, user: str) -> str:
         resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])

@@ -17,17 +17,13 @@ python = ">=3.11,<3.14"
 # ─── Agent Frameworks ─────────────────────────────────────────
 langchain = ">=0.3.0,<1.0.0"
 langchain-openai = ">=0.2.0"
-langchain-google-genai = ">=2.0.0"
-langchain-anthropic = ">=0.2.0"
 langchain-community = ">=0.3.0"
 langgraph = ">=0.2.0"
 langgraph-checkpoint = "==3.0.1"
 langgraph-checkpoint-redis = "==0.1.0"
-crewai = ">=0.80.0"
 
 # ─── RAG & Embeddings ────────────────────────────────────────
 langchain-postgres = ">=0.0.9"
-sentence-transformers = ">=3.0.0"
 
 # ─── Data & Streaming ────────────────────────────────────────
 confluent-kafka = ">=2.3.0"
@@ -43,7 +39,6 @@ google-cloud-storage = ">=2.14.0"
 scikit-learn = ">=1.4.0"
 numpy = ">=1.26.0"
 pandas = ">=2.2.0"
-vowpalwabbit = ">=9.11.0"
 
 # ─── Observability ────────────────────────────────────────────
 opentelemetry-api = ">=1.24.0"
@@ -69,7 +64,6 @@ structlog = ">=24.1.0"
 tenacity = ">=8.3.0"
 orjson = ">=3.10.0"
 rich = ">=13.7.0"
-cohere = "^6.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0.0"

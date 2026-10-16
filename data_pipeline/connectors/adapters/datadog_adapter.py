@@ -17,6 +17,7 @@ import httpx
 from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter, TelemetrySourceError
 from data_pipeline.connectors.query_templates import resolve_query
 from shared.config import get_settings
+from shared.egress import guarded_async_client
 from shared.schemas import (
     NormalizedTelemetryRecord,
     TelemetryConnectorSource,
@@ -47,7 +48,7 @@ class DatadogAdapter(BaseTelemetryAdapter):
         self.app_key = app_key or settings.integration.datadog_app_key
         self.site = site or settings.integration.datadog_site
         self.base_url = f"https://api.{self.site}".rstrip("/")
-        self.client = httpx.AsyncClient(timeout=10.0)
+        self.client = guarded_async_client(timeout=10.0)
         logger.info("datadog_adapter_initialized", site=self.site, configured=bool(self.api_key))
 
     async def close(self) -> None:

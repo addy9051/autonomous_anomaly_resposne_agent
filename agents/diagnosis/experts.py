@@ -17,6 +17,9 @@ from agents.diagnosis.prompts import (
 )
 from shared.config import get_settings
 from shared.llm import get_chat_model
+from shared.utils import get_logger
+
+logger = get_logger("expert_agent")
 
 
 class ExpertAgent:
@@ -30,9 +33,32 @@ class ExpertAgent:
             max_tokens=1024,
         )
 
-    async def investigate(self, anomaly_context: dict[str, Any]) -> dict[str, Any]:
-        """Run domain-specific investigation."""
+    async def _retrieve(self, anomaly_context: dict[str, Any]) -> list[Any]:
+        """Per-expert RAG: own collection plus the shared policy/SLA collection. Failure = no references."""
+        try:
+            from knowledge_base.retrieval.search import HybridSearchService
+
+            services = anomaly_context.get("affected_services") or []
+            query = f"{anomaly_context.get('anomaly_type', '')} {' '.join(services)} {str(anomaly_context.get('reasoning', ''))[:200]}"
+            return await HybridSearchService().search(
+                query=query, service_tags=services or None, collections=[self.expert_type, "policy"]
+            )
+        except Exception as exc:
+            logger.warning("expert_rag_unavailable", expert=self.expert_type, error=str(exc))
+            return []
+
+    async def investigate(self, anomaly_context: dict[str, Any], skills_text: str = "") -> dict[str, Any]:
+        """Run domain-specific investigation using only this expert's knowledge collection + policy/SLA docs."""
         prompt = self.prompt_template.format(anomaly_context=json.dumps(anomaly_context, indent=2, default=str))
+        references = await self._retrieve(anomaly_context)
+        if references:
+            prompt += "\n\n## Reference material (internal runbooks / policies / SLAs)\n" + "\n".join(
+                f"- {r.title}: {' '.join(r.relevant_steps[:4])}" for r in references
+            )
+        else:
+            prompt += "\n\n## Reference material\nNone found for this domain; say so rather than guessing policy."
+        if skills_text:
+            prompt += f"\n\n## Procedural skills (follow these)\n{skills_text}"
 
         response = await self.llm.ainvoke(
             [

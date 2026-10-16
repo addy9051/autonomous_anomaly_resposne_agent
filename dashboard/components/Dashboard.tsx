@@ -6,7 +6,6 @@ import { LayoutDashboard, Activity, Database, Zap, Shield, Play, Wifi, WifiOff, 
 import StatusCards from './StatusCards';
 import TelemetryPulse from './TelemetryPulse';
 import ActiveIncidents from './ActiveIncidents';
-import PolicyPerformance from './PolicyPerformance';
 import { 
   fetchStats, 
   fetchRecentTelemetry, 
@@ -14,16 +13,13 @@ import {
   fetchDetailedHealth,
   triggerDemo,
   TelemetryEvent,
-  IncidentRecord,
-  RewardHistoryEntry,
-  fetchRewardHistory
+  IncidentRecord
 } from '@/lib/api';
 
 export default function Dashboard() {
   const [stats, setStats] = useState<any>(null);
   const [telemetry, setTelemetry] = useState<TelemetryEvent[]>([]);
   const [activeIncidents, setActiveIncidents] = useState<IncidentRecord[]>([]);
-  const [rewards, setRewards] = useState<RewardHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [isInjecting, setIsInjecting] = useState(false);
   const [isBackendOnline, setIsBackendOnline] = useState<boolean | null>(null);
@@ -35,16 +31,14 @@ export default function Dashboard() {
       const health = await fetchDetailedHealth();
       setIsBackendOnline(health?.status === 'healthy');
       
-      const [s, t, a, r] = await Promise.all([
+      const [s, t, a] = await Promise.all([
         fetchStats(),
         fetchRecentTelemetry(),
-        fetchActiveIncidents(),
-        fetchRewardHistory()
+        fetchActiveIncidents()
       ]);
       setStats(s);
       setTelemetry(t);
       setActiveIncidents(a);
-      setRewards(r);
       setLoading(false);
       setErrorCount(0);
     } catch (err) {
@@ -142,12 +136,11 @@ export default function Dashboard() {
         <StatusCards 
           activeIncidents={activeIncidents.length}
           resolvedIncidents={stats?.resolved_incidents || 0}
-          policyVersion={stats?.feedback_policy?.current_version || "v1.0"}
+          memoryDegraded={Boolean(stats?.episodic_memory_degraded)}
         />
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+        <div className="mb-8">
           <TelemetryPulse events={telemetry} />
-          <PolicyPerformance rewards={rewards} />
         </div>
 
         <ActiveIncidents incidents={activeIncidents} />

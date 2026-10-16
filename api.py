@@ -53,6 +53,9 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
     orchestrator = AgentOrchestrator()
 
     settings = get_settings()
+    from shared.egress import egress_self_test
+
+    egress_self_test()
     heartbeat_enabled = (
         settings.app.enable_synthetic_heartbeat
         or settings.app.app_env.lower() == "development"
@@ -591,13 +594,29 @@ async def get_status() -> dict[str, Any]:
     return orchestrator.get_status()
 
 
-@app.get("/api/v1/feedback/policy", tags=["Feedback"])
-async def get_feedback_policy() -> dict[str, Any]:
-    """Get current RL policy status and action statistics."""
+@app.get("/api/v1/episodes/{episode_id}", tags=["Memory"])
+async def get_episode(episode_id: str) -> dict[str, Any]:
+    """Episodic memory: the episode, its SRE brief and the per-stage timeline of how it was handled."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    episode = await orchestrator.memory.get(episode_id)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    return {
+        "episode": episode.model_dump(mode="json"),
+        "timeline": await orchestrator.memory.timeline(episode_id),
+    }
 
-    return orchestrator.feedback_agent.get_policy_status()
+
+@app.get("/api/v1/incidents/{incident_id}/brief", tags=["Incidents"])
+async def get_incident_brief(incident_id: str) -> dict[str, Any]:
+    """SRE-facing brief: issue, root cause, fix applied or recommended steps, gaps, duplicate linkage."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    incident = orchestrator.active_incidents.get(incident_id) or orchestrator.store.get(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {"incident_id": incident_id, "episode_id": incident.episode_id, "brief": incident.brief}
 
 
 @app.get("/api/v1/actions/tiers", tags=["Actions"])
@@ -610,18 +629,6 @@ async def get_action_tiers() -> dict[str, Any]:
         }
         for tier_name, tier in ACTION_TIERS.items()
     }
-
-
-@app.get("/api/v1/feedback/rewards", tags=["Feedback"])
-async def get_reward_history(limit: int = 100) -> dict[str, Any]:
-    """Get the history of RL rewards for plotting performance curves."""
-    if not orchestrator:
-        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-
-    # Access experience buffer from feedback agent
-    buffer = orchestrator.feedback_agent.experience_buffer[-limit:]
-
-    return {"total": len(buffer), "history": buffer}
 
 
 @app.post("/api/v1/incidents/{incident_id}/approve", tags=["Actions"])

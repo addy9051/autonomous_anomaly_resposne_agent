@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
+from collections import defaultdict, deque
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -72,7 +74,7 @@ class DeterministicActionPolicy:
     4. Validates parameters within strict, typed bounds.
     """
 
-    # Actions considered safe for bounded automation ONLY in non-production with dry_run
+    # Actions considered reversible; the configurable auto allowlist can only narrow this set
     LOW_RISK_ACTIONS = {
         "scale_replicas",
         "clear_cache",
@@ -104,6 +106,35 @@ class DeterministicActionPolicy:
         "modify_firewall_rules",
     }
 
+    _auto_history: dict[str, deque[float]] = defaultdict(deque)
+
+    @classmethod
+    def _auto_allowed(cls, action_name: str, service: str, dry_run: bool, env: str) -> tuple[bool, str]:
+        """Whether an allowlisted reversible action may run without approval, with the reason if not."""
+        agent_cfg = get_settings().agent
+        allowlist = {a.strip() for a in agent_cfg.auto_action_allowlist.split(",") if a.strip()}
+        allowlist &= cls.LOW_RISK_ACTIONS  # the allowlist can only narrow the reversible set
+        if action_name not in allowlist:
+            return False, "action is not in the auto-remediation allowlist"
+        if dry_run and env != "production":
+            return True, "simulation"
+        if not agent_cfg.auto_remediation_enabled:
+            return False, "auto-remediation is disabled"
+        targets = {t.strip() for t in agent_cfg.auto_action_target_services.split(",") if t.strip()}
+        if "*" not in targets and service not in targets:
+            return False, f"service '{service}' is not in the auto-remediation target list"
+        now = time.time()
+        recent = cls._auto_history[service]
+        while recent and now - recent[0] > 3600:
+            recent.popleft()
+        if len(recent) >= agent_cfg.auto_action_max_per_hour:
+            return False, "hourly auto-remediation limit reached for this service"
+        return True, "allowlisted"
+
+    @classmethod
+    def record_auto_execution(cls, service: str) -> None:
+        cls._auto_history[service].append(time.time())
+
     @classmethod
     def evaluate(
         cls,
@@ -113,12 +144,23 @@ class DeterministicActionPolicy:
         params: dict[str, Any],
         dry_run: bool = True,
         target: str | None = None,
+        severity: str | None = None,
     ) -> PolicyEvaluationResult:
         """
         Evaluate an action against deterministic policy rules.
         """
         settings = get_settings()
         env = (environment or settings.app.app_env or "production").lower()
+
+        # 0. Critical incidents are root-cause-only: no action of any kind.
+        if (severity or "").lower() == "critical":
+            return PolicyEvaluationResult(
+                decision=ActionPolicyDecision.DENIED,
+                reason="Critical incident: root-cause analysis only, no remediation is proposed or executed.",
+                requires_approval=True,
+                validated_params=params,
+                is_simulated=dry_run,
+            )
 
         # 1. Only actions with a registered workflow can reach execution.
         if action_name not in N8N_WORKFLOWS and action_name not in cls.HIGH_RISK_ACTIONS:
@@ -153,20 +195,30 @@ class DeterministicActionPolicy:
                 verification_criteria={"health_check": True, "error_rate_threshold": 0.01},
             )
 
-        # 3. Production Environment Stance: Recommend-Only or Approval-Required
+        # 3. Allowlisted reversible actions on non-critical incidents may run without approval
+        auto_ok, auto_reason = cls._auto_allowed(action_name, service, dry_run, env)
+        if auto_ok:
+            return PolicyEvaluationResult(
+                decision=ActionPolicyDecision.PERMITTED_AUTO,
+                reason=f"Permitted for automated execution ({auto_reason}); reversible, non-critical.",
+                requires_approval=False,
+                validated_params=params,
+                is_simulated=dry_run,
+                verification_criteria={"health_check": True, "error_rate_threshold": 0.02},
+            )
+
+        # 4. Everything else needs explicit SRE approval in production
         if env == "production":
-            # In production, NO autonomous writes are allowed by default
             return PolicyEvaluationResult(
                 decision=ActionPolicyDecision.APPROVAL_REQUIRED,
-                reason="Production environment: deterministic policy mandates explicit SRE approval before execution.",
+                reason=f"Explicit SRE approval required before execution ({auto_reason}).",
                 requires_approval=True,
                 validated_params=params,
                 is_simulated=dry_run,
                 verification_criteria={"health_check": True, "error_rate_threshold": 0.01},
             )
 
-        # 4. Non-production (development / staging / test)
-        # If real execution requested (dry_run=False), do NOT auto-approve if it can reach infrastructure
+        # 5. Non-production: real execution of anything not auto-allowed needs approval
         if not dry_run:
             return PolicyEvaluationResult(
                 decision=ActionPolicyDecision.APPROVAL_REQUIRED,
@@ -178,17 +230,6 @@ class DeterministicActionPolicy:
                 validated_params=params,
                 is_simulated=False,
                 verification_criteria={"health_check": True},
-            )
-
-        # 5. In simulation / dry_run mode for low-risk actions
-        if action_name in cls.LOW_RISK_ACTIONS:
-            return PolicyEvaluationResult(
-                decision=ActionPolicyDecision.PERMITTED_AUTO,
-                reason="Permitted for bounded automated simulation under dry-run constraints.",
-                requires_approval=False,
-                validated_params=params,
-                is_simulated=True,
-                verification_criteria={"health_check": True, "error_rate_threshold": 0.02},
             )
 
         # Medium risk actions in dev dry-run

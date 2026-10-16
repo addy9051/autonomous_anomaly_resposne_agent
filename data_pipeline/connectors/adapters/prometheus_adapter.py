@@ -16,6 +16,7 @@ import httpx
 from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter, TelemetrySourceError
 from data_pipeline.connectors.query_templates import resolve_query
 from shared.config import get_settings
+from shared.egress import guarded_async_client
 from shared.schemas import (
     NormalizedTelemetryRecord,
     Severity,
@@ -39,7 +40,7 @@ class PrometheusAdapter(BaseTelemetryAdapter):
         super().__init__(source=TelemetryConnectorSource.PROMETHEUS)
         settings = get_settings()
         self.base_url = (base_url or settings.integration.prometheus_url).rstrip("/")
-        self.client = httpx.AsyncClient(timeout=10.0, headers=self._auth_headers(settings))
+        self.client = guarded_async_client(timeout=10.0, headers=self._auth_headers(settings))
         logger.info("prometheus_adapter_initialized", base_url=self.base_url)
 
     @staticmethod

@@ -19,16 +19,28 @@ from typing import Any
 from agents.action.agent import ActionAgent
 from agents.action.pagerduty import resolve_pagerduty_incident
 from agents.diagnosis.graph import DiagnosisAgent
-from agents.feedback.agent import FeedbackLoopAgent
 from agents.feedback.regression import RegressionDetector, alert_key as make_alert_key
-from agents.feedback.reward_agent import RewardAgent
 from agents.monitoring.agent import MonitoringAgent
 from data_pipeline.connectors.adapters import get_telemetry_adapter
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from data_pipeline.flink_jobs.anomaly_features import AlertDeduplicator, RollingWindowAggregator
 from shared.config import get_settings
+from shared.episodic_memory import (
+    BRANCH_AUTO_FIX,
+    BRANCH_CRITICAL,
+    BRANCH_RECOMMEND,
+    Episode,
+    EpisodicMemory,
+)
 from shared.incident_store import IncidentStore
-from shared.schemas import AnomalyEvent, IncidentRecord, IncidentStatus, TelemetryEvent
+from shared.schemas import (
+    AnomalyEvent,
+    DiagnosisResult,
+    IncidentRecord,
+    IncidentStatus,
+    Severity,
+    TelemetryEvent,
+)
 from shared.utils import LLMCostTracker, Timer, get_logger, setup_logging
 
 logger = get_logger("orchestrator")
@@ -43,16 +55,14 @@ class AgentOrchestrator:
       → executing → verifying → verified_recovered / escalated
     """
 
-    def __init__(self, enable_live_rl: bool = False) -> None:
+    def __init__(self, memory: EpisodicMemory | None = None) -> None:
         setup_logging()
         self.settings = get_settings()
-        self.enable_live_rl = enable_live_rl or getattr(self.settings.app, "enable_live_rl", False)
 
         self.monitoring_agent = MonitoringAgent()
         self.diagnosis_agent = DiagnosisAgent()
         self.action_agent = ActionAgent()
-        self.feedback_agent = FeedbackLoopAgent()
-        self.reward_agent = RewardAgent()
+        self.memory = memory or EpisodicMemory()
         self.feature_aggregator = RollingWindowAggregator()
         self.alert_dedup = AlertDeduplicator()
 
@@ -76,7 +86,6 @@ class AgentOrchestrator:
             "orchestrator_initialized",
             connector_mode=self.telemetry_adapter.source.value,
             restored_active_incidents=len(self.active_incidents),
-            enable_live_rl=self.enable_live_rl,
         )
 
     def _update_regressions(self, new_incident: IncidentRecord) -> None:
@@ -135,7 +144,29 @@ class AgentOrchestrator:
                 logger.debug("alert_suppressed", key=alert_key, suppressed_count=suppressed)
                 return None
 
-            # Create incident record & persist
+            # Episodic memory: has this event been seen recently, and how was it handled?
+            is_critical = anomaly.severity == Severity.CRITICAL
+            prior = await self.memory.find_duplicate(anomaly)
+            replay: DiagnosisResult | None = None
+            if prior is not None:
+                if prior.status in ("open", "escalated") and prior.outcome in (None, "none"):
+                    await self.memory.log(prior.episode_id, "duplicate_suppressed", "orchestrator", {
+                        "event_id": anomaly.event_id,
+                    })
+                    logger.info("duplicate_suppressed", episode_id=prior.episode_id)
+                    return None
+                if prior.status == "resolved" and prior.outcome == "recovered" and prior.decision:
+                    try:
+                        replay = DiagnosisResult.model_validate(prior.decision)
+                    except Exception as exc:
+                        logger.warning("replay_decision_invalid", error=str(exc))
+
+            episode = await self.memory.open_episode(
+                anomaly,
+                branch=BRANCH_CRITICAL if is_critical else BRANCH_RECOMMEND,
+                duplicate_of=prior.episode_id if prior else None,
+            )
+
             incident = IncidentRecord(
                 status=IncidentStatus.DETECTED,
                 anomaly_event=anomaly,
@@ -161,7 +192,19 @@ class AgentOrchestrator:
             incident.status = IncidentStatus.INVESTIGATING
             self.store.save(incident)
 
-            diagnosis = await self.diagnosis_agent.diagnose(anomaly, cost_tracker)
+            incident.episode_id = episode.episode_id
+            incident.duplicate_of = prior.episode_id if prior else None
+            incident.handling_branch = episode.branch
+            if replay is not None:
+                diagnosis = replay.model_copy(update={"incident_id": incident.incident_id, "event_id": anomaly.event_id})
+                await self.memory.log(episode.episode_id, "diagnosis_replayed", "orchestrator", {
+                    "from_episode": prior.episode_id if prior else None,
+                })
+            else:
+                diagnosis = await self.diagnosis_agent.diagnose(anomaly, cost_tracker)
+                incident.skills_used = list(getattr(self.diagnosis_agent, "last_skills", []) or [])
+            if is_critical:
+                diagnosis.recommended_actions = []
             incident.diagnosis_result = diagnosis
             incident.time_to_detect_seconds = (datetime.now(timezone.utc) - incident.created_at).total_seconds()
             self.store.save(incident)
@@ -191,6 +234,7 @@ class AgentOrchestrator:
             incident.total_llm_tokens_used = cost_tracker.total_tokens
             incident.total_llm_cost_usd = cost_tracker.total_cost
             self.store.save(incident)
+            await self._close_episode(episode, incident, diagnosis, is_critical)
 
             # ── Step 5: Lifecycle Transition & Durability ──
             if incident.status in (IncidentStatus.VERIFIED_RECOVERED, IncidentStatus.RESOLVED):
@@ -203,12 +247,6 @@ class AgentOrchestrator:
                 })
                 # Sync with PagerDuty (Close the ticket)
                 await resolve_pagerduty_incident(incident.incident_id)
-
-                # Optional Offline/Controlled RL scoring only if explicitly enabled
-                if self.enable_live_rl:
-                    semantic_reward = await self.reward_agent.evaluate(incident, cost_tracker)
-                    reward = await self.feedback_agent.record_outcome(incident, semantic_reward)
-                    logger.info("feedback_recorded", incident_id=incident.incident_id, reward=reward)
             else:
                 # If awaiting approval, executing, or escalated: KEEP ACTIVE in store and active_incidents!
                 self.active_incidents[incident.incident_id] = incident
@@ -229,6 +267,57 @@ class AgentOrchestrator:
         )
 
         return incident
+
+    async def _close_episode(
+        self, episode: Episode, incident: IncidentRecord, diagnosis: DiagnosisResult, is_critical: bool
+    ) -> None:
+        """Persist the outcome to episodic memory and attach the SRE-facing brief to the incident."""
+        results = incident.action_results
+        executed = [r for r in results if r.execution_status == "success"]
+        recovered = incident.status in (IncidentStatus.VERIFIED_RECOVERED, IncidentStatus.RESOLVED)
+        if is_critical:
+            branch, status, outcome = BRANCH_CRITICAL, "escalated", "none"
+        elif executed:
+            branch = BRANCH_AUTO_FIX
+            status = "resolved" if recovered else "failed"
+            outcome = "recovered" if recovered else "not_recovered"
+        else:
+            branch, status, outcome = BRANCH_RECOMMEND, "escalated", "none"
+
+        anomaly = incident.anomaly_event
+        brief = {
+            "issue": {
+                "type": anomaly.anomaly_type.value if anomaly else None,
+                "severity": anomaly.severity.value if anomaly else None,
+                "services": anomaly.affected_services if anomaly else [],
+            },
+            "handling": branch,
+            "root_cause": diagnosis.root_cause,
+            "root_cause_category": diagnosis.root_cause_category.value,
+            "confidence": diagnosis.confidence,
+            "summary": diagnosis.decision_summary,
+            "evidence_gaps": diagnosis.missing_sources,
+            "fix_applied": [r.action_taken for r in executed],
+            "recommended_steps": [] if is_critical else [a.action for a in diagnosis.recommended_actions],
+            "action_statuses": {r.action_taken: r.execution_status for r in results},
+            "duplicate_of": incident.duplicate_of,
+            "skills_used": incident.skills_used,
+        }
+        incident.brief = brief
+        incident.handling_branch = branch
+        self.store.save(incident)
+        await self.memory.log(episode.episode_id, "outcome", "orchestrator", {"branch": branch, "outcome": outcome})
+        await self.memory.close(
+            episode,
+            branch=branch,
+            status=status,
+            outcome=outcome,
+            root_cause=diagnosis.root_cause,
+            decision=diagnosis.model_dump(mode="json"),
+            action=executed[0].action_taken if executed else None,
+            skill=(incident.skills_used[0] if incident.skills_used else None),
+            brief=brief,
+        )
 
     async def run_streaming(
         self,
@@ -306,7 +395,7 @@ class AgentOrchestrator:
         return {
             "active_incidents": len(self.active_incidents),
             "resolved_incidents": len(self.resolved_incidents),
-            "feedback_policy": self.feedback_agent.get_policy_status(),
+            "episodic_memory_degraded": self.memory.degraded,
             "feature_windows": len(self.feature_aggregator.windows),
         }
 

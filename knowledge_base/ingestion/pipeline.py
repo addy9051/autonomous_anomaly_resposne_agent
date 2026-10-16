@@ -16,10 +16,10 @@ import json
 from typing import Any
 
 import asyncpg
-from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from shared.config import get_settings
+from shared.llm import get_embeddings
 from shared.utils import get_logger
 
 logger = get_logger("ingestion_pipeline")
@@ -43,11 +43,7 @@ class RunbookIngestionPipeline:
             length_function=len,
             separators=["\n\n", "\n", ". ", " ", ""],
         )
-        self.embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            dimensions=768,
-            api_key=self.settings.llm.openai_api_key,
-        )
+        self.embeddings = get_embeddings()
         logger.info("ingestion_pipeline_initialized")
 
     async def ingest_document(
@@ -58,6 +54,7 @@ class RunbookIngestionPipeline:
         service_tags: list[str] | None = None,
         severity_relevance: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        collection: str = "general",
     ) -> list[str]:
         """
         Ingest a single document into the knowledge base.
@@ -69,6 +66,7 @@ class RunbookIngestionPipeline:
             service_tags: Services this document relates to
             severity_relevance: Severity levels this document covers
             metadata: Additional metadata dict
+            collection: Knowledge collection (database, network, security, application, policy, general)
 
         Returns:
             List of generated document chunk IDs
@@ -93,12 +91,13 @@ class RunbookIngestionPipeline:
                     """
                     INSERT INTO documents (doc_id, title, source, content, chunk_index,
                                            total_chunks, embedding, metadata,
-                                           service_tags, severity_relevance)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                                           service_tags, severity_relevance, collection)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                     ON CONFLICT (doc_id) DO UPDATE SET
                         content = EXCLUDED.content,
                         embedding = EXCLUDED.embedding,
                         metadata = EXCLUDED.metadata,
+                        collection = EXCLUDED.collection,
                         updated_at = NOW()
                     """,
                     doc_id,
@@ -111,6 +110,7 @@ class RunbookIngestionPipeline:
                     json.dumps(metadata or {}),
                     service_tags or [],
                     severity_relevance or [],
+                    collection,
                 )
 
             logger.info("document_ingested", title=title, chunks=len(chunk_ids))
@@ -134,11 +134,47 @@ class RunbookIngestionPipeline:
                 source="manual",
                 service_tags=runbook.get("service_tags", []),
                 severity_relevance=runbook.get("severity_relevance", []),
+                collection=self._sample_collection(runbook["title"]),
             )
             total_chunks += len(chunk_ids)
 
         logger.info("sample_runbooks_ingested", total_docs=len(sample_runbooks), total_chunks=total_chunks)
         return total_chunks
+
+    @staticmethod
+    def _sample_collection(title: str) -> str:
+        lowered = title.lower()
+        for keyword, collection in (
+            ("database", "database"),
+            ("security", "security"),
+            ("pod", "application"),
+            ("error", "application"),
+            ("latency", "application"),
+            ("saturation", "application"),
+        ):
+            if keyword in lowered:
+                return collection
+        return "general"
+
+    async def ingest_directory(self, root: str) -> int:
+        """
+        Ingest ``<root>/<collection>/*.md`` where the sub-folder name is the knowledge collection
+        (database, network, security, application, policy). Use ``policy`` for company policies and SLAs.
+        """
+        from pathlib import Path
+
+        total = 0
+        for folder in sorted(p for p in Path(root).iterdir() if p.is_dir()):
+            for doc in sorted(folder.glob("*.md")):
+                chunk_ids = await self.ingest_document(
+                    title=doc.stem.replace("-", " ").replace("_", " ").title(),
+                    content=doc.read_text(encoding="utf-8"),
+                    source="directory",
+                    collection=folder.name,
+                )
+                total += len(chunk_ids)
+        logger.info("directory_ingested", root=root, total_chunks=total)
+        return total
 
     def _generate_doc_id(self, title: str, chunk_index: int) -> str:
         """Generate a deterministic document ID for deduplication."""

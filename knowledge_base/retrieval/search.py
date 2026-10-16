@@ -14,10 +14,10 @@ from __future__ import annotations
 from typing import Any
 
 import asyncpg
-from langchain_openai import OpenAIEmbeddings
 from opentelemetry import trace
 
 from shared.config import get_settings
+from shared.llm import get_embeddings
 from shared.schemas import RunbookReference
 from shared.utils import get_logger, get_tracer
 
@@ -32,11 +32,7 @@ class HybridSearchService:
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            dimensions=768,
-            api_key=self.settings.llm.openai_api_key,
-        )
+        self.embeddings = get_embeddings()
         self.top_k = self.settings.agent.rag_top_k
         self.similarity_threshold = self.settings.agent.rag_similarity_threshold
         logger.info("hybrid_search_initialized", top_k=self.top_k)
@@ -46,6 +42,7 @@ class HybridSearchService:
         query: str,
         service_tags: list[str] | None = None,
         top_k: int | None = None,
+        collections: list[str] | None = None,
     ) -> list[RunbookReference]:
         """
         Perform hybrid search combining vector and keyword search.
@@ -53,6 +50,7 @@ class HybridSearchService:
         Args:
             query: Natural language search query
             service_tags: Optional filter by service tags
+            collections: Restrict to these knowledge collections (e.g. an expert's own + "policy")
             top_k: Override default number of results
 
         Returns:
@@ -72,10 +70,10 @@ class HybridSearchService:
         conn = await asyncpg.connect(self.settings.data.rag_dsn, statement_cache_size=0)
         try:
             # 1. Dense vector search
-            vector_results = await self._vector_search(conn, query_embedding, service_tags, k * 2)
+            vector_results = await self._vector_search(conn, query_embedding, service_tags, k * 2, collections)
 
             # 2. Sparse keyword search
-            keyword_results = await self._keyword_search(conn, query, service_tags, k * 2)
+            keyword_results = await self._keyword_search(conn, query, service_tags, k * 2, collections)
 
             # 3. Reciprocal Rank Fusion
             fused = self._reciprocal_rank_fusion(vector_results, keyword_results, k=60)
@@ -92,33 +90,8 @@ class HybridSearchService:
 
             references = []
 
-            if self.settings.llm.cohere_api_key and docs_map:
-                # Execute Cross-Encoder Reranking
-                import cohere
-
-                co = cohere.ClientV2(self.settings.llm.cohere_api_key)
-
-                # We must keep order aligned with doc_ids for the re-mapping
-                doc_ids_list = list(docs_map.keys())
-                documents_text = [docs_map[did]["doc"]["content"] for did in doc_ids_list]
-
-                # Execute Cohere API
-                rerank_response = co.rerank(model="rerank-english-v3.0", query=query, documents=documents_text, top_n=k)
-
-                # Build references from reranked results
-                for result in rerank_response.results:
-                    did = doc_ids_list[result.index]
-                    doc = docs_map[did]["doc"]
-                    references.append(
-                        RunbookReference(
-                            runbook_id=f"runbook://{doc['source']}/{doc['doc_id']}",
-                            title=doc["title"],
-                            similarity_score=round(result.relevance_score, 4),
-                            relevant_steps=self._extract_steps(doc["content"]),
-                        )
-                    )
-            else:
-                # No API key provided, fallback to pure RRF scoring
+            if docs_map:
+                # Pure RRF scoring (no external reranker: the sandbox has no internet egress)
                 for doc_id, rrf_score in top_fused[:k]:
                     if doc_id in docs_map:
                         doc = docs_map[doc_id]["doc"]
@@ -136,7 +109,6 @@ class HybridSearchService:
                 query=query[:100],
                 num_results=len(references),
                 top_score=references[0].similarity_score if references else 0,
-                reranked_via_cohere=bool(self.settings.llm.cohere_api_key),
             )
 
             span.set_attribute("rag.num_results", len(references))
@@ -162,34 +134,24 @@ class HybridSearchService:
         query_embedding: list[float],
         service_tags: list[str] | None,
         limit: int,
+        collections: list[str] | None = None,
     ) -> list[tuple[str, float]]:
         """Dense vector search using pgvector cosine similarity."""
         embedding_str = str(query_embedding)
-
-        if service_tags:
-            rows = await conn.fetch(
-                """
-                SELECT doc_id, 1 - (embedding <=> $1::vector) AS similarity
-                FROM documents
-                WHERE service_tags && $2
-                ORDER BY embedding <=> $1::vector
-                LIMIT $3
-                """,
-                embedding_str,
-                service_tags,
-                limit,
-            )
-        else:
-            rows = await conn.fetch(
-                """
-                SELECT doc_id, 1 - (embedding <=> $1::vector) AS similarity
-                FROM documents
-                ORDER BY embedding <=> $1::vector
-                LIMIT $2
-                """,
-                embedding_str,
-                limit,
-            )
+        rows = await conn.fetch(
+            """
+            SELECT doc_id, 1 - (embedding <=> $1::vector) AS similarity
+            FROM documents
+            WHERE ($2::text[] IS NULL OR service_tags && $2)
+              AND ($3::text[] IS NULL OR collection = ANY($3))
+            ORDER BY embedding <=> $1::vector
+            LIMIT $4
+            """,
+            embedding_str,
+            service_tags or None,
+            collections or None,
+            limit,
+        )
 
         return [(row["doc_id"], float(row["similarity"])) for row in rows]
 
@@ -199,34 +161,24 @@ class HybridSearchService:
         query: str,
         service_tags: list[str] | None,
         limit: int,
+        collections: list[str] | None = None,
     ) -> list[tuple[str, float]]:
         """Sparse keyword search using PostgreSQL trigram similarity."""
-        if service_tags:
-            rows = await conn.fetch(
-                """
-                SELECT doc_id, similarity(content, $1) AS sim
-                FROM documents
-                WHERE service_tags && $2
-                  AND similarity(content, $1) > 0.1
-                ORDER BY sim DESC
-                LIMIT $3
-                """,
-                query,
-                service_tags,
-                limit,
-            )
-        else:
-            rows = await conn.fetch(
-                """
-                SELECT doc_id, similarity(content, $1) AS sim
-                FROM documents
-                WHERE similarity(content, $1) > 0.1
-                ORDER BY sim DESC
-                LIMIT $2
-                """,
-                query,
-                limit,
-            )
+        rows = await conn.fetch(
+            """
+            SELECT doc_id, similarity(content, $1) AS sim
+            FROM documents
+            WHERE ($2::text[] IS NULL OR service_tags && $2)
+              AND ($3::text[] IS NULL OR collection = ANY($3))
+              AND similarity(content, $1) > 0.1
+            ORDER BY sim DESC
+            LIMIT $4
+            """,
+            query,
+            service_tags or None,
+            collections or None,
+            limit,
+        )
 
         return [(row["doc_id"], float(row["sim"])) for row in rows]
 

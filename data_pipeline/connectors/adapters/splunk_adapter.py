@@ -19,6 +19,7 @@ import httpx
 from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter, TelemetrySourceError
 from data_pipeline.connectors.query_templates import resolve_query
 from shared.config import get_settings
+from shared.egress import guarded_async_client
 from shared.schemas import (
     NormalizedTelemetryRecord,
     Severity,
@@ -54,7 +55,7 @@ class SplunkAdapter(BaseTelemetryAdapter):
         self.username = username or settings.integration.splunk_username
         self.password = password or settings.integration.splunk_password
         self.base_url = f"https://{self.host}:{self.port}".rstrip("/")
-        self.client = httpx.AsyncClient(verify=self._tls_verify(settings), timeout=15.0)
+        self.client = guarded_async_client(verify=self._tls_verify(settings), timeout=15.0)
         logger.info("splunk_adapter_initialized", host=self.host, port=self.port, configured=bool(self.token or self.password))
 
     @staticmethod

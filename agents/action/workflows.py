@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from shared.config import get_settings
+from shared.egress import guarded_async_client
 from shared.utils import get_logger
 
 logger = get_logger("n8n_workflows")
@@ -156,7 +157,7 @@ async def trigger_workflow(
         if settings.integrations.n8n_api_key:
             headers["X-N8N-API-KEY"] = settings.integrations.n8n_api_key
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with guarded_async_client(timeout=30.0) as client:
             response = await client.post(url, json=params, headers=headers)
             response.raise_for_status()
             result = response.json()

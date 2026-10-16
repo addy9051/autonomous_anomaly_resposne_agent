@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from shared.config import get_settings
+from shared.egress import guarded_async_client
 from shared.utils import get_logger
 
 if TYPE_CHECKING:
@@ -84,7 +85,7 @@ async def trigger_pagerduty_incident(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with guarded_async_client(timeout=10.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             result = response.json()

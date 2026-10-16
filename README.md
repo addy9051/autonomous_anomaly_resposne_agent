@@ -1,783 +1,205 @@
-# 24/7 Service Reliability & Anomaly-Response Agent System
+# Sandboxed SRE Intelligence Layer
 
-> An incident-response intelligence layer for SREs. Alerts from your existing monitoring (Alertmanager) trigger an investigation that reads evidence on demand from Prometheus, Datadog and Splunk adapters, produces evidence-cited hypotheses, and routes remediation through a policy gate, human approval, execution and independent verification. Built with **LangChain + LangGraph**.
+> A **sandboxed intelligence layer for SREs**. Alerts trigger a multi-agent investigation that runs entirely inside your VPC against a self-hosted open-weight model. Non-critical events are auto-fixed through a small allowlist of reversible, policy-gated actions, or come with expert-recommended steps. Critical events get a root-cause analysis only, with no action. Built with **LangChain + LangGraph**, a **FastAPI** backend and a **Next.js** dashboard.
 
-![Python](https://img.shields.io/badge/Python-3.11+-blue)
-![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-green)
-![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![AWS](https://img.shields.io/badge/AWS-ECS%20Fargate-orange)
-![VW](https://img.shields.io/badge/RL-VowpalWabbit-orange)
-![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-purple)
-![License](https://img.shields.io/badge/License-Private-red)
-
----
-
-> **Deployment status:** AWS ECS/Fargate is the selected pilot target; the stack has not yet been provisioned. The previous GCP/GKE files are inactive and retained only for reference and cleanup; they are not used by CI/CD.
+> **Deployment status:** AWS ECS/Fargate is the selected pilot target; the stack has not yet been provisioned. The GCP/GKE files under `infra/` are inactive and retained only for reference; CI/CD does not use them.
 
 ## Table of Contents
 
-1. [Project Overview](#-project-overview)
-2. [Architecture Evolution Timeline](#-architecture-evolution-timeline)
-3. [System Architecture](#-system-architecture-distributed-v3)
-4. [Agent Pipeline Deep Dive](#-agent-pipeline-deep-dive)
-5. [Phase-by-Phase Implementation Log](#-phase-by-phase-implementation-log)
-6. [Real-Time SRE Dashboard](#-real-time-sre-dashboard)
-7. [CI/CD Pipeline](#-cicd-pipeline)
-8. [Quick Start Guide](#-quick-start-guide)
-9. [Project Structure](#-project-structure)
-10. [API Reference](#-api-reference)
-11. [Observability Stack](#-observability-stack)
-12. [Testing & Chaos Engineering](#-testing--chaos-engineering)
-13. [Security & Authentication](#-security--authentication)
-14. [Known Limitations & Future Work](#-known-limitations--future-work)
+1. [How it works](#how-it-works)
+2. [Components](#components)
+3. [Connecting telemetry vendors](#connecting-telemetry-vendors-from-the-dashboard)
+4. [Dashboard](#dashboard)
+5. [Quick start](#quick-start)
+6. [Project structure](#project-structure)
+7. [API reference](#api-reference)
+8. [Testing and evals](#testing-and-evals)
+9. [Security](#security)
+10. [CI/CD](#cicd)
+11. [Known limitations](#known-limitations)
 
 ---
 
-## 🎯 Project Overview
+## How it works
 
-This project is an **intelligence layer and assistant for SREs** working on payment systems. It does not replace your monitoring stack: detection and storage stay in Datadog, Prometheus and Splunk. The agent takes over after an alert fires, gathers evidence, reasons about causes, proposes a fix, and verifies the outcome.
-
-> **Core principle:** alerts trigger investigations; adapters are an on-demand, read-only evidence layer; nothing fabricated is ever treated as evidence. Production is recommend-and-approve, not autonomous. See [docs/ADAPTER_FIRST_IMPLEMENTATION_LOG.md](docs/ADAPTER_FIRST_IMPLEMENTATION_LOG.md) for how the code was brought in line with this decision, and the Known Limitations section for what is still open. Older sections below that describe continuous ingestion, CrewAI or fully autonomous operation are historical and may not match the current code.
-
-### How it works today
+```
+Alert webhook ─► dedupe ─► episodic memory (Postgres): seen this before?
+                              │ open/escalated duplicate → suppressed (logged on the original episode)
+                              │ resolved+recovered duplicate → stored diagnosis replayed (policy gate still runs)
+                              ▼ otherwise
+                 Diagnosis graph (local LLM)
+                   ├─ procedural memory: skills/<name>/SKILL.md selected by anomaly type, severity, service
+                   ├─ specialist experts (database, network, security, application), each with its own RAG
+                   │    collection + the shared `policy` collection (company policies, SLAs)
+                   └─ evidence-cited hypotheses (confidence capped by real support)
+                              ▼
+        severity branch ── critical ─► RCA only, no action, escalated to the SRE
+                        └─ other ────► allowlisted reversible action (policy-gated, verified) or recommended steps
+                              ▼
+                 SRE brief (issue, root cause + confidence, fix applied / recommended steps, evidence gaps,
+                 duplicate-of, skills used) + per-stage timeline in episodic memory
+```
 
 1. **Intake.** `POST /api/v1/alerts/alertmanager` (and `/api/v1/events/process`) turns an alert into an `AnomalyEvent`, deduplicates it, and opens an incident. Auth is API Gateway IAM plus a trusted identity header.
-2. **Evidence.** `agents/diagnosis/evidence.py` queries the telemetry adapter (Prometheus, Datadog, Splunk, or the simulator for tests) for up to 3 affected services over a 15-minute window, and adds recent GitHub deployments (`data_pipeline/connectors/deploy_events.py`, enabled by `GITHUB_DEPLOY_REPO`). Every record carries event time, ingestion time, freshness, `is_simulated` and `source_ref`. A failing source raises `TelemetrySourceError` and is recorded as an **evidence gap**, never filled with mock data.
-3. **Diagnosis.** A LangGraph flow: `gather_context` → `rag_runbook_lookup` → `supervisor` (selects database, network, security or application experts) → `synthesise_rca`. The model sees the evidence with citable ids (E1…En) and the list of unavailable sources, and proposes 2-3 competing hypotheses. `agents/diagnosis/hypotheses.py` resolves the citations against the real timeline (invented ids are dropped) and caps confidence: no real support gives at most "low"; a single supporting record or any contradiction gives at most "medium"; overall confidence is capped at 0.4 / 0.7 accordingly. If the output cannot be parsed, no action is proposed and the incident is escalated to a human.
-4. **Policy gate and approval.** Actions are tiered (1 safe, 2 needs SRE approval, 3 always human) and executed through n8n workflows with an audit trail.
-5. **Verification.** `agents/verification/verifier.py` independently re-reads metrics after the action using only authoritative records (simulator data and anything flagged `is_simulated` are excluded). Outcomes are recovered, not recovered, or inconclusive; any adapter error yields inconclusive.
-6. **Close-out.** PagerDuty and Slack updates, the incident store (hypotheses, queries, approvals), and a feedback loop that deliberately does not use MTTR or approval acceptance as a reward.
+2. **Memory check.** The fingerprint (sorted services + anomaly type + severity) is looked up in episodic memory within `DUPLICATE_WINDOW_MINUTES`. Duplicates are suppressed, replayed or re-diagnosed depending on how the prior episode ended. A failed prior fix always gets a fresh diagnosis.
+3. **Evidence.** `agents/diagnosis/evidence.py` queries the telemetry adapter (Prometheus, Datadog, Splunk, or the simulator for tests) for up to 3 affected services over a 15-minute window, and adds recent GitHub deployments (`GITHUB_DEPLOY_REPO`). Each record carries event time, ingestion time, freshness, `is_simulated` and `source_ref`. A failing source is recorded as an **evidence gap**, never filled with mock data.
+4. **Diagnosis.** LangGraph flow: `gather_context` → `rag_runbook_lookup` → `supervisor` (selects experts) → `synthesise_rca`. The model sees evidence with citable ids (E1…En) and the list of unavailable sources, and proposes 2-3 competing hypotheses. `agents/diagnosis/hypotheses.py` resolves citations against the real timeline (invented ids are dropped) and caps confidence (at most 0.4 with no real support, 0.7 with a single supporting record or any contradiction). If the output cannot be parsed, no action is proposed and the incident is escalated.
+5. **Policy gate.** Critical incidents are always denied. Non-critical actions are auto-run only if allowlisted and reversible, `AUTO_REMEDIATION_ENABLED=true`, the service is in `AUTO_ACTION_TARGET_SERVICES`, and the hourly limit is not reached. Everything else needs SRE approval or is recommend-only. Execution goes through n8n workflows with an audit trail.
+6. **Verification.** `agents/verification/verifier.py` re-reads metrics after the action using only authoritative records (simulated data is excluded). Outcomes are recovered, not recovered, or inconclusive; any adapter error yields inconclusive.
+7. **Close-out.** PagerDuty and Slack updates, the incident store (hypotheses, queries, approvals), and the episodic-memory outcome plus SRE brief.
 
-| Directory | Role |
-|-----------|------|
-| `agents/` | `monitoring`, `diagnosis`, `action`, `verification`, `feedback` |
-| `data_pipeline/connectors/` | Telemetry adapters, Alertmanager intake, deploy events, synthetic producer and story simulation |
-| `shared/` | Schemas, config, incident store, LLM client, PII sanitising, Pub/Sub wrapper (GCP Pub/Sub, not Kafka) |
-| `automation/`, `infra/`, `knowledge_base/`, `observability/`, `dashboard/`, `ui/` | Workflows, deployment, runbooks, tracing, UI |
+## Components
 
-Run the unit tests with `python -m pytest tests/unit -q`.
+| Piece | Where | Notes |
+|-------|-------|-------|
+| Procedural memory | `skills/<name>/SKILL.md`, `shared/skills.py` | Agent-skills format: `name` and `description` front matter, with routing under `metadata` (`triggers`: anomaly_types, severities, services; `priority`; `version`). `baseline-conduct` always applies; `critical-rca-only` applies to critical. Edit files, no code change. |
+| Per-agent RAG | `knowledge_base/`, `agents/diagnosis/experts.py` | `documents.collection` column. Ingest `<root>/<collection>/*.md` with `ingest_directory` (collections: `database`, `network`, `security`, `application`, `policy`). Hybrid vector + keyword search with reciprocal-rank fusion. Retrieval failure is recorded as a gap. |
+| Episodic memory | `shared/episodic_memory.py`, `knowledge_base/migrations/003_episodic_memory.sql` | Postgres; falls back to in-process memory with a loud log (`episodic_memory_degraded` in `/api/v1/status`) if unreachable. |
+| Action harness | `agents/action/policy.py`, `agents/action/tiers.py` | Deterministic policy; tiers: 1 reversible, 2 needs approval, 3 always human. The auto allowlist can only narrow the reversible set. |
+| Egress harness | `shared/egress.py`, `infra/k8s/network-policy.yaml` | App-level fail-closed allowlist (private ranges + `EGRESS_ALLOWED_HOSTS` / `EGRESS_ALLOWED_CIDRS`) on the LLM client and every HTTP client, with a startup self-test. The NetworkPolicy is the network-level backstop. |
+| Local models | `shared/llm.py` | OpenAI-compatible server in the VPC (`LLM_BASE_URL`; vLLM/Ollama). Embeddings via `EMBEDDING_*`. |
+| Monitoring | `agents/monitoring/` | Anomaly detection for the telemetry stream path. |
+| Verification | `agents/verification/` | Independent post-action recovery check. |
+| Regression detector | `agents/feedback/regression.py` | Flags earlier fixes that did not hold. Also provides `alert_key` for dedupe. |
 
-### Full System Architecture
+Inter-agent contracts are Pydantic v2 models in `shared/schemas.py`: `TelemetryEvent`, `AnomalyEvent`, `DiagnosisResult`, `ActionResult`, `IncidentRecord`.
 
-![Autonomous SRE Agent — Full System Architecture](docs/architecture_diagram.png)
+**Setup for the sandbox:** serve a chat model and an embedding model inside the VPC and set `LLM_BASE_URL`; apply migration `003_episodic_memory.sql` (changing `EMBEDDING_DIMENSIONS` requires re-embedding); ingest runbooks, policies and SLAs per collection; apply `infra/k8s/network-policy.yaml`. SaaS vendors (Datadog, PagerDuty, Slack, GitHub) are blocked by default: route them privately or add them to `EGRESS_ALLOWED_HOSTS`.
 
-### Core Capabilities
+## Connecting telemetry vendors from the dashboard
 
-| Capability | Description |
+Open `/connectors` in the dashboard:
+
+1. **Select** one or more connectors (Prometheus, Datadog, Splunk) as icon cards.
+2. **Credentials**: fill in and "Test connection" for each. Saved secrets are never returned by the API (shown as "saved").
+3. **Activate**: choose services, dry-run and poll interval. The selection builds `CONNECTOR_MODES` at runtime and starts combined live ingestion (`/api/v1/connectors*`, `/api/v1/ingestion/status`). Missing credentials do not crash startup; ingestion just stays inactive.
+
+State is persisted to `.connector_state.json` (gitignored, **plaintext secrets**; use a secret manager in production) and overrides `CONNECTOR_MODES` from `.env`. Dashboard env: `NEXT_PUBLIC_API_BASE` (default `http://localhost:8050/api/v1`) and `NEXT_PUBLIC_API_KEY` (sent as `X-API-Key`). Default query templates are assumptions; override with `TELEMETRY_QUERY_TEMPLATES`. Not yet validated against live vendors.
+
+## Dashboard
+
+| Component | Data source |
 |-----------|-------------|
-| **Autonomous Anomaly Detection** | LangChain ReAct agent with Isolation Forest and 5 custom SRE tools |
-| **Multi-Expert Root Cause Analysis** | LangGraph Supervisor-Expert pattern dispatching parallel domain experts (DB, Network, Security, App) |
-| **Tiered Automated Remediation** | 3-tier action classification with human-in-the-loop approval for destructive operations |
-| **Online Reinforcement Learning** | Vowpal Wabbit contextual bandits with hybrid reward (metrics + LLM-as-Judge) |
-| **Real-Time SRE Dashboard** | Next.js cyberpunk-themed mission control with live telemetry pulse, incident railroad mapping, and RL performance visualization |
-| **PagerDuty Lifecycle Sync** | Automated incident creation, deduplication (Code 2002 handling), and resolution |
-
-### Target SLOs
-
-| Metric | Target | Method |
-|--------|--------|--------|
-| **MTTA** (Mean Time to Acknowledge) | < 90 seconds | Autonomous triage replaces human pager response |
-| **MTTR** (Mean Time to Remediate) | < 8 minutes | Tier 1 auto-execution, Tier 2 Slack approval flow |
-| **False Positive Rate** | < 5% | RL feedback loop continuously improves detection precision |
-| **Data Quality Score** | ≥ 95% recall | Anomaly detection recall on transaction schema violations |
-
----
-
-## 📐 Architecture Evolution Timeline
-
-The system evolved through distinct architectural phases, each adding capabilities while maintaining backward compatibility.
-
-```mermaid
-graph LR
-    A["Phase 1<br/>v1 Architecture<br/>(8-Phase Design Doc)"] --> B["Phase 2<br/>v1 Implementation<br/>(Core Agent Pipeline)"]
-    B --> C["Phase 3<br/>v2 Architecture<br/>(+LLM Observability)"]
-    C --> D["Phase 4<br/>Audit & Hardening<br/>(Claude Walkthrough)"]
-    D --> E["Phase 5<br/>Gap Remediation<br/>(Priority 1/2/3 Fixes)"]
-    E --> F["Phase 6<br/>SRE Dashboard<br/>(Next.js Frontend)"]
-    F --> G["Phase 7<br/>CI/CD Stabilization<br/>(GitHub Actions)"]
-
-    style A fill:#1a5fb8,stroke:#3d8ef0,color:#fff
-    style B fill:#22c55e,stroke:#6ee7a0,color:#000
-    style C fill:#f59e0b,stroke:#fcc94a,color:#000
-    style D fill:#a78bfa,stroke:#c4b0ff,color:#000
-    style E fill:#22c55e,stroke:#6ee7a0,color:#000
-    style F fill:#3d8ef0,stroke:#7eb8ff,color:#fff
-    style G fill:#14b8a6,stroke:#6ee7a0,color:#000
-```
-
-### Phase 1 — Original Architecture Design (`agentic-ai-architecture.html`)
-
-The foundational blueprint covering all 8 phases of the system lifecycle:
-
-- **Phase 00**: Research & Planning — Domain analysis, stakeholder mapping, technology evaluation matrix, risk register
-- **Phase 01**: Data Architecture — 7 data sources, Kafka/Flink streaming pipeline, pgvector knowledge store, Great Expectations quality gates
-- **Phase 02**: High-Level Design — 4-agent topology (Monitor→Diagnose→Act→Feedback), cross-cutting concerns (security, observability, state)
-- **Phase 03**: Low-Level Design — Per-agent internals, tool specs, API contracts, RAG pipeline, prompt engineering strategies
-- **Phase 04**: Development — Repository structure, structured output enforcement, cost budget tracking, per-agent model routing
-- **Phase 05**: Testing — Unit/integration/eval/chaos/load/property-based/adversarial test strategy
-- **Phase 06**: Original deployment design — GKE Autopilot, Terraform IaC, Secret Manager CSI, Helm charts, CI/CD pipeline (historical; current pilot deployment uses AWS)
-- **Phase 07**: Post-Production — Grafana dashboards, weekly ops reviews, scaling roadmap
-
-### Phase 2 — v1 Implementation (Core Agent Pipeline)
-
-Translated the design into a working codebase with several strategic architectural pivots:
-
-1. **Self-Hosted Privacy vs SaaS**: Replaced Datadog LLM Observability with self-hosted **Langfuse** and **Arize Phoenix** to guarantee zero PII escapes the network perimeter.
-2. **Local-First RAG**: Bypassed costly Vertex AI Matching Engine with **pgvector** running alongside agents.
-3. **API-First Stream Processing**: Replaced Apache Flink clusters with lightweight Python orchestration (`RollingWindowAggregator`, `AlertDeduplicator`).
-4. **Action Engine Abstraction**: N8n workflows gracefully mocked via Python dry-runs; the 3-tier classification logic remains fully intact.
-5. **Deployment evolution**: The original GKE deployment design is retained as historical context; the active pilot target is AWS ECS/Fargate.
-
-### Phase 3 — v2 Architecture: LLM Observability (`agentic-ai-architecture-obs.html`)
-
-Added a comprehensive LLM observability layer with three monitoring tiers:
-
-| Tier | Tool | Role | Status |
-|------|------|------|--------|
-| **Primary** | Langfuse (Self-Hosted) | LLM trace collection, prompt versioning, session scoping | Scaffolded (Docker + code wired, import conditionally disabled) |
-| **RAG Quality** | Arize Phoenix | Embedding drift, retrieval relevance, hallucination detection | Docker running, no span forwarding yet |
-| **SRE View** | Datadog LLM Obs | Sanitized OTLP export for operations teams | Not connected |
-
-### Phase 4 — Architecture Audit (`claude_walkthrough.md`)
-
-A comprehensive code-vs-design validation produced a maturity scorecard and identified critical gaps:
-
-| Area | Score |
-|------|-------|
-| Agent Pipeline (Mon→Diag→Act→Feedback) | ⬛⬛⬛⬛⬜ 4/5 |
-| LangGraph + Supervisor-Expert Pattern | ⬛⬛⬛⬛⬜ 4/5 |
-| Reinforcement Learning (VW Bandit) | ⬛⬛⬛⬛⬜ 4/5 |
-| LLM Observability (Langfuse) | ⬛⬛⬛⬜⬜ 3/5 |
-| RAG Pipeline (Knowledge Base) | ⬛⬛⬜⬜⬜ 2/5 |
-| Infrastructure (AWS pilot IaC; not yet applied) | ⬛⬛⬜⬜⬜ 2/5 |
-| CI/CD (GitHub Actions) | ⬛⬛⬜⬜⬜ 2/5 |
-
-### Phase 5 — Gap Remediation (Priority 1/2/3 Fixes)
-
-Systematically closed the audit gaps across all priority tiers:
-
-#### Priority 1 (High Impact) — Completed
-- **RAG Pipeline — Real Hybrid Search**: Implemented full vector + BM25 + Reciprocal Rank Fusion (RRF) search in `knowledge_base/retrieval/search.py`, with **Cohere cross-encoder reranking** (`rerank-english-v3.0`)
-- **Runbook Ingestion Pipeline**: Built document chunking (512 tokens, 64 overlap) and embedding pipeline in `knowledge_base/ingestion/pipeline.py`
-- **LangGraph Checkpointing**: Added state checkpointing to the diagnosis graph (initially Redis, now MemorySaver for local dev compatibility)
-- **Langfuse Integration**: Wired `CallbackHandler` throughout agents with session scoping by `incident_id`
-
-#### Priority 2 (Medium Impact) — Completed
-- **PII Sanitization**: Added `sanitize_for_llm()` utility in `shared/pii.py` for masking sensitive data before LLM calls
-- **GitHub Actions CI Pipeline**: Full 4-stage pipeline (Lint → Test → Build → Deploy) in `.github/workflows/main.yml`
-- **Cost Budget Enforcement**: `LLMCostTracker` with per-agent token tracking and `max_tokens_per_incident = 50,000` ceiling
-
-#### Priority 3 (Lower Impact) — Completed
-- **Redis Distributed Locks**: Idempotency layer via Redis `SETNX` preventing duplicate incident processing
-- **RL Policy A/B Testing**: Deterministic `incident_id` hashing routes 50% of decisions to Control vs Experimental policies
-- **Cost Boundary Hard Enforcement**: `BudgetExceededError` circuit breaker halts LLM execution and escalates to human SREs
-- **ArgoCD GitOps**: Declarative cluster management with canary releases (20% → 50% → 100% traffic shifting)
-- **Dynamic HPA Autoscaling**: Prometheus ServiceMonitors driving Horizontal Pod Autoscalers on LLM usage metrics
-
-### Phase 6 — Real-Time SRE Dashboard
-
-Built a cyberpunk-themed **Next.js 16** frontend dashboard polling the FastAPI backend:
-
-- **System Pulse**: Real-time scatter plot of telemetry events color-coded by anomaly status
-- **Active Response Workflows**: Railroad-style incident lifecycle visualization (Detected → Diagnosing → Mitigating → Resolved)
-- **RL Policy Performance (A/B)**: Cumulative reward comparison between Control and Experimental RL policies
-- **Status Cards**: Live counts of active/resolved incidents and current policy version
-- **Connection Status Indicator**: Real-time backend health monitoring with automatic retry logic
-- **Background Telemetry Heartbeat**: Continuous synthetic metric injection to maintain dashboard liveness
-
-### Phase 7 — CI/CD Pipeline Stabilization
-
-Fixed and hardened the GitHub Actions pipeline:
-- Resolved `ruff` version pinning and format check compatibility issues
-- Fixed `PYTHONPATH` configuration for proper module resolution in CI
-- Added Redis service container for integration tests
-- Implemented JUnit XML test report uploads as build artifacts
-- The original Docker build → Artifact Registry → GKE deploy chain is now inactive; see the AWS pilot pipeline below.
-- The previous GKE workflow used `kubectl rollout status`; the current AWS pilot workflow waits for ECS service stability.
-
----
-
-## 🏗️ System Architecture (Distributed v3)
-
-```mermaid
-graph TD
-    subgraph "Alert and Telemetry Sources"
-        EVENT["Alert / bounded telemetry event"] --> AGG[RollingWindowAggregator]
-        PROM["Prometheus API"]
-        DD["Datadog API"]
-        SPLUNK["Splunk REST API"]
-        SIM["Local Simulator"]
-    end
-
-    subgraph "Read-only Adapter Ingestion"
-        PROM --> ADAPTER["Configured telemetry adapter"]
-        DD --> ADAPTER
-        SPLUNK --> ADAPTER
-        SIM --> ADAPTER
-        ADAPTER -->|Normalized, time-bounded evidence| DIAG
-        ADAPTER -->|Independent signal checks| VERIFY
-    end
-
-    subgraph "Event Processing"
-        AGG --> DEDUP[AlertDeduplicator]
-    end
-
-    subgraph "AWS ECS/Fargate — Agent Pipeline (pilot target)"
-        DEDUP --> MON["🔭 Monitoring Agent<br/>(LangChain ReAct)"]
-        MON -->|AnomalyEvent| DIAG["🔬 Diagnosis Agent<br/>(LangGraph Supervisor-Expert)"]
-        DIAG -->|DiagnosisResult| ACT["⚙️ Action Agent<br/>(3-Tier Classification)"]
-        ACT -->|ActionResult| FB["🔄 Feedback Loop<br/>(Vowpal Wabbit CB)"]
-        FB -->|Policy Update| MON
-    end
-
-    subgraph "Knowledge & State Layer"
-        DIAG -->|RAG Query| KB["📚 pgvector<br/>(Hybrid Search + RRF)"]
-        FB -->|Pilot state| EFS["☁️ Amazon EFS"]
-        DEDUP -->|Dedup Lock| REDIS["🔴 Redis"]
-        DIAG -->|Checkpoint| REDIS
-        ACT --> VERIFY["🛡️ Independent Verifier"]
-    end
-
-    subgraph "Action & Integration Layer"
-        ACT -->|Tier 1: Auto| N8N["⚡ N8n Workflows"]
-        ACT -->|Tier 2: Approve| SLACK["💬 Slack Blocks"]
-        ACT -->|Tier 3: Escalate| PD["📟 PagerDuty"]
-    end
-
-    subgraph "Observability"
-        MON -.->|OTLP Spans| OTEL["OpenTelemetry Collector"]
-        OTEL -.-> GRAF["📊 Grafana + Prometheus"]
-        OTEL -.-> TEMPO["🔍 Tempo (Traces)"]
-        OTEL -.-> LOKI["📝 Loki (Logs)"]
-        MON -.->|LLM Traces| LF["🔭 Langfuse"]
-    end
-
-    subgraph "SRE Dashboard (Next.js)"
-        API["Private FastAPI behind API Gateway"] --> DASH["🖥️ Mission Control UI"]
-        DASH -->|Poll /telemetry| MON
-        DASH -->|Poll /incidents| ACT
-        DASH -->|Poll /rewards| FB
-    end
-```
-
-### Distributed RL Architecture (Trainer-Predictor Split)
-
-```mermaid
-graph LR
-    subgraph "Learning Layer"
-        T["🏋️ Trainer (design target)"] -->|Upload .vw Binary| GCS["☁️ GCS Bucket (legacy option)"]
-        GCS -->|Periodic Reload| P1["🔮 Predictor (design target)"]
-    end
-
-    subgraph "A/B Router"
-        REQ["Incoming Incident"] -->|Hash incident_id| R{A/B Split}
-        R -->|50% Control| P1
-        R -->|50% Experimental| P2
-    end
-```
-
----
-
-## 🤖 Agent Pipeline Deep Dive
-
-### Agent Specifications
-
-| Agent | Framework | Model | Core Technology | Key Files |
-|-------|-----------|-------|-----------------|-----------|
-| **Monitoring** | LangChain ReAct | `gpt-4o-mini` | Isolation Forest, 5 custom SRE tools, confidence threshold 0.75 | `agents/monitoring/agent.py`, `agents/monitoring/tools.py` |
-| **Diagnosis** | LangGraph (Supervisor-Expert) | `gpt-4o` | Parallel domain experts, RAG runbook retrieval, Redis checkpointing | `agents/diagnosis/graph.py`, `agents/diagnosis/experts.py` |
-| **Action** | N8n + Slack + PagerDuty | `gpt-4o` | 3-tier classification, idempotency keys, automatic rollbacks | `agents/action/agent.py`, `agents/action/pagerduty.py` |
-| **Feedback** | Vowpal Wabbit | `gpt-4o-mini` | `cb_explore_adf` contextual bandits, optional legacy GCS model sync, epsilon-greedy exploration | `agents/feedback/agent.py` |
-| **Reward** | LLM-as-Judge | `gpt-4o-mini` | 3-dimension qualitative evaluation (correctness, speed, impact) | `agents/feedback/reward_agent.py` |
-
-### Diagnosis Agent — Supervisor-Expert Pattern
-
-The Diagnosis Agent was refactored from a linear 4-node DAG to a sophisticated **Supervisor-Expert model** mimicking real-world SRE triage:
-
-```mermaid
-graph TD
-    A["📥 gather_context"] --> B["📚 rag_runbook_lookup<br/>(Hybrid RAG)"]
-    B --> C["🧠 Triage Supervisor<br/>(LLM Dispatch)"]
-    C -->|Parallel| D1["🗄️ DatabaseExpert<br/>(Connection pools, slow queries)"]
-    C -->|Parallel| D2["🌐 NetworkExpert<br/>(VPC flow logs, ingress)"]
-    C -->|Parallel| D3["🛡️ SecurityAuditor<br/>(IAM changes, adversarial patterns)"]
-    C -->|Parallel| D4["📱 ApplicationExpert<br/>(Heap dumps, GC pauses)"]
-    D1 & D2 & D3 & D4 --> E["🔬 synthesise_rca<br/>(Root Cause Analysis)"]
-```
-
-### 3-Tier Action Classification
-
-| Tier | Scope | Approval | Examples |
-|------|-------|----------|----------|
-| **Tier 1** | Non-destructive | Auto-execute | Scale replicas, restart pods, flush caches |
-| **Tier 2** | Potentially disruptive | Slack human approval | Database failover, traffic rerouting |
-| **Tier 3** | Critical / unknown | PagerDuty escalation | Schema rollback, full service drain |
-
-### Pydantic API Contracts
-
-All inter-agent communication flows through strictly typed Pydantic v2 models:
-
-| Contract | Direction | Schema File |
-|----------|-----------|-------------|
-| `TelemetryEvent` | Source → Monitor | `shared/schemas.py` |
-| `AnomalyEvent` | Monitor → Diagnosis | `shared/schemas.py` |
-| `DiagnosisResult` | Diagnosis → Action | `shared/schemas.py` |
-| `ActionResult` | Action → Feedback | `shared/schemas.py` |
-| `SemanticReward` | Reward Agent → Feedback | `shared/schemas.py` |
-| `IncidentRecord` | Full lifecycle wrapper | `shared/schemas.py` |
-
----
-
-## 📋 Phase-by-Phase Implementation Log
-
-This section documents every significant implementation step taken during the project, in chronological order.
-
-### Stage 1 — Foundation & Scaffolding
-- Created project structure matching the 8-phase architecture design
-- Set up Poetry dependency management with `pyproject.toml`
-- Configured `docker-compose.yml` for full local dev stack (Kafka, Redis, PostgreSQL/pgvector, N8n, Prometheus, Grafana, Loki, Tempo, OTel Collector, Langfuse, Arize Phoenix)
-- Implemented centralized configuration via `shared/config.py` using `pydantic-settings`
-- Defined all Pydantic schemas in `shared/schemas.py`
-
-### Stage 2 — Monitoring Agent
-- Built LangChain ReAct agent with 5 custom SRE tools
-- Implemented Isolation Forest-based anomaly detection
-- Created the `SyntheticTelemetryProducer` for realistic test data generation
-- Added confidence threshold gating (0.75) to reduce false positives
-
-### Stage 3 — Diagnosis Agent (LangGraph)
-- Implemented initial 4-node DAG (gather_context → rag_runbook_lookup → dispatch_subagents → synthesise_rca)
-- **Evolved** from CrewAI crew dispatch to **Supervisor-Expert pattern** with LLM-powered triage
-- Created 4 parallel domain experts (Database, Network, Security, Application)
-- Added synthetic runbook fallbacks for development mode
-
-### Stage 4 — Action Agent & Integrations
-- Built 3-tier action classification engine
-- Integrated PagerDuty for Tier 3 escalations with dedup key support
-- Implemented Slack Interactive Blocks for Tier 2 human-in-the-loop approvals
-- Added N8n workflow execution (with dry-run simulation mode)
-- **Hardened PagerDuty**: Added Code 2002 duplicate handling (returns success instead of error) and programmatic resolution via `resolve_pagerduty_incident()`
-
-### Stage 5 — Feedback Loop & Reinforcement Learning
-- Replaced planned Vertex AI RL with **Vowpal Wabbit** `cb_explore_adf` for online learning
-- Implemented hybrid reward function combining extrinsic metrics (MTTR, FP rate) with intrinsic LLM-as-Judge evaluation
-- Created the `RewardAgent` using GPT-4o-mini for 3-dimension qualitative assessment
-- Built **Trainer-Predictor distributed architecture** with GCS model synchronization
-- Added A/B policy testing via deterministic `incident_id` hashing
-
-### Stage 6 — Knowledge Base & RAG Pipeline
-- Implemented real hybrid search in `knowledge_base/retrieval/search.py`:
-  - Dense vector search (cosine similarity via pgvector)
-  - Sparse BM25 keyword search (PostgreSQL trigram similarity)
-  - Reciprocal Rank Fusion (RRF) to merge results
-  - **Cohere cross-encoder reranking** (`rerank-english-v3.0`) for precision boosting
-- Built document ingestion pipeline with 512-token chunks and 64-token overlap
-- Created pgvector migration schemas
-
-### Stage 7 — v2 LLM Observability Integration
-- Added Langfuse `CallbackHandler` integration throughout all agents
-- Implemented per-incident session scoping (`session_id = incident_id`)
-- Configured Arize Phoenix Docker service for RAG quality monitoring
-- Added `LLMCostTracker` with per-agent token spend tracking
-
-### Stage 8 — Architecture Audit & Gap Remediation
-- Conducted comprehensive code-vs-design audit (`claude_walkthrough.md`)
-- Implemented Redis distributed locks for event idempotency
-- Added `BudgetExceededError` circuit breaker for cost enforcement
-- Created ArgoCD manifests for GitOps deployment
-- Configured HPA autoscaling driven by Prometheus ServiceMonitors
-- Built chaos engineering suite (`scripts/run_chaos_experiments.py`):
-  - Distributed Amnesia (Redis outage simulation)
-  - Stubborn Tool Faults (500 error mocking)
-  - Adversarial Injection (prompt injection in telemetry)
-- Added PII masking middleware (`shared/pii.py`)
-
-### Stage 9 — Original GCP Deployment Configuration (Inactive)
-- Added GKE, Cloud SQL, Pub/Sub, Artifact Registry, and GCP IAM Terraform configuration under `infra/terraform/`
-- Added GKE/Helm/Argo CD deployment manifests; these are retained only for reference and potential resource cleanup
-- The current GitHub Actions workflow no longer deploys to GCP
-- Built the container image using `infra/docker/Dockerfile`
-
-### Stage 10 — SRE Mission Control Dashboard
-- Built **Next.js 16** cyberpunk-themed dashboard with Tailwind CSS and Recharts
-- Implemented 5 core components:
-  - `Dashboard.tsx` — Main layout with connection status indicator and anomaly injection button
-  - `TelemetryPulse.tsx` — Real-time scatter plot of incoming telemetry events
-  - `ActiveIncidents.tsx` — Railroad-style incident lifecycle visualization
-  - `PolicyPerformance.tsx` — Cumulative reward A/B comparison chart
-  - `StatusCards.tsx` — Live metric cards for active/resolved incidents
-- Built centralized API client (`lib/api.ts`) with error logging and retry handling
-- Added `suppressHydrationWarning` to resolve browser extension conflicts
-- Implemented background telemetry heartbeat for continuous dashboard liveness
-- Hardened CORS policy to support localhost, 127.0.0.1, and IPv6 origins
-
-### Stage 11 — CI/CD Pipeline Stabilization
-- Created GitHub Actions workflow (`.github/workflows/main.yml`) with CI and AWS pilot deployment:
-  1. **Lint & Format Check**: Pinned `ruff` version for reproducible linting
-  2. **Unit, Integration & Eval Tests**: Redis service container, Poetry install, JUnit XML reports
-  3. **Build & Push Docker Image**: Git SHA and `pilot` tags to Amazon ECR using GitHub OIDC
-  4. **Deploy to ECS/Fargate**: Force a new service deployment and wait for ECS stability
-- Fixed module resolution issues (`PYTHONPATH` configuration)
-- Added test report artifact uploads
-
----
-
-## 🖥️ Real-Time SRE Dashboard
-
-The SRE Mission Control dashboard provides real-time operational visibility into the autonomous agent system.
-
-### Dashboard Components
-
-| Component | Description | Data Source |
-|-----------|-------------|-------------|
-| **System Pulse** | Scatter plot of telemetry events (green=normal, red=anomaly) | `GET /api/v1/telemetry/recent` |
-| **Active Response Workflows** | Railroad map showing incident lifecycle stages | `GET /api/v1/incidents/active` |
-| **RL Policy Performance** | Cumulative reward curves for Control vs Experimental policies | `GET /api/v1/feedback/rewards` |
-| **Status Cards** | Active incidents, resolved count, policy version | `GET /api/v1/status` |
-| **Connection Status** | Real-time backend connectivity indicator | `GET /api/v1/health/detailed` |
-
-### Running the Dashboard
+| System pulse (telemetry scatter) | `GET /api/v1/telemetry/recent` |
+| Active response workflows (incident lifecycle) | `GET /api/v1/incidents/active` |
+| Status cards (active, resolved, episodic-memory health) | `GET /api/v1/status` |
+| Connection status | `GET /api/v1/health/detailed` |
+| Connector wizard | `/api/v1/connectors*` |
 
 ```bash
-# Terminal 1: Start the FastAPI backend
+# Terminal 1: backend
 poetry run uvicorn api:app --host 127.0.0.1 --port 8050 --reload
 
-# Terminal 2: Start the Next.js frontend
+# Terminal 2: dashboard (http://localhost:3000)
 cd dashboard
 npm install
 npm run dev
 ```
 
-Then open **http://localhost:3000** in your browser.
+## Quick start
 
----
-
-## 🚢 CI/CD Pipeline
-
-The project uses GitHub Actions for checks on pull requests and AWS ECS/Fargate deployment on pushes to `main`. AWS access uses GitHub OIDC; pull requests do not receive AWS credentials. See [AWS pilot deployment instructions](docs/DEPLOYMENT_SECURITY.md).
-
-```mermaid
-graph LR
-    A["📝 Push to main"] --> B["🔍 Lint & Format<br/>(ruff)"]
-    B --> C["🧪 Test Suite<br/>(pytest + Redis)"]
-    C --> D["🐳 Docker Build<br/>(Amazon ECR)"]
-    D --> E["🚀 Deploy to ECS/Fargate<br/>(force new deployment)"]
-    E --> F["✅ ECS Service Stability"]
-```
-
-### Pipeline Stages
-
-| Stage | Trigger | Actions |
-|-------|---------|---------|
-| **Lint & Format** | Every push/PR | `ruff check`, `ruff format --check` |
-| **Test** | After lint passes | Unit tests, integration tests (with Redis service), eval suite |
-| **Build & Push** | Main branch only | Docker build → ECR Git SHA and `pilot` tags (GitHub OIDC) |
-| **Deploy to AWS** | After successful build | Force ECS deployment → wait for service stability |
-
----
-
-## 🚀 Quick Start Guide
-
-### Prerequisites
-- Python 3.11+
-- Docker Desktop
-- Node.js 18+ (for the dashboard)
-- At least one LLM API key (OpenAI recommended)
-
-### 1. Clone & Install
+Prerequisites: Python 3.11+, Docker Desktop, Node.js 18+, and an OpenAI-compatible inference server (vLLM/Ollama) reachable from the app.
 
 ```bash
-cd autonomous_anomaly_response_agent
 pip install poetry
 poetry install
-```
-
-### 2. Configure Environment
-
-```bash
-copy .env.example .env
-# Edit .env with your API keys (minimum: OPENAI_API_KEY)
-```
-
-### 3. Start Infrastructure
-
-```bash
-# Full stack (Kafka, Redis, Postgres, N8n, Prometheus, Grafana, etc.)
-docker compose up -d
-
-# Lightweight mode (Redis + Postgres only)
-docker compose -f docker-compose.lite.yml up -d
-```
-
-### 4. Run the System
-
-```bash
-# Start the REST API (Backend)
+copy .env.example .env        # set LLM_BASE_URL and the EMBEDDING_* / EGRESS_* values
+docker compose up -d          # or: docker compose -f docker-compose.lite.yml up -d (Redis + Postgres)
 poetry run uvicorn api:app --host 127.0.0.1 --port 8050 --reload
-
-# Start the SRE Dashboard (Frontend)
-cd dashboard && npm install && npm run dev
-
-# Quick demo (synthetic telemetry batch)
-poetry run python orchestrator.py --mode demo
-
-# Streaming mode (continuous telemetry)
-poetry run python orchestrator.py --mode stream --duration 60
-```
-
-### 5. Run Tests
-
-```bash
+poetry run python orchestrator.py --mode demo     # synthetic batch
 poetry run pytest tests/ -v
 ```
 
----
-
-## 📁 Project Structure
+## Project structure
 
 ```
 ├── agents/
-│   ├── monitoring/          # LangChain ReAct agent + 5 SRE tools
-│   │   ├── agent.py         # MonitoringAgent with Isolation Forest
-│   │   └── tools.py         # check_metrics, query_logs, etc.
-│   ├── diagnosis/           # LangGraph Supervisor-Expert DAG
-│   │   ├── graph.py         # DiagnosisAgent, state graph, checkpointing
-│   │   ├── experts.py       # DB, Network, Security, App domain experts
-│   │   └── prompts.py       # Prompt templates for diagnosis
-│   ├── action/              # Tiered remediation + integrations
-│   │   ├── agent.py         # ActionAgent with 3-tier classification
-│   │   ├── pagerduty.py     # PagerDuty create + resolve + dedup handling
-│   │   ├── tiers.py         # Tier definitions and descriptions
-│   │   └── slack.py         # Slack Interactive Block approvals
-│   └── feedback/            # Online RL + reward evaluation
-│       ├── agent.py         # FeedbackLoopAgent (Vowpal Wabbit CB)
-│       └── reward_agent.py  # LLM-as-Judge semantic reward
-├── dashboard/               # Next.js 16 SRE Mission Control UI
-│   ├── app/                 # Next.js app router (layout, page, globals.css)
-│   ├── components/          # React components (Dashboard, TelemetryPulse, etc.)
-│   └── lib/                 # API client (api.ts)
-├── data_pipeline/
-│   ├── connectors/          # Kafka config + SyntheticTelemetryProducer
-│   └── flink_jobs/          # RollingWindowAggregator + AlertDeduplicator
-├── knowledge_base/
-│   ├── ingestion/           # Document chunking + embedding pipeline
-│   ├── retrieval/           # Hybrid search (vector + BM25 + RRF + reranking)
-│   └── migrations/          # pgvector schema (auto-applied)
-├── observability/           # Prometheus, Grafana, Tempo, OTel configs
-├── infra/
-│   ├── docker/              # Dockerfile (multi-stage)
-│   ├── aws/terraform/       # Active AWS pilot: private API Gateway, VPC, ECS/Fargate, EFS, ECR
-│   ├── terraform/           # Inactive legacy GCP IaC; retained for reference/cleanup
-│   ├── k8s/                 # Inactive legacy GKE manifests
-│   ├── argocd/              # Inactive legacy GKE GitOps manifest
-│   └── helm_charts/         # Inactive legacy GKE Helm chart
-├── scripts/                 # Utility & validation scripts
-│   ├── run_chaos_experiments.py    # Chaos engineering suite
-│   ├── verify_rl_learning.py      # RL policy validation
-│   ├── verify_specialized_agents.py # Expert agent benchmarks
-│   └── seed_knowledge_base.py     # KB ingestion helper
-├── tests/
-│   ├── unit/                # pytest unit tests
-│   ├── integration/         # Agent-to-agent contract tests
-│   ├── evals/               # LLM evaluation suite
-│   └── load/                # Load testing scripts
-├── shared/                  # Cross-cutting utilities
-│   ├── config.py            # Centralized pydantic-settings configuration
-│   ├── schemas.py           # All Pydantic v2 API contracts
-│   ├── llm.py               # Multi-provider LLM factory
-│   ├── pii.py               # PII sanitization middleware
-│   ├── pubsub.py            # Google Pub/Sub client
-│   └── utils.py             # LLMCostTracker, Timer, logging, tracing
-├── .github/workflows/       # GitHub Actions CI/CD pipeline
-├── orchestrator.py          # CLI orchestrator (streaming + batch modes)
-├── api.py                   # FastAPI REST API (15+ endpoints)
-├── docker-compose.yml       # Full local dev stack (12 services)
-├── docker-compose.lite.yml  # Lightweight mode (Redis + Postgres)
-├── docs/                                  # Comprehensive technical & strategic documentation
-│   ├── ARCHITECTURE_DOCS.md               # Detailed Technical Architecture Audit
-│   └── SRE_STRATEGIC_BLUEPRINT.md         # Senior SRE Advisory Blueprint & Pitch Strategy
-├── agentic-ai-architecture.html        # v1 Architecture Design Document
-├── agentic-ai-architecture-obs.html    # v2 Architecture (+LLM Observability)
-└── claude_walkthrough.md               # Architecture Audit Report
+│   ├── monitoring/          # anomaly detection + tools
+│   ├── diagnosis/           # LangGraph supervisor-expert graph, per-expert RAG, hypotheses, evidence
+│   ├── action/              # policy gate, tiers, workflows, PagerDuty, Slack
+│   ├── verification/        # independent recovery check
+│   └── feedback/            # regression detector (alert_key)
+├── skills/                  # procedural memory (<name>/SKILL.md)
+├── knowledge_base/          # ingestion, hybrid retrieval, migrations (pgvector, episodic memory)
+├── shared/                  # config, schemas, llm, egress, skills, episodic_memory, incident_store, pii
+├── data_pipeline/           # telemetry adapters, Alertmanager intake, deploy events, connector store
+├── dashboard/               # Next.js SRE UI (incl. /connectors)
+├── evals/                   # LLM-as-judge, agreement gate (local judge model)
+├── tests/                   # unit, integration, evals
+├── infra/                   # aws/terraform (active), k8s/network-policy.yaml, legacy GCP files
+├── scripts/                 # chaos experiments, verification and seeding helpers
+├── orchestrator.py          # severity-branched pipeline + CLI
+├── api.py                   # FastAPI app
+└── docs/                    # deployment and design documents
 ```
 
----
-
-## 💻 API Reference
+## API reference
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/health` | System health check |
-| `GET` | `/api/v1/health/detailed` | Detailed health with agent connectivity |
-| `POST` | `/api/v1/events/process` | Process single telemetry event |
-| `POST` | `/api/v1/demo/run` | Run demo with synthetic events |
-| `POST` | `/api/v1/stream/start` | Start streaming simulation |
-| `GET` | `/api/v1/telemetry/recent` | Last 100 telemetry events (dashboard pulse) |
-| `GET` | `/api/v1/incidents/active` | Currently processing incidents |
-| `GET` | `/api/v1/incidents/{id}` | Get incident details |
-| `GET` | `/api/v1/incidents` | List recent incidents (with status filter) |
-| `POST` | `/api/v1/incidents/{id}/approve` | Approve Tier 2 action from dashboard |
-| `GET` | `/api/v1/status` | Agent system metrics |
-| `GET` | `/api/v1/feedback/policy` | RL policy status |
-| `GET` | `/api/v1/feedback/rewards` | Reward history for RL charts |
-| `GET` | `/api/v1/actions/tiers` | Action tier classification reference |
-| `POST` | `/api/v1/knowledge/seed` | Ingest sample runbooks into pgvector |
+| `GET` | `/health` | Health check |
+| `GET` | `/api/v1/health/detailed` | Health with agent connectivity |
+| `POST` | `/api/v1/alerts/alertmanager` | Alertmanager webhook intake |
+| `POST` | `/api/v1/events/process` | Process a single telemetry event |
+| `POST` | `/api/v1/demo/run` | Demo with synthetic events |
+| `POST` | `/api/v1/stream/start` | Streaming simulation |
+| `GET` | `/api/v1/telemetry/recent` | Last 100 telemetry events |
+| `GET` | `/api/v1/incidents` | Recent incidents (status filter) |
+| `GET` | `/api/v1/incidents/active` | Active incidents |
+| `GET` | `/api/v1/incidents/{id}` | Incident details |
+| `GET` | `/api/v1/incidents/{id}/brief` | SRE brief for an incident |
+| `POST` | `/api/v1/incidents/{id}/approve` | Approve or reject a pending action |
+| `GET` | `/api/v1/episodes/{id}` | Episodic-memory episode and timeline |
+| `GET` | `/api/v1/status` | System status |
+| `GET` | `/api/v1/actions/tiers` | Action tier reference |
+| `POST` | `/api/v1/knowledge/seed` | Ingest sample runbooks |
 | `GET` | `/api/v1/knowledge/search` | Hybrid RAG search |
-| `GET` | `/api/v1/knowledge/health` | Knowledge base connectivity check |
+| `GET` | `/api/v1/knowledge/health` | Knowledge base connectivity |
+| `GET/POST` | `/api/v1/connectors*`, `/api/v1/ingestion/status` | Connector wizard and live ingestion |
 
----
-
-## 📊 Observability Stack
-
-| Service | URL | Purpose |
-|---------|-----|---------|
-| **Grafana** | http://localhost:3000 | Dashboards for MTTA/MTTR/Cost/FPR |
-| **Langfuse** | http://localhost:3001 | LLM trace collection & prompt versioning |
-| **Arize Phoenix** | http://localhost:6006 | RAG quality monitoring |
-| **Prometheus** | http://localhost:9090 | Metrics scraping & alerting |
-| **N8n** | http://localhost:5678 | Automation workflow orchestration |
-| **Tempo** | (via Grafana) | Distributed trace visualization |
-| **Loki** | (via Grafana) | Centralized log aggregation |
-
----
-
-## 🧪 Testing & Chaos Engineering
-
-### Test Suite
+## Testing and evals
 
 ```bash
-# All tests
-poetry run pytest tests/ -v
-
-# Unit tests only
-poetry run pytest tests/unit/ -v
-
-# Integration tests (requires Redis)
-poetry run pytest tests/integration/ -v
-
-# With coverage report
-poetry run pytest tests/ --cov=agents --cov=shared --cov-report=html
-
-# Linting
-poetry run ruff check .
-
-# Type checking
-poetry run mypy agents/ shared/ --ignore-missing-imports
-```
-
-### Chaos Engineering Suite
-
-```bash
+poetry run pytest tests/ -v                 # everything
+poetry run pytest tests/unit -v             # unit tests
+poetry run ruff check .                     # lint
 poetry run python scripts/run_chaos_experiments.py
+python -m evals.run_judge_gate              # judge agreement gate, needs the in-VPC LLM server
 ```
 
-| Experiment | What It Tests |
-|-----------|--------------|
-| **Distributed Amnesia** | Redis outage simulation — verifies Feedback Loop fails gracefully |
-| **Stubborn Tool Faults** | 500 errors from automation endpoints — validates retry logic and escalation |
-| **Adversarial Injection** | Prompt injection in telemetry payloads — tests input sanitization |
+The judge calls the local model (`JUDGE_MODEL`). Re-baseline agreement with human labels before trusting scores. The golden dataset test checks dataset integrity only; retrieval quality must be measured against the live knowledge base once it is ingested.
 
-### Verification Scripts
-
-```bash
-# Validate RL policy learning
-poetry run python scripts/verify_rl_learning.py
-
-# Benchmark specialized expert agents
-poetry run python scripts/verify_specialized_agents.py
-
-# Test RAG retrieval quality
-poetry run python scripts/verify_rag.py
-```
-
----
-
-## 🔒 Security & Authentication
-
-### Secret Management
+## Security
 
 | Method | Environment | Details |
 |--------|-------------|---------|
-| **`.env` file** | Local development | API keys loaded via `pydantic-settings` |
-| **AWS Secrets Manager** | AWS ECS/Fargate pilot | ECS injects configured secret ARNs into the container at startup |
-| **GitHub OIDC** | CI deployment | Short-lived AWS role session; no stored AWS access key |
-| **AWS IAM task role** | ECS task | Scoped to the task's EFS access point; add service permissions only when needed |
+| `.env` file | Local development | Loaded via `pydantic-settings` |
+| AWS Secrets Manager | ECS/Fargate pilot | ECS injects configured secret ARNs at startup |
+| GitHub OIDC | CI deployment | Short-lived AWS role session, no stored access key |
+| AWS IAM task role | ECS task | Scoped to the task's EFS access point |
 
 The production-facing API uses SigV4 with API Gateway `AWS_IAM` authorization and a private VPC endpoint. See [AWS pilot deployment instructions](docs/DEPLOYMENT_SECURITY.md).
 
-### API Keys Required
+Network posture: egress is default-deny (see `shared/egress.py` and `infra/k8s/network-policy.yaml`). Keep tracing in-VPC (self-hosted Langfuse); do not enable hosted LangSmith. Optional integrations (Slack, PagerDuty, GitHub, n8n) are only reachable if explicitly allowlisted.
 
-| Service | Required? | Free Tier? | Purpose |
-|---------|-----------|-----------|---------|
-| **OpenAI** | ✅ Minimum 1 LLM | $5 free credit | GPT-4o for reasoning, GPT-4o-mini for classification |
-| **LangSmith** | Recommended | ✅ 5K traces/mo | LLM observability |
-| **Langfuse** | Optional | ✅ Self-Hosted | LLM tracing & observability |
-| **Slack** | Optional | ✅ | Tier 2 approval notifications |
-| **PagerDuty** | Optional | 14-day trial | Tier 3 incident escalations |
-| **Cohere** | Recommended | ✅ 1K/mo | Cross-encoder reranking for RAG (`rerank-english-v3.0`) |
-| **Google Cloud** | Optional | Varies | Optional Gemini provider only; not used for deployment |
+## CI/CD
 
----
+GitHub Actions runs lint, tests and a Docker build on pull requests, and deploys to AWS ECS/Fargate on pushes to `main` using GitHub OIDC; pull requests receive no AWS credentials. Stages: `ruff` → `pytest` → build and push to ECR → force ECS deployment and wait for stability.
 
-## ⚠️ Known Limitations & Future Work
+## Known limitations
 
-### Current Limitations
+| Area | Limitation |
+|------|-----------|
+| Validation | Unit-tested with mocks only: not yet run against a live local model, live Postgres or live vendors. |
+| Open-weight models | Weaker at structured output than hosted frontier models; the hypothesis validation and "no action if unparseable" rule are the safety net. |
+| Incident store | The incident, approval and audit store is still SQLite (`shared/incident_store.py`); only episodic memory is on Postgres. |
+| Infra | `infra/k8s/deployment.yaml` still contains the old trainer/predictor deployments; Terraform has no VPC endpoints or egress rules for the LLM server yet. |
+| Alert intake | Alertmanager cannot sign AWS IAM requests, so a gateway that injects the trusted identity header is required; diagnosis runs inside the webhook request; dedupe key is `service:anomaly_type`; anomaly type is a keyword guess; no PagerDuty intake. |
+| Evidence window | Fixed 15-minute window, not anchored on the alert start; metrics and deploys only; the GitHub deploy repo is global, not per service. |
+| Confidence | Hypothesis caps (0.4 / 0.7) are heuristics, not calibrated; the policy gate does not read hypothesis confidence. |
+| Dashboard | Overview and connector pages work; Observability/KB/Security nav entries are placeholders. |
+| Open audit items | Several GET endpoints in `api.py` are unauthenticated; `trigger_workflow` returns `mocked` without `N8N_API_KEY`; the Slack summary LLM call is unguarded; a stray debug `print` remains in `/api/v1/events/process`. |
 
-| Area | Limitation | Impact |
-|------|-----------|--------|
-| **RAG Pipeline** | Uses synthetic runbook stubs when pgvector is unavailable | Diagnosis accuracy limited without real runbook corpus |
-| **LangGraph Checkpointing** | Using in-memory checkpointer locally (Redis serialization compatibility issue) | Graph state lost on crash in local dev |
-| **Langfuse** | Import conditionally disabled; code is wired but not actively emitting traces | LLM observability layer inactive |
-| **Dashboard** | Overview page functional; Observability/KB/Security pages are placeholder nav links | Limited to single-page operational view |
-| **Load Testing** | `tests/load/` directory scaffolded but tests not authored | No validated throughput benchmarks |
-| **Alert intake** | Alertmanager cannot sign AWS IAM requests, so a gateway that injects the trusted identity header is required; diagnosis runs inside the webhook request; dedupe key is `service:anomaly_type`, not the Alertmanager fingerprint; anomaly type is a keyword guess; no PagerDuty intake | Not production-ready intake |
-| **Evidence window** | Fixed 15-minute window, not anchored on the alert's start time; metrics and deploys only; the GitHub deploy repo is global, not per service; Datadog/Splunk window handling unchanged | Partial incident timeline |
-| **Confidence** | Hypothesis caps (0.4 / 0.7) are heuristics, not calibrated; the policy gate does not yet read hypothesis confidence; the LLM path has not been run end to end against a live model | Treat confidence as an upper bound only |
-| **Open audit items** | `orchestrator.main()` stream mode references a nonexistent `args.dry_run`; the Slack summary LLM call is unguarded; several GET endpoints in `api.py` are unauthenticated; `trigger_workflow` returns `mocked` without `N8N_API_KEY`; a stray debug `print` remains in `/api/v1/events/process` | Fix before any production use |
-
-### Future Roadmap
-
-| Priority | Enhancement | Estimated Effort |
-|----------|------------|-----------------|
-| 🔴 High | Complete dashboard Observability and Knowledge Base pages | 3-5 days |
-| 🔴 High | Re-enable Langfuse integration and verify end-to-end trace collection | 1 day |
-| 🟡 Medium | Build 50-100 case golden eval dataset for LLM-as-Judge CI gating | 3 days |
-| 🟡 Medium | Custom Grafana dashboards for MTTA/MTTR/Cost/FPR metrics | 2 days |
-| 🟡 Medium | Forward RAG spans from Langfuse to Arize Phoenix | 2 days |
-| 🟢 Low | Package K8s manifests as Helm charts | 3 days |
-| 🟢 Low | k6/Locust load testing suite | 2 days |
-| 🟢 Low | Implement mTLS for agent-to-agent communication | 3 days |
-
----
-
-## 📝 License
+## License
 
 Private — Internal Use Only
-
----
-
-## 🏗️ Cloud-Native Scaling & Deployment Architecture
-
-```mermaid
-graph TD
-    subgraph "GitOps Lifecycle"
-        Git[GitHub Repo] -->|Declarative Sync| ArgoCD[ArgoCD Controller]
-        ArgoCD -->|Traffic Shaping| Rollout[Canary Rollout]
-    end
-
-    subgraph "Event Idempotency Layer"
-        Kafka[Pub/Sub Kafka Stream] -->|Duplicate Events| EventLoop[Orchestrator Event Loop]
-        EventLoop -->|SETNX Check| Redis[(Redis Lock)]
-        Redis -- Duplicate? Drop --> Null[Discard]
-        Redis -- Unique? Process --> Pipeline[Agent DAG]
-    end
-
-    subgraph "Policy Execution & Scaling"
-        HPA[HPA] -->|Auto-scales replicas| Pipeline
-        Prometheus[ServiceMonitor] -.->|Scrapes Load Metrics| Pipeline
-        
-        Pipeline -- "Compute Hashed ID" --> Router{A/B Router}
-        Router -->|Control| M1[Vowpal Model 1]
-        Router -->|Experimental| M2[Vowpal Model 2]
-    end
-```

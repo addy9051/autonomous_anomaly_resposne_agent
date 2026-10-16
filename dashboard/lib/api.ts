@@ -31,13 +31,6 @@ export interface IncidentRecord {
   total_llm_cost_usd: number;
 }
 
-export interface RewardHistoryEntry {
-  incident_id: string;
-  reward: number;
-  timestamp: string;
-  action: string;
-}
-
 /**
  * Enhanced fetcher with logging
  */
@@ -73,11 +66,6 @@ export async function fetchActiveIncidents(): Promise<IncidentRecord[]> {
 export async function fetchResolvedIncidents(limit = 10): Promise<IncidentRecord[]> {
   const data = await fetchWithLogs(`${API_BASE}/incidents?limit=${limit}`, { cache: 'no-store' });
   return data.incidents || [];
-}
-
-export async function fetchRewardHistory(): Promise<RewardHistoryEntry[]> {
-  const data = await fetchWithLogs(`${API_BASE}/feedback/rewards`, { cache: 'no-store' });
-  return data.history || [];
 }
 
 export async function fetchDetailedHealth() {

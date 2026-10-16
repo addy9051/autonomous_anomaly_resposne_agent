@@ -38,6 +38,7 @@ from agents.diagnosis.prompts import (
 from shared.config import get_settings
 from shared.llm import get_chat_model
 from shared.pii import sanitize_for_llm
+from shared.skills import SkillRouter, get_skill_router
 from shared.schemas import (
     ActionTier,
     AnomalyEvent,
@@ -82,6 +83,8 @@ class DiagnosisState(TypedDict):
     # Output
     diagnosis_result: dict[str, Any] | None
 
+    # Procedural memory rendered for prompts
+    skills_text: str
     # Metadata
     messages: Annotated[list, add_messages]
 
@@ -163,7 +166,7 @@ async def rag_runbook_lookup(state: DiagnosisState) -> dict:
     query = f"{anomaly_type.replace('_', ' ')} incident affecting {', '.join(affected_services)}. {reasoning[:200]}"
 
     runbooks: list[dict] = []
-    source = "synthetic"
+    source = "none"
 
     try:
         from knowledge_base.retrieval.search import HybridSearchService
@@ -198,24 +201,10 @@ async def rag_runbook_lookup(state: DiagnosisState) -> dict:
     except Exception as e:
         logger.warning("rag_search_failed", error=str(e), event_id=anomaly.get("event_id"))
 
-    # P0 Blueprint requirement: Do not inject synthetic runbooks as real runbooks in live mode
+    # No synthetic runbooks are ever substituted: an empty result is an explicit evidence gap.
     if not runbooks:
-        settings = get_settings()
-        if settings.app.app_env == "development" and settings.integrations.telemetry_connector_mode == "simulator":
-            runbooks = _get_synthetic_runbooks(anomaly_type, affected_services)
-            source = "synthetic_simulation"
-            for rb in runbooks:
-                rb["is_synthetic"] = True
-                rb["source"] = "synthetic_simulation"
-            logger.info(
-                "rag_fallback_to_synthetic",
-                num_matches=len(runbooks),
-                event_id=anomaly.get("event_id"),
-            )
-        else:
-            runbooks = []
-            source = "runbook_source_unavailable"
-            logger.info("rag_runbooks_unavailable", event_id=anomaly.get("event_id"))
+        source = "runbook_source_unavailable"
+        logger.info("rag_runbooks_unavailable", event_id=anomaly.get("event_id"))
 
     logger.info(
         "runbook_lookup_complete",
@@ -283,11 +272,11 @@ async def supervisor_node(state: DiagnosisState) -> dict:
     tasks = []
     for key in expert_keys:
         if key in expert_map:
-            tasks.append(expert_map[key].investigate(anomaly))
+            tasks.append(expert_map[key].investigate(anomaly, skills_text=state.get("skills_text", "")))
 
     # Default to application if list is empty
     if not tasks:
-        tasks.append(expert_map["application_expert"].investigate(anomaly))
+        tasks.append(expert_map["application_expert"].investigate(anomaly, skills_text=state.get("skills_text", "")))
 
     with expert_timer:
         reports_list = await asyncio.gather(*tasks)
@@ -335,7 +324,7 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
 
     response = await llm.ainvoke(
         [
-            SystemMessage(content=DIAGNOSIS_SYSTEM_PROMPT),
+            SystemMessage(content=f"{DIAGNOSIS_SYSTEM_PROMPT}\n\n## Procedural skills (follow these)\n{state.get('skills_text', '')}"),
             HumanMessage(content=prompt),
         ]
     )
@@ -395,6 +384,7 @@ class DiagnosisAgent:
 
     def __init__(self) -> None:
         self.graph = build_diagnosis_graph()
+        self.last_skills: list[str] = []
         logger.info("diagnosis_agent_initialized")
 
     async def diagnose(
@@ -405,7 +395,11 @@ class DiagnosisAgent:
         """Run diagnosis on an anomaly event."""
         with tracer.start_as_current_span("diagnosis_agent.diagnose") as span:
             span.set_attribute("event.id", anomaly_event.event_id)
-
+            skills = get_skill_router().select(
+                anomaly_event.anomaly_type.value, anomaly_event.severity.value, anomaly_event.affected_services
+            )
+            self.last_skills = [s.name for s in skills]
+            is_critical = anomaly_event.severity == Severity.CRITICAL
             timer = Timer()
             with timer:
                 initial_state: DiagnosisState = {
@@ -417,6 +411,7 @@ class DiagnosisAgent:
                     "evidence_timeline": [],
                     "missing_sources": [],
                     "diagnosis_result": None,
+                    "skills_text": SkillRouter.render(skills),
                     "messages": [],
                 }
 
@@ -492,7 +487,9 @@ class DiagnosisAgent:
                     evidence_timeline=evidence_list,
                     missing_sources=gaps,
                     runbook_references=[RunbookReference(**r) for r in diagnosis_dict.get("runbook_references", [])],
-                    recommended_actions=[
+                    recommended_actions=[]
+                    if is_critical
+                    else [
                         RecommendedAction(
                             action=a.get("action", ""),
                             tier=ActionTier(a.get("tier", 3)),
@@ -530,79 +527,6 @@ class DiagnosisAgent:
 
 
 # ─── Helper Functions ────────────────────────────────────────────
-
-
-def _get_synthetic_runbooks(anomaly_type: str, affected_services: list[str]) -> list[dict[str, Any]]:
-    """Return synthetic runbook matches for development."""
-    runbook_db = {
-        "latency_spike": [
-            {
-                "runbook_id": "runbook://app/latency-spike-investigation",
-                "title": "Payment Gateway Latency Spike Investigation",
-                "similarity_score": 0.92,
-                "relevant_steps": [
-                    "1. Check p99 latency trend over last 30 minutes",
-                    "2. Inspect slow query log for new queries > 500ms",
-                    "3. Check connection pool utilization",
-                    "4. Review recent deployment changes",
-                    "5. Scale horizontally if load-induced",
-                ],
-            },
-            {
-                "runbook_id": "runbook://db/connection-pool-exhaustion",
-                "title": "Database Connection Pool Exhaustion",
-                "similarity_score": 0.85,
-                "relevant_steps": [
-                    "1. Check current active connections vs max pool size",
-                    "2. Identify long-running transactions holding connections",
-                    "3. Kill idle connections older than 5 minutes",
-                    "4. Increase pool size if under-provisioned",
-                ],
-            },
-        ],
-        "error_rate": [
-            {
-                "runbook_id": "runbook://app/error-rate-investigation",
-                "title": "Elevated Error Rate Investigation",
-                "similarity_score": 0.89,
-                "relevant_steps": [
-                    "1. Classify errors by HTTP status code",
-                    "2. Check for dependency timeouts",
-                    "3. Review circuit breaker states",
-                    "4. Check for recent deployment rollouts",
-                ],
-            },
-        ],
-        "fraud_signal": [
-            {
-                "runbook_id": "runbook://fraud/signal-drift",
-                "title": "Fraud Signal Drift Response",
-                "similarity_score": 0.88,
-                "relevant_steps": [
-                    "1. Compare current fraud score distribution vs baseline",
-                    "2. Check for new merchant patterns",
-                    "3. Validate model input feature pipeline",
-                    "4. Escalate to fraud risk team if confirmed drift",
-                ],
-            },
-        ],
-    }
-
-    return runbook_db.get(
-        anomaly_type,
-        [
-            {
-                "runbook_id": "runbook://general/incident-response",
-                "title": "General Incident Response Procedure",
-                "similarity_score": 0.65,
-                "relevant_steps": [
-                    "1. Assess blast radius",
-                    "2. Engage on-call engineer",
-                    "3. Begin timeline documentation",
-                ],
-            }
-        ],
-    )
 
 
 def _parse_diagnosis_response(
