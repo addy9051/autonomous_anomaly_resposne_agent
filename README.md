@@ -2,7 +2,7 @@
 
 > A **sandboxed intelligence layer for SREs**. Alerts trigger a multi-agent investigation that runs entirely inside your VPC against a self-hosted open-weight model. Non-critical events are auto-fixed through a small allowlist of reversible, policy-gated actions, or come with expert-recommended steps. Critical events get a root-cause analysis only, with no action. Built with **LangChain + LangGraph**, a **FastAPI** backend and a **Next.js** dashboard.
 
-> **Deployment status:** AWS ECS/Fargate is the selected pilot target; the stack has not yet been provisioned. The GCP/GKE files under `infra/` are inactive and retained only for reference; CI/CD does not use them.
+> **Deployment status:** AWS is the only deployment target (`infra/aws/terraform`: air-gapped VPC, ECS/Fargate agent, GPU EC2 LLM server, RDS Postgres). The stack validates but has not been applied to an account. The old GCP/Kubernetes files were removed.
 
 ## Table of Contents
 
@@ -56,7 +56,7 @@ Alert webhook ─► dedupe ─► episodic memory (Postgres): seen this before?
 | Per-agent RAG | `knowledge_base/`, `agents/diagnosis/experts.py` | `documents.collection` column. Ingest `<root>/<collection>/*.md` with `ingest_directory` (collections: `database`, `network`, `security`, `application`, `policy`). Hybrid vector + keyword search with reciprocal-rank fusion. Retrieval failure is recorded as a gap. |
 | Episodic memory | `shared/episodic_memory.py`, `knowledge_base/migrations/003_episodic_memory.sql` | Postgres; falls back to in-process memory with a loud log (`episodic_memory_degraded` in `/api/v1/status`) if unreachable. |
 | Action harness | `agents/action/policy.py`, `agents/action/tiers.py` | Deterministic policy; tiers: 1 reversible, 2 needs approval, 3 always human. The auto allowlist can only narrow the reversible set. |
-| Egress harness | `shared/egress.py`, `infra/k8s/network-policy.yaml` | App-level fail-closed allowlist (private ranges + `EGRESS_ALLOWED_HOSTS` / `EGRESS_ALLOWED_CIDRS`) on the LLM client and every HTTP client, with a startup self-test. The NetworkPolicy is the network-level backstop. |
+| Egress harness | `shared/egress.py`, `infra/aws/terraform` | App-level fail-closed allowlist (private ranges + `EGRESS_ALLOWED_HOSTS` / `EGRESS_ALLOWED_CIDRS`) on the LLM client and every HTTP client, with a startup self-test. The VPC (no internet/NAT gateway, no `0.0.0.0/0` security-group rule) is the network-level backstop. |
 | Local models | `shared/llm.py` | OpenAI-compatible server in the VPC (`LLM_BASE_URL`; vLLM/Ollama). Embeddings via `EMBEDDING_*`. |
 | Monitoring | `agents/monitoring/` | Anomaly detection for the telemetry stream path. |
 | Verification | `agents/verification/` | Independent post-action recovery check. |
@@ -64,7 +64,7 @@ Alert webhook ─► dedupe ─► episodic memory (Postgres): seen this before?
 
 Inter-agent contracts are Pydantic v2 models in `shared/schemas.py`: `TelemetryEvent`, `AnomalyEvent`, `DiagnosisResult`, `ActionResult`, `IncidentRecord`.
 
-**Setup for the sandbox:** serve a chat model and an embedding model inside the VPC and set `LLM_BASE_URL`; apply migration `003_episodic_memory.sql` (changing `EMBEDDING_DIMENSIONS` requires re-embedding); ingest runbooks, policies and SLAs per collection; apply `infra/k8s/network-policy.yaml`. SaaS vendors (Datadog, PagerDuty, Slack, GitHub) are blocked by default: route them privately or add them to `EGRESS_ALLOWED_HOSTS`.
+**Setup for the sandbox:** serve a chat model and an embedding model inside the VPC and set `LLM_BASE_URL`; apply migration `003_episodic_memory.sql` (changing `EMBEDDING_DIMENSIONS` requires re-embedding); ingest runbooks, policies and SLAs per collection; deploy `infra/aws/terraform` for the network-level sandbox. SaaS vendors (Datadog, PagerDuty, Slack, GitHub) are blocked by default: route them privately or add them to `EGRESS_ALLOWED_HOSTS`.
 
 ## Connecting telemetry vendors from the dashboard
 
@@ -104,7 +104,7 @@ Prerequisites: Python 3.11+, Docker Desktop, Node.js 18+, and an OpenAI-compatib
 pip install poetry
 poetry install
 copy .env.example .env        # set LLM_BASE_URL and the EMBEDDING_* / EGRESS_* values
-docker compose up -d          # or: docker compose -f docker-compose.lite.yml up -d (Redis + Postgres)
+docker compose up -d          # Postgres, Prometheus, Langfuse (lite: docker-compose.lite.yml = Redis + Postgres)
 poetry run uvicorn api:app --host 127.0.0.1 --port 8050 --reload
 poetry run python orchestrator.py --mode demo     # synthetic batch
 poetry run pytest tests/ -v
@@ -126,7 +126,7 @@ poetry run pytest tests/ -v
 ├── dashboard/               # Next.js SRE UI (incl. /connectors)
 ├── evals/                   # LLM-as-judge, agreement gate (local judge model)
 ├── tests/                   # unit, integration, evals
-├── infra/                   # aws/terraform (active), k8s/network-policy.yaml, legacy GCP files
+├── infra/                   # aws/terraform (VPC, ECS agent, EC2 GPU LLM server, RDS), docker/Dockerfile
 ├── scripts/                 # chaos experiments, verification and seeding helpers
 ├── orchestrator.py          # severity-branched pipeline + CLI
 ├── api.py                   # FastAPI app
@@ -180,7 +180,7 @@ The judge calls the local model (`JUDGE_MODEL`) and must come from a different p
 
 The production-facing API uses SigV4 with API Gateway `AWS_IAM` authorization and a private VPC endpoint. See [AWS pilot deployment instructions](docs/DEPLOYMENT_SECURITY.md).
 
-Network posture: egress is default-deny (see `shared/egress.py` and `infra/k8s/network-policy.yaml`). Keep tracing in-VPC (self-hosted Langfuse); do not enable hosted LangSmith. Optional integrations (Slack, PagerDuty, GitHub, n8n) are only reachable if explicitly allowlisted.
+Network posture: egress is default-deny (see `shared/egress.py` and the security groups in `infra/aws/terraform`). Keep tracing in-VPC (self-hosted Langfuse); do not enable hosted LangSmith. Optional integrations (Slack, PagerDuty, GitHub, n8n) are only reachable if explicitly allowlisted.
 
 ## CI/CD
 
@@ -193,7 +193,7 @@ GitHub Actions runs lint, tests and a Docker build on pull requests, and deploys
 | Validation | Unit-tested with mocks only: not yet run against a live local model, live Postgres or live vendors. |
 | Open-weight models | Weaker at structured output than hosted frontier models; the hypothesis validation and "no action if unparseable" rule are the safety net. |
 | Incident store | The incident, approval and audit store is still SQLite (`shared/incident_store.py`); only episodic memory is on Postgres. |
-| Infra | `infra/k8s/deployment.yaml` still contains the old trainer/predictor deployments; Terraform has no VPC endpoints or egress rules for the LLM server yet. |
+| Infra | Terraform validates but has not been applied. You must build/push the inference image, upload model weights and run the DB migrations. The LLM server is a single instance. The incident/approval store is still SQLite on EFS (one task). |
 | Alert intake | Alertmanager cannot sign AWS IAM requests, so a gateway that injects the trusted identity header is required; diagnosis runs inside the webhook request; dedupe key is `service:anomaly_type`; anomaly type is a keyword guess; no PagerDuty intake. |
 | Evidence window | Fixed 15-minute window, not anchored on the alert start; metrics and deploys only; the GitHub deploy repo is global, not per service. |
 | Confidence | Hypothesis caps (0.4 / 0.7) are heuristics, not calibrated; the policy gate does not read hypothesis confidence. |

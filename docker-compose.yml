@@ -1,80 +1,14 @@
 # ═══════════════════════════════════════════════════════════════
-#  Docker Compose — Local Development Environment
-#  Payment Reliability Agent System
-# ═══════════════════════════════════════════════════════════════
-#  Usage:
-#    docker compose up -d          # Start all services
-#    docker compose down -v        # Stop and remove volumes
-#    docker compose logs -f kafka  # Tail specific service logs
-# ═══════════════════════════════════════════════════════════════
-#  Local-only credential fallbacks. Override these values before use;
-#  never reuse the development defaults in a deployed environment.
+#  Docker Compose — local development (sandboxed SRE intelligence layer)
+#    docker compose up -d      # Postgres (+pgvector), Prometheus, Langfuse
+#    docker compose down -v
+#  The LLM server is not included: run vLLM/Ollama locally and set LLM_BASE_URL.
+#  Local-only credential fallbacks; never reuse them in a deployed environment.
 # ═══════════════════════════════════════════════════════════════
 
 services:
 
-  # ─── Apache Kafka (KRaft mode, no Zookeeper) ─────────────────
-  kafka:
-    image: confluentinc/cp-kafka:7.6.0
-    hostname: kafka
-    container_name: anomaly-kafka
-    ports:
-      - "9092:9092"
-      - "9101:9101"
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_JMX_PORT: 9101
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
-      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
-    volumes:
-      - kafka-data:/var/lib/kafka/data
-    healthcheck:
-      test: kafka-broker-api-versions --bootstrap-server localhost:9092
-      interval: 10s
-      timeout: 10s
-      retries: 5
-
-  # ─── Schema Registry ────────────────────────────────────────
-  schema-registry:
-    image: confluentinc/cp-schema-registry:7.6.0
-    hostname: schema-registry
-    container_name: anomaly-schema-registry
-    depends_on:
-      kafka:
-        condition: service_healthy
-    ports:
-      - "8081:8081"
-    environment:
-      SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
-
-  # ─── Redis (agent state + feature cache) ─────────────────────
-  redis:
-    image: redis/redis-stack-server:latest
-    container_name: anomaly-redis
-    ports:
-      - "6379:6379"
-
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: redis-cli ping
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  # ─── PostgreSQL + pgvector ───────────────────────────────────
+  # Episodic memory + RAG knowledge base
   postgres:
     image: pgvector/pgvector:pg16
     container_name: anomaly-postgres
@@ -93,24 +27,7 @@ services:
       timeout: 3s
       retries: 5
 
-  # ─── N8n Automation Engine ───────────────────────────────────
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: anomaly-n8n
-    ports:
-      - "5678:5678"
-    environment:
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=admin
-      - N8N_BASIC_AUTH_PASSWORD=agent_admin_2024
-      - WEBHOOK_URL=http://localhost:5678/
-    volumes:
-      - n8n-data:/home/node/.n8n
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  # ─── Prometheus ──────────────────────────────────────────────
+  # Local Prometheus, usable as a telemetry source for the connector wizard
   prometheus:
     image: prom/prometheus:latest
     container_name: anomaly-prometheus
@@ -123,72 +40,20 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=30d'
-      - '--web.enable-lifecycle'
 
-  # ─── Grafana ─────────────────────────────────────────────────
-  grafana:
-    image: grafana/grafana:latest
-    container_name: anomaly-grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=agent_admin_2024
-      - GF_INSTALL_PLUGINS=grafana-clock-panel
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning
-    depends_on:
-      - prometheus
-      - loki
-      - tempo
-
-  # ─── Loki (Log Aggregation) ─────────────────────────────────
-  loki:
-    image: grafana/loki:latest
-    container_name: anomaly-loki
-    ports:
-      - "3100:3100"
-    command: -config.file=/etc/loki/local-config.yaml
-    volumes:
-      - loki-data:/loki
-
-  # ─── Tempo (Distributed Tracing) ────────────────────────────
-  tempo:
-    image: grafana/tempo:latest
-    container_name: anomaly-tempo
-    ports:
-      - "3200:3200"   # Tempo API
-      - "4317:4317"   # OTLP gRPC
-      - "4318:4318"   # OTLP HTTP
-    command: [ "-config.file=/etc/tempo.yaml" ]
-    volumes:
-      - ./observability/tempo/tempo.yaml:/etc/tempo.yaml
-      - tempo-data:/var/tempo
-
-  # ─── OpenTelemetry Collector ─────────────────────────────────
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    container_name: anomaly-otel-collector
-    ports:
-      - "4327:4317"   # OTLP gRPC (remapped to avoid Tempo conflict)
-      - "4328:4318"   # OTLP HTTP
-      - "8888:8888"   # Collector metrics
-    volumes:
-      - ./observability/otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
-
-  # ─── Langfuse (LLM Observability) ────────────────────────────
+  # Self-hosted LLM tracing (keeps traces in-VPC; do not use hosted LangSmith)
   langfuse-server:
     image: langfuse/langfuse:2
     container_name: anomaly-langfuse
     depends_on:
-      - langfuse-db
+      langfuse-db:
+        condition: service_healthy
     ports:
       - "3001:3000"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@langfuse-db:5432/postgres
-      - NEXTAUTH_SECRET=mysecret
-      - SALT=mysalt
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-dev_only_not_for_production}@langfuse-db:5432/postgres
+      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-dev_only_change_me}
+      - SALT=${LANGFUSE_SALT:-dev_only_change_me}
       - NEXTAUTH_URL=http://localhost:3001
       - TELEMETRY_ENABLED=false
 
@@ -207,21 +72,7 @@ services:
       timeout: 3s
       retries: 5
 
-  # ─── Arize Phoenix (RAG Observability) ───────────────────────
-  arize-phoenix:
-    image: arizephoenix/phoenix:latest
-    container_name: anomaly-phoenix
-    ports:
-      - "6006:6006"
-      - "4329:4317" # Phoenix OTLP gRPC endpoint
-
 volumes:
-  kafka-data:
-  redis-data:
   postgres-data:
-  n8n-data:
   prometheus-data:
-  grafana-data:
-  loki-data:
-  tempo-data:
   langfuse-data:

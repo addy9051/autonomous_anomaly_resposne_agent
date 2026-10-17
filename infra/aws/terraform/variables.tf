@@ -67,6 +67,76 @@ variable "secret_arns" {
   sensitive   = true
 }
 
+variable "observability_cidrs" {
+  description = "Private CIDRs of in-network observability backends (Prometheus, Splunk, PrivateLink endpoints) the agent may reach."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.observability_cidrs : can(cidrnetmask(c)) && c != "0.0.0.0/0"])
+    error_message = "observability_cidrs must be valid CIDRs and must not be 0.0.0.0/0."
+  }
+}
+
+variable "observability_ports" {
+  description = "TCP ports allowed to observability_cidrs."
+  type        = list(number)
+  default     = [443]
+}
+
+variable "llm_ami_id" {
+  description = "GPU AMI with NVIDIA drivers, Docker and the NVIDIA container toolkit (e.g. a Deep Learning Base AMI) available in this account."
+  type        = string
+}
+
+variable "llm_instance_type" {
+  description = "GPU instance type for the inference server."
+  type        = string
+  default     = "g5.12xlarge"
+}
+
+variable "llm_root_volume_gb" {
+  description = "Root volume size; must hold the model weights."
+  type        = number
+  default     = 300
+}
+
+variable "llm_image_tag" {
+  description = "Tag of the inference-server image (vLLM or similar) pushed to the private LLM ECR repository."
+  type        = string
+  default     = "latest"
+}
+
+variable "llm_models_bucket" {
+  description = "Private S3 bucket holding model weights, synced to the server at boot. Empty to skip."
+  type        = string
+  default     = ""
+}
+
+variable "db_engine_version" {
+  description = "RDS Postgres engine version (needs pgvector)."
+  type        = string
+  default     = "16"
+}
+
+variable "db_instance_class" {
+  description = "RDS instance class."
+  type        = string
+  default     = "db.t4g.medium"
+}
+
+variable "db_storage_gb" {
+  description = "RDS allocated storage in GB."
+  type        = number
+  default     = 50
+}
+
+variable "db_multi_az" {
+  description = "Run RDS in multiple AZs."
+  type        = bool
+  default     = false
+}
+
 variable "kms_key_arns" {
   description = "Optional customer-managed KMS key ARNs used to encrypt secrets in secret_arns."
   type        = list(string)
@@ -112,6 +182,12 @@ variable "application_environment" {
         "TRUSTED_IDENTITY_HEADER",
         "API_GATEWAY_STAGE_PREFIX",
         "ENABLE_SYNTHETIC_HEARTBEAT",
+        "LLM_BASE_URL",
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "POSTGRES_DB",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
       ], name)
     ])
     error_message = "application_environment cannot override deployment-managed security or runtime settings."

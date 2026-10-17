@@ -1,6 +1,6 @@
 # AWS Pilot Deployment and Security
 
-The active deployment target is AWS. The previous GCP files remain in the repository as inactive reference/cleanup material; they are no longer used by CI. See [`infra/terraform/README.md`](../infra/terraform/README.md) before touching the old GCP state or resources.
+The active (and only) deployment target is AWS. The old GCP/GKE Terraform, Kubernetes manifests, Helm chart and ArgoCD application were removed; if GCP resources were ever created from them, inspect and destroy them from the original Terraform state, since deleting the source does not delete cloud resources.
 
 ## AWS Terraform deployment
 
@@ -8,7 +8,9 @@ The AWS implementation is a separate Terraform root at [`infra/aws/terraform`](.
 
 The stack creates:
 
-- A VPC with public egress subnets and private application subnets. ECS tasks have no public IP; a NAT gateway provides outbound HTTPS for configured LLM and third-party integrations.
+- An **air-gapped VPC**: private subnets only, with no internet gateway, NAT gateway or default route. AWS services (ECR, Logs, Secrets Manager, S3, execute-api) are reached through VPC endpoints. Security groups have no `0.0.0.0/0` rule: the agent task may reach only the AWS endpoints, S3, EFS, the LLM server, Postgres, and the private `observability_cidrs` you list.
+- A **self-hosted LLM server**: a GPU EC2 instance (`llm_ami_id`, `llm_instance_type`) in a private subnet running an OpenAI-compatible inference image from a private ECR repository, with weights synced from a private S3 bucket. Its security group accepts traffic only from the agent task. The task receives `LLM_BASE_URL` pointing at it. You must build and push the inference image and upload the weights; Terraform does not.
+- **RDS Postgres 16** (encrypted, private, deletion-protected, managed master password in Secrets Manager) for episodic memory and the RAG knowledge base. The password is injected as `POSTGRES_PASSWORD`. Apply `knowledge_base/migrations/*.sql` once from inside the VPC (the pgvector extension is available on RDS).
 - A **private API Gateway REST API** exposed through an `execute-api` interface VPC endpoint. The API resource policy restricts calls to that VPC endpoint and the deploying AWS account; the endpoint security group accepts HTTPS only from `allowed_client_cidrs`.
 - `AWS_IAM` authorization on the root and catch-all API methods. API Gateway maps its authenticated `context.identity.userArn` to `X-Authenticated-User`, overwriting any same-named incoming header.
 - A VPC Link v2 with a dedicated security group, an internal ALB that accepts traffic only from that VPC Link, and an ECS/Fargate service whose application port accepts traffic only from the ALB.
@@ -21,7 +23,7 @@ The stack creates:
 ### Prepare and deploy
 
 1. Ensure the AWS account has the standard GitHub Actions OIDC provider (`token.actions.githubusercontent.com`) and configure an AWS VPC/client network from which the private API can be reached. Use the provider ARN in `github_oidc_provider_arn`.
-2. Copy `terraform.tfvars.example` to `terraform.tfvars` in `infra/aws/terraform` and configure the AWS region, GitHub repository, OIDC provider ARN, and narrow trusted caller CIDRs. Store provider credentials as Secrets Manager secrets; put their ARNs in `secret_arns`, never their values.
+2. Copy `terraform.tfvars.example` to `terraform.tfvars` in `infra/aws/terraform` and configure the AWS region, GitHub repository, OIDC provider ARN, narrow trusted caller CIDRs, `llm_ami_id` (a GPU AMI with NVIDIA drivers and Docker) and `observability_cidrs`. Store credentials as Secrets Manager secrets; put their ARNs in `secret_arns`, never their values. No LLM provider key is needed.
 3. Initialize Terraform and create the ECR repository as a bootstrap step:
 
    ```powershell
@@ -43,7 +45,7 @@ The stack creates:
    ```
 
 5. Configure `secret_arns`, `kms_key_arns`, and `application_environment` in `terraform.tfvars`. The pilot defaults to the simulator. To use a real adapter, set `TELEMETRY_CONNECTOR_MODE` to `prometheus`, `datadog`, or `splunk`, set its non-secret endpoint/settings in `application_environment`, and put API tokens in Secrets Manager using the environment variable names in `shared/config.py`.
-6. Run `terraform fmt -check`, `terraform validate`, and `terraform plan -out=tfplan`; review the plan before `terraform apply tfplan`. It creates billable NAT, EFS, interface endpoint, ALB, API Gateway, and ECS resources. Configure encrypted remote state and locking before team use. This stack has not been applied to AWS.
+6. Run `terraform fmt -check`, `terraform validate`, and `terraform plan -out=tfplan`; review the plan before `terraform apply tfplan`. It creates billable EC2 GPU, RDS, EFS, interface endpoint, ALB, API Gateway, and ECS resources. Configure encrypted remote state and locking before team use. This stack has not been applied to AWS.
 7. Create/attach caller IAM identities through your organization's federation or IAM Identity Center; attach the smallest applicable `caller_policy_arns` policy from Terraform outputs. Do not create long-lived browser keys.
 8. Set these GitHub repository variables from Terraform outputs: `AWS_DEPLOY_ENABLED=true`, `AWS_REGION`, `AWS_ECR_REPOSITORY` (`ecr_repository_name`), `AWS_ECS_CLUSTER` (`ecs_cluster_name`), and `AWS_ECS_SERVICE` (`ecs_service_name`). Set `AWS_ROLE_TO_ASSUME` as a GitHub Actions secret to `github_actions_role_arn`. Deployment stays disabled until `AWS_DEPLOY_ENABLED` is set. After configuration, pushes to `main` run tests, build the image, push both the commit SHA and `pilot` tags, force an ECS deployment, and wait for the service to become stable. Pull requests do not request AWS credentials.
 9. From an authorized VPC client, sign requests to the private invoke URL from `api_invoke_url` with SigV4. Confirm an allowed route succeeds, a disallowed route is denied, a request from outside the allowed network cannot connect, and a supplied `X-Authenticated-User` value is replaced by the IAM principal ARN.
@@ -55,7 +57,7 @@ The API Gateway stage is included in private integration request paths. The ECS 
 - The pilot uses one ECS task and EFS-backed SQLite to retain its state between task replacements. Do not scale beyond one task; move incident/approval persistence to a database designed for concurrent clients before scaling.
 - The API task role is limited to its EFS access point. Add narrow workload permissions only when the application actually uses a specific AWS API.
 - The ECR `pilot` tag is mutable so CI can update it and force ECS to pull the new image without Terraform drifting on every release. Commit-SHA tags are also pushed for traceability but are not registry-enforced as immutable; move to digest-pinned deployments before production.
-- The NAT route allows task HTTPS egress to `0.0.0.0/0`; apply an egress proxy/firewall and domain allowlisting if required by your production network policy. NAT gateway and interface endpoint hourly/data charges apply.
+- The air-gapped VPC means SaaS vendors (Datadog, Splunk Cloud, PagerDuty, Slack, GitHub) are unreachable unless you provide a PrivateLink endpoint or private route and list its CIDR in `observability_cidrs`. Interface endpoint and EC2 GPU hourly charges apply. The LLM server is a single instance with no failover.
 - This stack does **not** authorize live remediation on its own. Keep live execution disabled until target/service allowlists, live-state preconditions, durable approval/audit records, and independent verification are implemented and tested.
 - There is no automatically configured observability vendor account. Pilot ingestion remains simulator-backed until `application_environment` and the matching connector secret ARNs are configured.
 - The Terraform stack deploys the FastAPI backend only. The Next.js dashboard does not yet have an AWS hosting/authentication configuration; the private API is reachable only from an authorized VPC client using SigV4.

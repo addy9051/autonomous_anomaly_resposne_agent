@@ -8,24 +8,35 @@ data "aws_caller_identity" "current" {}
 
 locals {
   availability_zones = slice(data.aws_availability_zones.available.names, 0, 2)
-  public_subnet_cidrs = [
-    for index in range(2) : cidrsubnet(var.vpc_cidr, 8, index)
-  ]
   private_subnet_cidrs = [
     for index in range(2) : cidrsubnet(var.vpc_cidr, 8, index + 10)
   ]
+  llm_port = 8001
+  egress_targets = {
+    for pair in setproduct(var.observability_cidrs, var.observability_ports) :
+    "${pair[0]}:${pair[1]}" => { cidr = pair[0], port = pair[1] }
+  }
   caller_route_access = {
     sre_responder = [
       "GET /api/v1/incidents",
       "GET /api/v1/incidents/*",
+      "GET /api/v1/episodes/*",
       "GET /api/v1/telemetry/recent",
-      "GET /api/v1/feedback/policy",
-      "GET /api/v1/feedback/rewards",
+      "GET /api/v1/ingestion/status",
       "GET /api/v1/actions/tiers",
       "POST /api/v1/incidents/*/approve",
     ]
     telemetry_producer = [
       "POST /api/v1/events/process",
+      "POST /api/v1/alerts/alertmanager",
+    ]
+    connector_admin = [
+      "GET /api/v1/connectors",
+      "PUT /api/v1/connectors/selection",
+      "PUT /api/v1/connectors/*/credentials",
+      "POST /api/v1/connectors/*/test",
+      "POST /api/v1/connectors/activate",
+      "POST /api/v1/connectors/deactivate",
     ]
     knowledge_base_admin = [
       "GET /api/v1/knowledge/search",
@@ -50,27 +61,6 @@ resource "aws_vpc" "this" {
   }
 }
 
-resource "aws_internet_gateway" "this" {
-  vpc_id = aws_vpc.this.id
-
-  tags = {
-    Name = "${var.name}-igw"
-  }
-}
-
-resource "aws_subnet" "public" {
-  count                   = 2
-  vpc_id                  = aws_vpc.this.id
-  availability_zone       = local.availability_zones[count.index]
-  cidr_block              = local.public_subnet_cidrs[count.index]
-  map_public_ip_on_launch = false
-
-  tags = {
-    Name = "${var.name}-public-${count.index + 1}"
-    Tier = "public-egress"
-  }
-}
-
 resource "aws_subnet" "private" {
   count                   = 2
   vpc_id                  = aws_vpc.this.id
@@ -84,57 +74,11 @@ resource "aws_subnet" "private" {
   }
 }
 
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.this.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.this.id
-  }
-
-  tags = {
-    Name = "${var.name}-public"
-  }
-}
-
-resource "aws_route_table_association" "public" {
-  count          = 2
-  subnet_id      = aws_subnet.public[count.index].id
-  route_table_id = aws_route_table.public.id
-}
-
-resource "aws_eip" "nat" {
-  domain = "vpc"
-
-  depends_on = [aws_internet_gateway.this]
-
-  tags = {
-    Name = "${var.name}-nat"
-  }
-}
-
-resource "aws_nat_gateway" "this" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[0].id
-
-  depends_on = [
-    aws_internet_gateway.this,
-    aws_route_table_association.public,
-  ]
-
-  tags = {
-    Name = "${var.name}-nat"
-  }
-}
-
+# No internet gateway, NAT gateway or default route: the VPC is air-gapped. AWS services are
+# reached only through the VPC endpoints below.
 resource "aws_route_table" "private" {
   count  = 2
   vpc_id = aws_vpc.this.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.this.id
-  }
 
   tags = {
     Name = "${var.name}-private-${count.index + 1}"
@@ -245,6 +189,15 @@ resource "aws_vpc_security_group_ingress_rule" "aws_endpoints_from_task" {
   to_port                      = 443
 }
 
+resource "aws_vpc_security_group_ingress_rule" "aws_endpoints_from_llm" {
+  security_group_id            = aws_security_group.aws_endpoints.id
+  referenced_security_group_id = aws_security_group.llm.id
+  description                  = "HTTPS from the LLM server (ECR image pull)."
+  from_port                    = 443
+  ip_protocol                  = "tcp"
+  to_port                      = 443
+}
+
 resource "aws_vpc_security_group_egress_rule" "alb_to_task" {
   security_group_id            = aws_security_group.alb.id
   referenced_security_group_id = aws_security_group.task.id
@@ -263,13 +216,57 @@ resource "aws_vpc_security_group_ingress_rule" "task_from_alb" {
   to_port                      = 8000
 }
 
-resource "aws_vpc_security_group_egress_rule" "task_https" {
+data "aws_prefix_list" "s3" {
+  name = "com.amazonaws.${data.aws_region.current.region}.s3"
+}
+
+# The task can reach only: AWS endpoints, S3 (ECR image layers), EFS, the LLM server, Postgres,
+# and explicitly listed private observability CIDRs. There is no 0.0.0.0/0 rule.
+resource "aws_vpc_security_group_egress_rule" "task_to_endpoints" {
+  security_group_id            = aws_security_group.task.id
+  referenced_security_group_id = aws_security_group.aws_endpoints.id
+  description                  = "HTTPS to AWS interface endpoints (ECR, Logs, Secrets Manager)."
+  from_port                    = 443
+  ip_protocol                  = "tcp"
+  to_port                      = 443
+}
+
+resource "aws_vpc_security_group_egress_rule" "task_to_s3" {
   security_group_id = aws_security_group.task.id
-  description       = "HTTPS egress for AWS APIs and configured external integrations."
-  cidr_ipv4         = "0.0.0.0/0"
+  description       = "HTTPS to S3 through the gateway endpoint (ECR image layers)."
+  prefix_list_id    = data.aws_prefix_list.s3.id
   from_port         = 443
   ip_protocol       = "tcp"
   to_port           = 443
+}
+
+resource "aws_vpc_security_group_egress_rule" "task_to_llm" {
+  security_group_id            = aws_security_group.task.id
+  referenced_security_group_id = aws_security_group.llm.id
+  description                  = "Self-hosted LLM inference server."
+  from_port                    = local.llm_port
+  ip_protocol                  = "tcp"
+  to_port                      = local.llm_port
+}
+
+resource "aws_vpc_security_group_egress_rule" "task_to_db" {
+  security_group_id            = aws_security_group.task.id
+  referenced_security_group_id = aws_security_group.db.id
+  description                  = "Episodic memory and knowledge base Postgres."
+  from_port                    = 5432
+  ip_protocol                  = "tcp"
+  to_port                      = 5432
+}
+
+resource "aws_vpc_security_group_egress_rule" "task_to_observability" {
+  for_each = local.egress_targets
+
+  security_group_id = aws_security_group.task.id
+  description       = "Private observability backend (Prometheus/Datadog/Splunk via PrivateLink or VPC peering)."
+  cidr_ipv4         = each.value.cidr
+  from_port         = each.value.port
+  ip_protocol       = "tcp"
+  to_port           = each.value.port
 }
 
 resource "aws_vpc_endpoint" "execute_api" {
@@ -797,15 +794,26 @@ resource "aws_ecs_task_definition" "api" {
         { name = "TRUSTED_IDENTITY_HEADER", value = "X-Authenticated-User" },
         { name = "API_GATEWAY_STAGE_PREFIX", value = "/${var.api_stage_name}" },
         { name = "ENABLE_SYNTHETIC_HEARTBEAT", value = "false" },
+        { name = "LLM_BASE_URL", value = "http://${aws_instance.llm.private_ip}:${local.llm_port}/v1" },
+        { name = "POSTGRES_HOST", value = aws_db_instance.memory.address },
+        { name = "POSTGRES_PORT", value = "5432" },
+        { name = "POSTGRES_DB", value = "agent_kb" },
+        { name = "POSTGRES_USER", value = "postgres" },
         ], [
         for name, value in var.application_environment : { name = name, value = value }
       ])
-      secrets = [
-        for name, arn in var.secret_arns : {
-          name      = name
-          valueFrom = arn
-        }
-      ]
+      secrets = concat(
+        [{
+          name      = "POSTGRES_PASSWORD"
+          valueFrom = "${aws_db_instance.memory.master_user_secret[0].secret_arn}:password::"
+        }],
+        [
+          for name, arn in var.secret_arns : {
+            name      = name
+            valueFrom = arn
+          }
+        ],
+      )
       logConfiguration = {
         logDriver = "awslogs"
         options = {

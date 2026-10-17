@@ -43,6 +43,21 @@ output "task_role_arn" {
   value       = aws_iam_role.task.arn
 }
 
+output "llm_server_private_ip" {
+  description = "Private IP of the self-hosted LLM server (used as LLM_BASE_URL)."
+  value       = aws_instance.llm.private_ip
+}
+
+output "llm_ecr_repository_url" {
+  description = "Push the inference-server image here."
+  value       = aws_ecr_repository.llm.repository_url
+}
+
+output "db_endpoint" {
+  description = "Private Postgres endpoint. Apply knowledge_base/migrations/*.sql once from inside the VPC."
+  value       = aws_db_instance.memory.address
+}
+
 output "github_actions_role_arn" {
   description = "Configure as the AWS_ROLE_TO_ASSUME GitHub Actions secret."
   value       = aws_iam_role.github_actions.arn

@@ -5,10 +5,19 @@ name                  = "sre-agent"
 vpc_cidr              = "10.40.0.0/16"
 allowed_client_cidrs = ["10.40.0.0/16"]
 
-# Store actual credentials in Secrets Manager; never put secret values in this file.
-secret_arns = {
-  OPENAI_API_KEY = "arn:aws:secretsmanager:us-east-1:123456789012:secret:sre-agent/openai-key-REPLACE"
-}
+# Application credentials stored in Secrets Manager (never put secret values in this file).
+# No LLM provider key is needed: the model is self-hosted. Add connector/Slack secrets as required,
+# e.g. SLACK_BOT_TOKEN = "arn:aws:secretsmanager:...". The Postgres password is wired automatically.
+secret_arns = {}
+
+# GPU AMI with NVIDIA drivers and Docker, and the private bucket holding model weights.
+llm_ami_id        = "ami-REPLACE"
+llm_instance_type = "g5.12xlarge"
+llm_models_bucket = ""
+
+# Private CIDRs of observability backends (Prometheus, Splunk, PrivateLink endpoints). No 0.0.0.0/0.
+observability_cidrs = []
+observability_ports = [443]
 
 # Add existing customer-managed KMS key ARNs here if used to encrypt the secrets above.
 kms_key_arns = []

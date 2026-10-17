@@ -20,11 +20,3 @@ scrape_configs:
       - targets: ["host.docker.internal:8000"]
         labels:
           service: "anomaly-response-agent"
-
-  - job_name: "redis"
-    static_configs:
-      - targets: ["redis:6379"]
-
-  - job_name: "kafka"
-    static_configs:
-      - targets: ["kafka:9101"]

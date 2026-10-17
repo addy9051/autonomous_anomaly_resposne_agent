@@ -22,14 +22,10 @@ dev-setup: install ## Full dev setup: install deps, copy env, start infra
 infra-up: ## Start Docker Compose infrastructure
 	docker compose up -d
 	@echo "✅ Infrastructure started. Services:"
-	@echo "   Kafka:      localhost:9092"
-	@echo "   Redis:      localhost:6379"
 	@echo "   PostgreSQL: localhost:5432"
-	@echo "   N8n:        http://localhost:5678"
 	@echo "   Prometheus: http://localhost:9090"
-	@echo "   Grafana:    http://localhost:3000 (admin/agent_admin_2024)"
-	@echo "   Loki:       http://localhost:3100"
-	@echo "   Tempo:      http://localhost:3200"
+	@echo "   Langfuse:   http://localhost:3001"
+	@echo "   LLM server: run vLLM/Ollama yourself and set LLM_BASE_URL"
 
 infra-down: ## Stop Docker Compose infrastructure
 	docker compose down
