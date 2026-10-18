@@ -96,6 +96,10 @@ Rules for hypotheses:
 - Cite only ids listed above; never invent evidence. Evidence marked [SIMULATED] is not proof.
 - Include at least one alternative hypothesis, and cite contradicting evidence where it exists.
 - If evidence is thin or sources are unavailable, say so and use a low confidence band.
+- Specialist reports are generated assessments, not verified evidence. Treat each as a hypothesis and confirm material
+  claims against the shared evidence timeline or identified runbook references.
+- Reject claims that cite unknown evidence ids or whose `evidence.incident_id` differs from the current anomaly event
+  id. Keep source provenance explicit in the root cause, decision summary, and hypotheses.
 """
 
 

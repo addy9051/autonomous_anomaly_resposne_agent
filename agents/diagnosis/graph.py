@@ -270,11 +270,27 @@ async def supervisor_node(state: DiagnosisState) -> dict:
     tasks = []
     for key in expert_keys:
         if key in expert_map:
-            tasks.append(expert_map[key].investigate(anomaly, skills_text=state.get("skills_text", "")))
+            tasks.append(
+                expert_map[key].investigate(
+                    anomaly,
+                    skills_text=state.get("skills_text", ""),
+                    gathered_context=state.get("context", ""),
+                    evidence_timeline=state.get("evidence_timeline", []),
+                    graph_runbook_matches=state.get("runbook_matches", []),
+                )
+            )
 
     # Default to application if list is empty
     if not tasks:
-        tasks.append(expert_map["application_expert"].investigate(anomaly, skills_text=state.get("skills_text", "")))
+        tasks.append(
+            expert_map["application_expert"].investigate(
+                anomaly,
+                skills_text=state.get("skills_text", ""),
+                gathered_context=state.get("context", ""),
+                evidence_timeline=state.get("evidence_timeline", []),
+                graph_runbook_matches=state.get("runbook_matches", []),
+            )
+        )
 
     with expert_timer:
         reports_list = await asyncio.gather(*tasks)
@@ -306,19 +322,12 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
     llm = get_chat_model(
         model_name=settings.llm.diagnosis_agent_model,
         temperature=0.1,
-        max_tokens=4096,
+        max_tokens=1024,
     )
 
     anomaly = state["anomaly_event"]
 
-    prompt = SYNTHESIS_PROMPT.format(
-        anomaly_event=sanitize_for_llm(json.dumps(anomaly, indent=2, default=str)),
-        context=sanitize_for_llm(state.get("context", "No additional context gathered.")),
-        runbook_matches=json.dumps(state.get("runbook_matches", []), indent=2),
-        sub_agent_reports=sanitize_for_llm(json.dumps(state.get("sub_agent_reports", {}), indent=2, default=str)),
-        evidence_index=build_evidence_index(state.get("evidence_timeline", [])),
-        missing_sources=", ".join(state.get("missing_sources", [])) or "none",
-    )
+    prompt = build_synthesis_prompt(state)
 
     response = await llm.ainvoke(
         [
@@ -346,6 +355,64 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
         "diagnosis_result": diagnosis,
         "messages": [HumanMessage(content=f"RCA complete: {diagnosis.get('root_cause', 'unknown')[:100]}")],
     }
+
+
+def build_synthesis_prompt(state: DiagnosisState) -> str:
+    """Render the synthesis prompt used in production and controlled evaluation."""
+    return SYNTHESIS_PROMPT.format(
+        anomaly_event=sanitize_for_llm(json.dumps(state["anomaly_event"], indent=2, default=str)),
+        context=sanitize_for_llm(state.get("context", "No additional context gathered.")),
+        runbook_matches=json.dumps(state.get("runbook_matches", []), indent=2),
+        sub_agent_reports=sanitize_for_llm(
+            json.dumps(_compact_sub_agent_reports(state.get("sub_agent_reports", {})), indent=2, default=str)
+        ),
+        evidence_index=build_evidence_index(state.get("evidence_timeline", [])),
+        missing_sources=", ".join(state.get("missing_sources", [])) or "none",
+    )
+
+
+def _compact_sub_agent_reports(reports: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Keep synthesis context bounded without dropping report or evidence provenance from state."""
+    compact: dict[str, dict[str, Any]] = {}
+    for key, report in reports.items():
+        evidence = report.get("evidence", {})
+        if not isinstance(evidence, dict):
+            evidence = {}
+        compact_refs = {}
+        for ref_type in ("graph_runbook_references", "expert_references"):
+            references = evidence.get(ref_type, [])
+            if not isinstance(references, list):
+                references = []
+            compact_refs[ref_type] = [
+                {
+                    field: reference.get(field)
+                    for field in ("runbook_id", "title", "similarity_score")
+                    if field in reference
+                }
+                for reference in references
+                if isinstance(reference, dict)
+            ]
+        findings = str(report.get("findings", ""))
+        max_findings_chars = 3000
+        if len(findings) > max_findings_chars:
+            findings = findings[:max_findings_chars] + "\n[truncated for synthesis; full report retained]"
+        compact[key] = {
+            "agent_type": report.get("agent_type", key),
+            "findings": findings,
+            "severity": report.get("severity", "medium"),
+            "confidence": report.get("confidence", 0.5),
+            "evidence": {
+                "domain": evidence.get("domain"),
+                "analysis_type": evidence.get("analysis_type"),
+                "is_verified_evidence": evidence.get("is_verified_evidence", False),
+                "incident_id": evidence.get("incident_id"),
+                "evidence_timeline_ids": evidence.get("evidence_timeline_ids", []),
+                "graph_runbook_references": compact_refs["graph_runbook_references"],
+                "expert_references": compact_refs["expert_references"],
+                "confidence_method": evidence.get("confidence_method"),
+            },
+        }
+    return compact
 
 
 # ─── Graph Builder ───────────────────────────────────────────────
@@ -497,6 +564,7 @@ class DiagnosisAgent:
                             agent_type=v.get("agent_type", k),
                             findings=v.get("findings", ""),
                             severity=Severity(v.get("severity", "medium")),
+                            evidence=v.get("evidence", {}),
                             confidence=v.get("confidence", 0.5),
                         )
                         for k, v in result.get("sub_agent_reports", {}).items()

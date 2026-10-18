@@ -90,7 +90,7 @@ class LLMJudge:
         return parse_response(case["id"], raw)
 
 
-def local_judge_fn(model: str) -> JudgeFn:
+def local_judge_fn(model: str, *, max_tokens: int = 2048) -> JudgeFn:
     """temperature=0 call to the in-VPC inference server; imported lazily so offline tests need no deps."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -103,6 +103,7 @@ def local_judge_fn(model: str) -> JudgeFn:
     llm = get_chat_model(
         model,
         temperature=0,
+        max_tokens=max_tokens,
         base_url=llm_settings.judge_base_url or None,
         api_key=llm_settings.judge_api_key or None,
     )

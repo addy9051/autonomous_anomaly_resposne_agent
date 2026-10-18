@@ -61,3 +61,36 @@ async def test_service_modes_and_global_pause_never_bypass_policy(monkeypatch: p
     assert approval_required.proposal_hash
     assert paused.execution_status == "recommend_only"
     workflow.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unknown_model_action_is_denied_and_model_tier_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = object.__new__(ActionAgent)
+    agent.settings = SimpleNamespace(app=SimpleNamespace(app_env="development"))
+    workflow = AsyncMock(return_value={"status": "executed"})
+    monkeypatch.setattr("agents.action.agent.trigger_workflow", workflow)
+    action = RecommendedAction(
+        action="check_slow_query_traces",
+        tier=ActionTier.TIER_1_AUTO,
+        params={},
+    )
+    diagnosis = DiagnosisResult(
+        event_id="event",
+        root_cause="test",
+        root_cause_category=RootCauseCategory.UNKNOWN,
+        recommended_actions=[action],
+        confidence=0.8,
+    )
+
+    result = await agent._evaluate_and_execute_action(
+        action,
+        diagnosis,
+        IncidentRecord(incident_id="incident"),
+        "checkout",
+        True,
+    )
+
+    assert result.execution_status == "policy_denied"
+    assert result.policy_decision == ActionPolicyDecision.DENIED
+    assert result.tier == ActionTier.TIER_3_HUMAN
+    workflow.assert_not_awaited()

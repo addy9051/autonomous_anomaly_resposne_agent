@@ -6,6 +6,10 @@
 !**/n8n_workflows/*.json
 !**/grafana/**/*.json
 !tests/evals/*.json
+!evals/data/specialist_routing_labels.json
+!evals/reports/specialist_routing_*.json
+!evals/reports/specialist_quality_*.json
+!evals/reports/specialist_synthesis_comparisons.json
 
 # ─── Python ───────────────────────────────────────────────────
 __pycache__/

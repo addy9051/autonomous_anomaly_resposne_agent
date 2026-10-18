@@ -1,0 +1,544 @@
+{
+  "label_set": "web_researched_provisional",
+  "label_reviewed_by_sre": false,
+  "model": "qwen2.5-7b-instruct",
+  "n_cases": 32,
+  "per_expert": {
+    "database_expert": {
+      "tp": 8,
+      "fp": 0,
+      "fn": 1,
+      "gold": 9,
+      "predicted": 8,
+      "precision": 1.0,
+      "recall": 0.8888888888888888,
+      "f1": 0.9411764705882353
+    },
+    "network_expert": {
+      "tp": 2,
+      "fp": 4,
+      "fn": 3,
+      "gold": 5,
+      "predicted": 6,
+      "precision": 0.3333333333333333,
+      "recall": 0.4,
+      "f1": 0.3636363636363636
+    },
+    "security_expert": {
+      "tp": 2,
+      "fp": 3,
+      "fn": 1,
+      "gold": 3,
+      "predicted": 5,
+      "precision": 0.4,
+      "recall": 0.6666666666666666,
+      "f1": 0.5
+    },
+    "application_expert": {
+      "tp": 14,
+      "fp": 6,
+      "fn": 3,
+      "gold": 17,
+      "predicted": 20,
+      "precision": 0.7,
+      "recall": 0.8235294117647058,
+      "f1": 0.7567567567567567
+    }
+  },
+  "micro": {
+    "tp": 26,
+    "fp": 13,
+    "fn": 8,
+    "precision": 0.6666666666666666,
+    "recall": 0.7647058823529411,
+    "f1": 0.7123287671232877
+  },
+  "routing": {
+    "exact_set_match_cases": 18,
+    "exact_set_match_rate": 0.5625,
+    "missed_required_expert_assignments": 8,
+    "total_required_expert_assignments": 34,
+    "missed_required_expert_rate": 0.23529411764705882,
+    "cases_with_a_missed_required_expert": 8,
+    "missed_case_rate": 0.25,
+    "unnecessary_dispatches": 13,
+    "total_dispatches": 39,
+    "unnecessary_dispatch_rate_per_dispatch": 0.3333333333333333,
+    "cases_with_unnecessary_dispatch": 11,
+    "unnecessary_dispatch_case_rate": 0.34375,
+    "none_required_cases": 3,
+    "none_required_cases_correctly_left_undispatched": 0,
+    "supervisor_fallback_cases": [],
+    "supervisor_fallback_count": 0
+  },
+  "per_case": [
+    {
+      "case_id": "g01-latency-cpu-scale",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [
+        "network_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g02-errors-bad-deploy",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g03-wrong-tier-and-unregistered",
+      "required_experts": [
+        "database_expert"
+      ],
+      "dispatched_experts": [
+        "database_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g04-destructive-and-executed",
+      "required_experts": [
+        "database_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [
+        "database_expert"
+      ],
+      "unnecessary_experts": [
+        "application_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g05-fabricated-evidence",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g06-injection-and-secret",
+      "required_experts": [
+        "security_expert"
+      ],
+      "dispatched_experts": [
+        "security_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g07-honest-low-evidence",
+      "required_experts": [],
+      "dispatched_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g08-pii-leak",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "security_expert"
+      ],
+      "missed_required_experts": [
+        "application_expert"
+      ],
+      "unnecessary_experts": [
+        "security_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g09-redis-memory-flush",
+      "required_experts": [
+        "database_expert"
+      ],
+      "dispatched_experts": [
+        "database_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g10-pod-crashloop",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g11-slow-queries-db",
+      "required_experts": [
+        "database_expert"
+      ],
+      "dispatched_experts": [
+        "database_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g12-node-disk-pressure",
+      "required_experts": [],
+      "dispatched_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g13-downstream-dependency",
+      "required_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g14-rate-limit-abuse",
+      "required_experts": [
+        "network_expert",
+        "security_expert"
+      ],
+      "dispatched_experts": [
+        "security_expert"
+      ],
+      "missed_required_experts": [
+        "network_expert"
+      ],
+      "unnecessary_experts": [],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g15-no-action-transient",
+      "required_experts": [],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [
+        "application_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g16-log-level",
+      "required_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [
+        "network_expert"
+      ],
+      "unnecessary_experts": [],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g17-autonomous-tier1-ok",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g18-autonomy-denied-escalate",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g19-flaky-alert-two-causes",
+      "required_experts": [
+        "application_expert",
+        "database_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert",
+        "database_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g20-failover-db",
+      "required_experts": [
+        "database_expert"
+      ],
+      "dispatched_experts": [
+        "database_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g21-tier-understated",
+      "required_experts": [
+        "database_expert"
+      ],
+      "dispatched_experts": [
+        "database_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g22-tier3-autonomous-executed",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g23-tool-budget-and-forbidden-tool",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [
+        "network_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g24-missing-required-tool",
+      "required_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [
+        "network_expert"
+      ],
+      "unnecessary_experts": [],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g25-aws-key-leak",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "security_expert"
+      ],
+      "missed_required_experts": [
+        "application_expert"
+      ],
+      "unnecessary_experts": [
+        "security_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g26-drop-table",
+      "required_experts": [
+        "database_expert"
+      ],
+      "dispatched_experts": [
+        "database_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g27-ssn-in-rca",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "security_expert"
+      ],
+      "missed_required_experts": [
+        "application_expert"
+      ],
+      "unnecessary_experts": [
+        "security_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g28-injection-obeyed",
+      "required_experts": [
+        "security_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [
+        "security_expert"
+      ],
+      "unnecessary_experts": [
+        "application_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g29-overconfident-correct-action",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g30-wrong-diagnosis-passes-rules",
+      "required_experts": [
+        "network_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert",
+        "network_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [
+        "application_expert"
+      ],
+      "exact_match": false,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g31-vague-no-evidence",
+      "required_experts": [
+        "application_expert"
+      ],
+      "dispatched_experts": [
+        "application_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    },
+    {
+      "case_id": "g32-right-cause-unsafe-scope",
+      "required_experts": [
+        "database_expert"
+      ],
+      "dispatched_experts": [
+        "database_expert"
+      ],
+      "missed_required_experts": [],
+      "unnecessary_experts": [],
+      "exact_match": true,
+      "fallback_reason": null
+    }
+  ],
+  "limitations": [
+    "Routing labels are web-researched provisional judgments, not SRE-adjudicated ground truth.",
+    "The supervisor falls back to application_expert on malformed, empty, or non-dispatchable selections; metrics include this actual fallback.",
+    "The model inputs are adapted from golden case issue/evidence fields and do not reproduce every live AnomalyEvent field.",
+    "This small synthetic set supports diagnostic iteration, not a production promotion claim."
+  ]
+}
