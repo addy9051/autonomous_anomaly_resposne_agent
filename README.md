@@ -1,8 +1,8 @@
 # Sandboxed SRE Intelligence Layer
 
-> A **sandboxed intelligence layer for SREs**. Alerts trigger a multi-agent investigation that runs entirely inside your VPC against a self-hosted open-weight model. Non-critical events are auto-fixed through a small allowlist of reversible, policy-gated actions, or come with expert-recommended steps. Critical events get a root-cause analysis only, with no action. Built with **LangChain + LangGraph**, a **FastAPI** backend and a **Next.js** dashboard.
+> An **SRE investigation prototype** built with **LangChain + LangGraph**, a **FastAPI** backend and a **Next.js** dashboard. The current demo runs the API and dashboard locally, stores incident and episodic state in local Docker Postgres, and calls open-weight vLLM models hosted on Modal. Critical events get a root-cause analysis only. Non-critical events are handled by a deterministic policy gate; the demo executors are mocked, so it does not perform live remediation.
 
-> **Deployment status:** AWS is the only deployment target (`infra/aws/terraform`: air-gapped VPC, ECS/Fargate agent, GPU EC2 LLM server, RDS Postgres). The stack validates but has not been applied to an account. The old GCP/Kubernetes files were removed.
+> **Deployment status:** this is a local product demo, not a production service. Modal serves the chat, judge and embedding models over public HTTPS endpoints protected by vLLM API keys; it does not host the API or dashboard. Use synthetic alerts and non-sensitive data only. The AWS Terraform is a future private-cloud migration design: it has not been applied, still needs real inputs and quota, and requires reconciliation with the latest Postgres incident-store implementation. See [Demo now, migrate to AWS later](#demo-now-migrate-to-aws-later) and [docs/decisions.md](docs/decisions.md).
 
 ## Table of Contents
 
@@ -11,6 +11,7 @@
 3. [Connecting telemetry vendors](#connecting-telemetry-vendors-from-the-dashboard)
 4. [Dashboard](#dashboard)
 5. [Quick start](#quick-start)
+   - [Demo now, migrate to AWS later](#demo-now-migrate-to-aws-later)
 6. [Project structure](#project-structure)
 7. [API reference](#api-reference)
 8. [Testing and evals](#testing-and-evals)
@@ -40,11 +41,11 @@ Alert webhook ─► dedupe ─► episodic memory (Postgres): seen this before?
                  duplicate-of, skills used) + per-stage timeline in episodic memory
 ```
 
-1. **Intake.** `POST /api/v1/alerts/alertmanager` (and `/api/v1/events/process`) turns an alert into an `AnomalyEvent`, deduplicates it, and opens an incident. Auth is API Gateway IAM plus a trusted identity header.
+1. **Intake.** `POST /api/v1/alerts/alertmanager` (and `/api/v1/events/process`) turns an alert into an `AnomalyEvent`, deduplicates it, and opens an incident. Local demo auth uses a development API key; the future AWS design uses API Gateway IAM and a trusted identity header.
 2. **Memory check.** The fingerprint (sorted services + anomaly type + severity) is looked up in episodic memory within `DUPLICATE_WINDOW_MINUTES`. Duplicates are suppressed, replayed or re-diagnosed depending on how the prior episode ended. A failed prior fix always gets a fresh diagnosis.
 3. **Evidence.** `agents/diagnosis/evidence.py` queries the telemetry adapter (Prometheus, Datadog, Splunk, or the simulator for tests) for up to 3 affected services over a 15-minute window, and adds recent GitHub deployments (`GITHUB_DEPLOY_REPO`). Each record carries event time, ingestion time, freshness, `is_simulated` and `source_ref`. A failing source is recorded as an **evidence gap**, never filled with mock data.
 4. **Diagnosis.** LangGraph flow: `gather_context` → `rag_runbook_lookup` → `supervisor` (selects experts) → `synthesise_rca`. The model sees evidence with citable ids (E1…En) and the list of unavailable sources, and proposes 2-3 competing hypotheses. `agents/diagnosis/hypotheses.py` resolves citations against the real timeline (invented ids are dropped) and caps confidence (at most 0.4 with no real support, 0.7 with a single supporting record or any contradiction). If the output cannot be parsed, no action is proposed and the incident is escalated.
-5. **Policy gate.** Critical incidents are always denied. Non-critical actions are auto-run only if allowlisted and reversible, `AUTO_REMEDIATION_ENABLED=true`, the service is in `AUTO_ACTION_TARGET_SERVICES`, and the hourly limit is not reached. Everything else needs SRE approval or is recommend-only. Execution goes through n8n workflows with an audit trail.
+5. **Policy gate.** Critical incidents are always denied. Non-critical actions are auto-run only if allowlisted and reversible, `AUTO_REMEDIATION_ENABLED=true`, the service is in `AUTO_ACTION_TARGET_SERVICES`, and the hourly limit is not reached. Everything else needs SRE approval or is recommend-only. The demo executors/workflow integration are mocked and do not change infrastructure.
 6. **Verification.** `agents/verification/verifier.py` re-reads metrics after the action using only authoritative records (simulated data is excluded). Outcomes are recovered, not recovered, or inconclusive; any adapter error yields inconclusive.
 7. **Close-out.** PagerDuty and Slack updates, the incident store (hypotheses, queries, approvals), and the episodic-memory outcome plus SRE brief.
 
@@ -57,14 +58,14 @@ Alert webhook ─► dedupe ─► episodic memory (Postgres): seen this before?
 | Episodic memory | `shared/episodic_memory.py`, `knowledge_base/migrations/003_episodic_memory.sql` | Postgres; falls back to in-process memory with a loud log (`episodic_memory_degraded` in `/api/v1/status`) if unreachable. |
 | Action harness | `agents/action/policy.py`, `agents/action/tiers.py` | Deterministic policy; tiers: 1 reversible, 2 needs approval, 3 always human. The auto allowlist can only narrow the reversible set. |
 | Egress harness | `shared/egress.py`, `infra/aws/terraform` | App-level fail-closed allowlist (private ranges + `EGRESS_ALLOWED_HOSTS` / `EGRESS_ALLOWED_CIDRS`) on the LLM client and every HTTP client, with a startup self-test. The VPC (no internet/NAT gateway, no `0.0.0.0/0` security-group rule) is the network-level backstop. |
-| Local models | `shared/llm.py` | OpenAI-compatible server in the VPC (`LLM_BASE_URL`; vLLM/Ollama). Embeddings via `EMBEDDING_*`. |
+| Local models | `shared/llm.py` | OpenAI-compatible vLLM server (`LLM_BASE_URL`, `LLM_API_KEY`). Embeddings via `EMBEDDING_*`. The judge has its own `JUDGE_BASE_URL`. |
 | Monitoring | `agents/monitoring/` | Anomaly detection for the telemetry stream path. |
 | Verification | `agents/verification/` | Independent post-action recovery check. |
 | Regression detector | `agents/feedback/regression.py` | Flags earlier fixes that did not hold. Also provides `alert_key` for dedupe. |
 
 Inter-agent contracts are Pydantic v2 models in `shared/schemas.py`: `TelemetryEvent`, `AnomalyEvent`, `DiagnosisResult`, `ActionResult`, `IncidentRecord`.
 
-**Setup for the sandbox:** serve a chat model and an embedding model inside the VPC and set `LLM_BASE_URL`; apply migration `003_episodic_memory.sql` (changing `EMBEDDING_DIMENSIONS` requires re-embedding); ingest runbooks, policies and SLAs per collection; deploy `infra/aws/terraform` for the network-level sandbox. SaaS vendors (Datadog, PagerDuty, Slack, GitHub) are blocked by default: route them privately or add them to `EGRESS_ALLOWED_HOSTS`.
+**AWS sandbox target:** the design calls for chat and embedding models inside a private VPC and `LLM_BASE_URL` pointed at that server; apply the SQL migrations (changing `EMBEDDING_DIMENSIONS` requires re-embedding); ingest runbooks, policies and SLAs per collection; then reconcile and deploy `infra/aws/terraform` for the network-level boundary. This has not been deployed. SaaS vendors (Datadog, PagerDuty, Slack, GitHub) are blocked by default: route them privately or add them to `EGRESS_ALLOWED_HOSTS`.
 
 ## Connecting telemetry vendors from the dashboard
 
@@ -74,7 +75,7 @@ Open `/connectors` in the dashboard:
 2. **Credentials**: fill in and "Test connection" for each. Saved secrets are never returned by the API (shown as "saved").
 3. **Activate**: choose services, dry-run and poll interval. The selection builds `CONNECTOR_MODES` at runtime and starts combined live ingestion (`/api/v1/connectors*`, `/api/v1/ingestion/status`). Missing credentials do not crash startup; ingestion just stays inactive.
 
-State is persisted to `.connector_state.json` (gitignored, **plaintext secrets**; use a secret manager in production) and overrides `CONNECTOR_MODES` from `.env`. Dashboard env: `NEXT_PUBLIC_API_BASE` (default `http://localhost:8050/api/v1`) and `NEXT_PUBLIC_API_KEY` (sent as `X-API-Key`). Default query templates are assumptions; override with `TELEMETRY_QUERY_TEMPLATES`. Not yet validated against live vendors.
+State is persisted to `.connector_state.json` (gitignored, **plaintext secrets**; use a secret manager in production) and overrides `CONNECTOR_MODES` from `.env`. Dashboard env: `NEXT_PUBLIC_API_BASE` (default `http://localhost:8050/api/v1`; use `:8010` with `make api`) and `NEXT_PUBLIC_API_KEY` (sent as `X-API-Key`). Default query templates are assumptions; override with `TELEMETRY_QUERY_TEMPLATES`. Not yet validated against live vendors.
 
 ## Dashboard
 
@@ -87,8 +88,8 @@ State is persisted to `.connector_state.json` (gitignored, **plaintext secrets**
 | Connector wizard | `/api/v1/connectors*` |
 
 ```bash
-# Terminal 1: backend
-poetry run uvicorn api:app --host 127.0.0.1 --port 8050 --reload
+# Terminal 1: backend (port 8010; set NEXT_PUBLIC_API_BASE to http://localhost:8010/api/v1)
+make api
 
 # Terminal 2: dashboard (http://localhost:3000)
 cd dashboard
@@ -98,17 +99,57 @@ npm run dev
 
 ## Quick start
 
-Prerequisites: Python 3.11+, Docker Desktop, Node.js 18+, and an OpenAI-compatible inference server (vLLM/Ollama) reachable from the app.
+Prerequisites: Python 3.11+, Docker Desktop, Node.js 18+, and an OpenAI-compatible inference server (vLLM) reachable from the app. Without a local GPU, use the Modal dev servers below.
 
 ```bash
 pip install poetry
 poetry install
-copy .env.example .env        # set LLM_BASE_URL and the EMBEDDING_* / EGRESS_* values
-docker compose up -d          # Postgres, Prometheus, Langfuse (lite: docker-compose.lite.yml = Redis + Postgres)
-poetry run uvicorn api:app --host 127.0.0.1 --port 8050 --reload
-poetry run python orchestrator.py --mode demo     # synthetic batch
-poetry run pytest tests/ -v
+copy .env.example .env        # set the LLM_*, EMBEDDING_*, JUDGE_* and EGRESS_* values (see below)
+docker compose up -d postgres prometheus   # migrations in knowledge_base/migrations run on first start
+poetry run python -c "import asyncio; from knowledge_base.ingestion.pipeline import RunbookIngestionPipeline; asyncio.run(RunbookIngestionPipeline().ingest_sample_runbooks())"
+make api                      # API on http://127.0.0.1:8010
+make demo                     # fires a critical sample alert; `make demo-warning` fires a non-critical one
+poetry run pytest tests/unit tests/evals -q
 ```
+
+Local auth: with `APP_ENV=development` set `REQUIRE_GATEWAY_AUTH=false` and `API_AUTH_TOKEN=<token>`, and send it as `X-API-Key`. In any other environment requests must carry the API Gateway identity header.
+
+### Dev inference on Modal (vLLM)
+
+`infra/modal/vllm_app.py` deploys API-key-protected vLLM endpoints: chat (`qwen2.5-7b-instruct`, L4), judge (`llama-3.1-8b-instruct`, L4), embeddings (`bge-base-en-v1.5`, T4, 768 dimensions), and an offline-only Mistral-Small-24B labeller (A100-80GB) for clearly marked simulated evaluation labels. Deploying defines the endpoints; GPU workers start on requests and scale down after idle windows, but active GPU time is billable.
+
+```bash
+modal secret create vllm-api-key VLLM_API_KEY=<long-random-string>
+make modal-deploy     # prints the four endpoint URLs (labeller is for offline simulated labels only)
+make modal-stop       # stop GPU spend when finished (the CLI asks for confirmation; add --yes to skip)
+```
+
+Set in `.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS=768`, the model names (`DEFAULT_MODEL` and the `*_AGENT_MODEL` values), `JUDGE_MODEL`, `JUDGE_BASE_URL`, `JUDGE_API_KEY`, and `EGRESS_ALLOWED_HOSTS=*.modal.run`. Modal endpoints are public HTTPS services even though vLLM requires the API key. Do not send production/customer telemetry, secrets, or personal data to this demo. The first request can cold-start a GPU and may briefly return a redirect or unavailable response until the model loads.
+
+The dashboard polls `/api/v1/health/detailed` for chat and embedding model readiness. While a Modal worker is cold-starting, it shows an indeterminate loading bar and keeps **Synthesize Anomaly** disabled; it enables the demo after both endpoints report ready. Startup time varies, so the bar intentionally does not imply a percentage or fixed ETA.
+
+### Demo now, migrate to AWS later
+
+**Demo path (today):**
+
+1. Deploy the Modal model endpoints and configure their URLs and API keys in the local `.env`.
+2. Start local Postgres and Prometheus with `docker compose up -d postgres prometheus`; Postgres runs the mounted SQL migrations on first initialization. The incident, approval, audit and episodic stores use Postgres by default.
+3. Start the API with `make api` (port 8010) and the dashboard from `dashboard` with `npm run dev -- -p 3010`. For local dashboard calls, set `CORS_EXTRA_ORIGINS=http://localhost:3010`, `NEXT_PUBLIC_API_BASE=http://localhost:8010/api/v1` and `NEXT_PUBLIC_API_KEY` to the development API token before starting/building Next.js.
+4. Use `make demo` or `make demo-warning` to show a synthetic investigation. Remediation executors are mocked; no live infrastructure changes occur.
+5. Stop Modal when finished with `make modal-stop`. This stops GPU work; local API, dashboard and Docker services are managed separately.
+
+This setup is suitable for a controlled walkthrough, not a production launch: the API/dashboard are local, the model endpoints are public, local development auth is not production identity, connector state may contain plaintext credentials, and live vendor integrations/remediation have not been validated.
+
+**Later AWS migration stages:**
+
+1. **Close readiness gaps:** decide the production data boundary, threat model, authentication/authorization, retention, budgets and incident response; review the action executors and SRE skills; validate telemetry connectors and production-sized tests.
+2. **Prepare AWS prerequisites:** choose a region and budget, request adequate GPU quota, create the GitHub Actions OIDC provider, select a compatible GPU AMI, create the private model bucket and Secrets Manager secrets, and build/push the inference image and model artifacts. Never put secret values in `terraform.tfvars`.
+3. **Reconcile Terraform with current code:** review `infra/aws/terraform` against Postgres-backed incidents and current environment/configuration. In particular, verify whether the existing EFS resources and task permissions are still needed; the deployment guide's former EFS/SQLite assumptions are obsolete. Configure encrypted remote Terraform state and locking.
+4. **Plan before applying:** populate ignored `terraform.tfvars`, validate the AWS account and caller CIDRs, run `terraform fmt -check`, `terraform validate`, and `terraform plan`, then review resource changes and costs. Apply only after explicit approval.
+5. **Move serving private:** deploy chat and embedding vLLM in the private VPC; point `LLM_BASE_URL` and `EMBEDDING_BASE_URL` at those endpoints, provision an independent judge endpoint, and verify egress, API key delivery, logs and model loading without public model egress.
+6. **Deploy and verify the product surface:** deploy the API behind the private API Gateway integration, choose and secure a dashboard hosting path (not currently provided by the Terraform), migrate database contents, apply migrations, verify authenticated routes and recovery/approval behavior, then run load, failure, backup/restore and security tests before enabling production traffic.
+
+The AWS guide is a design/runbook, not evidence of a successful AWS deployment. See [AWS deployment and security guide](docs/DEPLOYMENT_SECURITY.md).
 
 ## Project structure
 
@@ -126,9 +167,9 @@ poetry run pytest tests/ -v
 ├── dashboard/               # Next.js SRE UI (incl. /connectors)
 ├── evals/                   # LLM-as-judge, agreement gate (local judge model)
 ├── tests/                   # unit, integration, evals
-├── infra/                   # aws/terraform (VPC, ECS agent, EC2 GPU LLM server, RDS), docker/Dockerfile
-├── scripts/                 # chaos experiments, verification and seeding helpers
-├── orchestrator.py          # severity-branched pipeline + CLI
+├── infra/                   # aws/terraform (VPC, ECS agent, EC2 GPU server with chat+embedding vLLM, RDS), modal/ (dev vLLM), docker/Dockerfile
+├── scripts/                 # sample alert sender, chaos experiments, verification and seeding helpers
+├── orchestrator.py          # severity-branched pipeline
 ├── api.py                   # FastAPI app
 └── docs/                    # deployment and design documents
 ```
@@ -164,10 +205,15 @@ poetry run pytest tests/ -v                 # everything
 poetry run pytest tests/unit -v             # unit tests
 poetry run ruff check .                     # lint
 poetry run python scripts/run_chaos_experiments.py
-python -m evals.run_judge_gate              # judge agreement gate, needs the in-VPC LLM server
+make judge-sanity                           # live judge over the golden cases, no human labels needed
+make judge-gate                             # judge-vs-human agreement gate, needs 30+ human labels
+make simulate-labels BASE_URL=<labeller>/v1 # AI-simulated labels (NOT human) from a Mistral-24B Modal function
+make judge-gate-simulated                   # judge vs those simulated labels: model-vs-model, not a human gate
 ```
 
-The judge calls the local model (`JUDGE_MODEL`) and must come from a different provider than every agent model. `evals/provider_check.py` checks this deterministically from model names (unknown models fail; declare them with `MODEL_PROVIDER_MAP`). `local_judge_fn` refuses to run on a clash, and `run_judge_gate` prompts you to pick another provider (exit code 3 when non-interactive). Re-baseline agreement with human labels before trusting scores. The golden dataset test checks dataset integrity only; retrieval quality must be measured against the live knowledge base once it is ingested.
+The judge calls its own server (`JUDGE_BASE_URL`, falling back to `LLM_BASE_URL`) with `JUDGE_MODEL`, and must come from a different provider than every agent model. `evals/provider_check.py` checks this deterministically from model names (unknown models fail; declare them with `MODEL_PROVIDER_MAP`). `local_judge_fn` refuses to run on a clash, and the judge entry points prompt you to pick another provider (exit code 3 when non-interactive).
+
+`make judge-sanity` (`evals/judge_sanity.py`) checks that the judge follows the rubric: valid JSON for every case and clean cases scoring at least 1.0 above deterministically flawed ones. On the 32 golden cases with Llama-3.1-8B it passed (clean mean 4.28, flawed mean 2.86), but it rated four flawed cases 5/5 (tier understated, tier 3 executed autonomously, `DROP TABLE`, SSN in the root cause). That is why the deterministic policy and PII layers, not the judge, are the safety gate. This is not the human-agreement gate: `evals/data/human_labels.jsonl` is still empty, so re-baseline with human labels before trusting scores. The golden dataset test checks dataset integrity only; retrieval quality must be measured against the live knowledge base once it is ingested.
 
 ## Security
 
@@ -178,27 +224,28 @@ The judge calls the local model (`JUDGE_MODEL`) and must come from a different p
 | GitHub OIDC | CI deployment | Short-lived AWS role session, no stored access key |
 | AWS IAM task role | ECS task | Scoped to the task's EFS access point |
 
-The production-facing API uses SigV4 with API Gateway `AWS_IAM` authorization and a private VPC endpoint. See [AWS pilot deployment instructions](docs/DEPLOYMENT_SECURITY.md).
+The future AWS design uses SigV4 with API Gateway `AWS_IAM` authorization and a private VPC endpoint; that deployment is not live. The current API is local and uses development authentication. See the [future AWS deployment and security design](docs/DEPLOYMENT_SECURITY.md).
 
-Network posture: egress is default-deny (see `shared/egress.py` and the security groups in `infra/aws/terraform`). Keep tracing in-VPC (self-hosted Langfuse); do not enable hosted LangSmith. Optional integrations (Slack, PagerDuty, GitHub, n8n) are only reachable if explicitly allowlisted.
+Network posture: the application HTTP client has a fail-closed egress allowlist (`shared/egress.py`); the VPC security-group restrictions in `infra/aws/terraform` are a future deployment design, not active protection for Modal. Tracing goes to the local self-hosted Langfuse (`LANGFUSE_BASE_URL=http://localhost:3001`, keys from its UI). Hosted LangSmith is forced off at startup unless its endpoint passes the egress check, and a Langfuse host that fails the check gets no handler (tracing is skipped, not sent). `event_id` ties the Langfuse session, the logs and the incident together; API requests are traced with OpenTelemetry, exported only to an egress-allowed collector set in `OTEL_EXPORTER_OTLP_ENDPOINT` (empty by default). See [decisions 4.5](docs/decisions.md). Optional integrations (Slack, PagerDuty, GitHub, n8n) are only reachable if explicitly allowlisted.
 
 ## CI/CD
 
-GitHub Actions runs lint, tests and a Docker build on pull requests, and deploys to AWS ECS/Fargate on pushes to `main` using GitHub OIDC; pull requests receive no AWS credentials. Stages: `ruff` → `pytest` → build and push to ECR → force ECS deployment and wait for stability.
+GitHub Actions runs lint, tests and a Docker build on pull requests. The workflow has a gated AWS ECS/Fargate deployment job on pushes to `main` using GitHub OIDC, but it runs only when the repository variable `AWS_DEPLOY_ENABLED=true` and a provisioned AWS target is configured; this repository has not deployed that target. Pull requests receive no AWS credentials. Stages: `ruff` → `pytest` → build and push to ECR → force ECS deployment and wait for stability.
 
 ## Known limitations
 
 | Area | Limitation |
 |------|-----------|
-| Validation | Unit-tested with mocks only: not yet run against a live local model, live Postgres or live vendors. |
-| Open-weight models | Weaker at structured output than hosted frontier models; the hypothesis validation and "no action if unparseable" rule are the safety net. |
-| Incident store | The incident, approval and audit store is still SQLite (`shared/incident_store.py`); only episodic memory is on Postgres. |
-| Infra | Terraform validates but has not been applied. You must build/push the inference image, upload model weights and run the DB migrations. The LLM server is a single instance. The incident/approval store is still SQLite on EFS (one task). |
+| Validation | Unit-tested (310 tests). Run end to end locally on a critical alert and a warning alert (recommend path, tier 3, nothing auto-executed) with Modal-hosted vLLM, Postgres and sample runbooks. Not run for the auto-fix path (executors are mocked), against live vendors, or on AWS. |
+| Open-weight models | Weaker at structured output than hosted frontier models; the hypothesis validation and "no action if unparseable" rule are the safety net. Dev uses 7-8B models, so expect thin root causes. |
+| Judge | The judge is a small model that misses some flaws (see Testing); the human-agreement gate has no labels yet. In production no judge server exists in the Terraform; it needs its own container or instance. |
+| Incident store | Postgres by default (`PostgresIncidentStore`, tables `incident_records` and `incident_audit_trail`); `INCIDENT_STORE_BACKEND=sqlite` keeps the local file store. A reachable database is required. |
+| Infra | Terraform validates but has not been applied. You must raise the GPU quota, mirror the vLLM image into ECR, upload model weights to S3 and run the DB migrations (via ECS Exec). The LLM server is a single instance, and the GPU layout assumes a 70B AWQ model, which fits tightly. |
 | Alert intake | Alertmanager cannot sign AWS IAM requests, so a gateway that injects the trusted identity header is required; diagnosis runs inside the webhook request; dedupe key is `service:anomaly_type`; anomaly type is a keyword guess; no PagerDuty intake. |
 | Evidence window | Fixed 15-minute window, not anchored on the alert start; metrics and deploys only; the GitHub deploy repo is global, not per service. |
 | Confidence | Hypothesis caps (0.4 / 0.7) are heuristics, not calibrated; the policy gate does not read hypothesis confidence. |
-| Dashboard | Overview and connector pages work; Observability/KB/Security nav entries are placeholders. |
-| Open audit items | Several GET endpoints in `api.py` are unauthenticated; `trigger_workflow` returns `mocked` without `N8N_API_KEY`; the Slack summary LLM call is unguarded; a stray debug `print` remains in `/api/v1/events/process`. |
+| Dashboard | Overview and connector pages work; Observability/KB/Security nav entries are placeholders. Some overview cards and incident stage indicators are presentation-only (for example, the displayed uptime/node count and `+12% from yesterday`); do not present those as measured production SLOs or real completed actions. |
+| Open audit items | `trigger_workflow` returns `mocked` without `N8N_API_KEY`; the Slack summary LLM call is unguarded; the dashboard shows a hardcoded "+12% from yesterday" under Autonomously Resolved. GET endpoints now require auth. The `.env` in a dev checkout may hold old provider keys; rotate and remove them. |
 
 ## License
 

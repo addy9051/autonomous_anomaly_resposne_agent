@@ -108,9 +108,72 @@ variable "llm_image_tag" {
 }
 
 variable "llm_models_bucket" {
-  description = "Private S3 bucket holding model weights, synced to the server at boot. Empty to skip."
+  description = "Private S3 bucket holding model weights (one folder per model), synced to the server at boot."
   type        = string
-  default     = ""
+
+  validation {
+    condition     = length(var.llm_models_bucket) > 0
+    error_message = "llm_models_bucket is required: the sandboxed server loads weights from S3 only."
+  }
+}
+
+variable "llm_api_key_secret_arn" {
+  description = "ARN of a Secrets Manager secret (plain text) holding the API key that protects both vLLM servers and is sent by the agent as LLM_API_KEY."
+  type        = string
+}
+
+variable "llm_chat_model_dir" {
+  description = "Folder under the models bucket holding the chat model weights."
+  type        = string
+  default     = "chat"
+}
+
+variable "llm_chat_served_name" {
+  description = "Model name the chat server exposes (used as DEFAULT_MODEL and all agent models)."
+  type        = string
+  default     = "llama-3.1-70b-instruct"
+}
+
+variable "llm_chat_gpu_devices" {
+  description = "GPU device indices for the chat server, comma separated."
+  type        = string
+  default     = "0,1"
+}
+
+variable "llm_chat_tensor_parallel" {
+  description = "Tensor parallel size; must equal the number of chat GPUs."
+  type        = number
+  default     = 2
+}
+
+variable "llm_chat_max_len" {
+  description = "Maximum context length for the chat model."
+  type        = number
+  default     = 8192
+}
+
+variable "llm_tool_call_parser" {
+  description = "vLLM tool-call parser for the chat model (llama3_json for Llama 3.x, hermes for Qwen)."
+  type        = string
+  default     = "llama3_json"
+}
+
+variable "llm_embed_model_dir" {
+  description = "Folder under the models bucket holding the embedding model weights."
+  type        = string
+  default     = "embed"
+}
+
+variable "llm_embed_served_name" {
+  description = "Model name the embedding server exposes."
+  type        = string
+  default     = "bge-base-en-v1.5"
+}
+
+variable "llm_embed_gpu_device" {
+  description = "GPU device index for the embedding server."
+  type        = string
+  default     = "2"
 }
 
 variable "db_engine_version" {
@@ -183,6 +246,14 @@ variable "application_environment" {
         "API_GATEWAY_STAGE_PREFIX",
         "ENABLE_SYNTHETIC_HEARTBEAT",
         "LLM_BASE_URL",
+        "LLM_API_KEY",
+        "EMBEDDING_BASE_URL",
+        "EMBEDDING_MODEL",
+        "DEFAULT_MODEL",
+        "MONITORING_AGENT_MODEL",
+        "DIAGNOSIS_AGENT_MODEL",
+        "ACTION_AGENT_MODEL",
+        "FEEDBACK_AGENT_MODEL",
         "POSTGRES_HOST",
         "POSTGRES_PORT",
         "POSTGRES_DB",

@@ -42,6 +42,10 @@ class LLMConfig(BaseSettings):
     feedback_agent_model: str = "llama-3.1-8b-instruct"
     judge_model: str = "qwen2.5-72b-instruct"  # must be a different provider than every agent model
 
+    # The judge may live on its own server (it is a different model family); blank = same server as the agents.
+    judge_base_url: str = Field(default="", validation_alias="JUDGE_BASE_URL")
+    judge_api_key: str = Field(default="", validation_alias="JUDGE_API_KEY")
+
     @property
     def embeddings_url(self) -> str:
         return self.embedding_base_url or self.base_url
@@ -97,7 +101,7 @@ class DataConfig(BaseSettings):
     def rag_dsn(self) -> str:
         """DSN for the RAG knowledge base — prefers Supabase Cloud, falls back to local."""
         if self.supabase_db_url and self.supabase_db_url != "postgresql://postgres:password@localhost:5432/agent_kb":
-            return self.supabase_db_url
+            return self.postgres_dsn  # never use a cloud DB in the sandbox
         return self.postgres_dsn
 
 
@@ -170,8 +174,8 @@ class IntegrationConfig(BaseSettings):
     grafana_url: str = "http://localhost:3000"
     grafana_token: str = Field("", alias="grafana_api_key")
 
-    # LangSmith
-    langchain_tracing_v2: bool = True
+    # LangSmith is hosted: off unless its endpoint passes the egress policy (see get_settings).
+    langchain_tracing_v2: bool = False
     langchain_api_key: str = ""
     langchain_project: str = "anomaly-agent"
     langchain_endpoint: str = "https://api.smith.langchain.com"
@@ -226,7 +230,7 @@ class ObservabilityConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
-    otel_exporter_otlp_endpoint: str = "http://localhost:4317"
+    otel_exporter_otlp_endpoint: str = ""
     otel_service_name: str = "anomaly-response-agent"
 
     langfuse_public_key: str = ""
@@ -324,7 +328,19 @@ def get_settings() -> Settings:
                     # Synchronize to environment for SDK compatibility
                     os.environ[env_var] = secret_value
 
-    # Langfuse disabled
-    pass
+    # Hosted LangSmith would ship every prompt and response outside the sandbox. LangChain reads these
+    # from the process environment (which a dotenv loader may have filled), so enforce the policy there.
+    from shared.egress import EgressViolation, check_url
+
+    try:
+        check_url(settings.integrations.langchain_endpoint, settings.app)
+        langsmith_allowed = True
+    except EgressViolation:
+        langsmith_allowed = False
+    if not (langsmith_allowed and settings.integrations.langchain_tracing_v2):
+        for var in ("LANGCHAIN_TRACING_V2", "LANGCHAIN_TRACING", "LANGSMITH_TRACING"):
+            os.environ[var] = "false"
+        for var in ("LANGCHAIN_API_KEY", "LANGSMITH_API_KEY"):
+            os.environ.pop(var, None)
 
     return settings

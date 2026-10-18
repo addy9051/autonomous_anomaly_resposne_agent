@@ -10,10 +10,12 @@ allowed_client_cidrs = ["10.40.0.0/16"]
 # e.g. SLACK_BOT_TOKEN = "arn:aws:secretsmanager:...". The Postgres password is wired automatically.
 secret_arns = {}
 
-# GPU AMI with NVIDIA drivers and Docker, and the private bucket holding model weights.
-llm_ami_id        = "ami-REPLACE"
-llm_instance_type = "g5.12xlarge"
-llm_models_bucket = ""
+# GPU AMI with NVIDIA drivers, Docker and the AWS CLI; private bucket with model weights
+# (folders `chat/` and `embed/`); Secrets Manager secret holding the vLLM API key.
+llm_ami_id             = "ami-REPLACE"
+llm_instance_type      = "g5.12xlarge"
+llm_models_bucket      = "REPLACE-private-model-bucket"
+llm_api_key_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:sre-agent/llm-api-key-REPLACE"
 
 # Private CIDRs of observability backends (Prometheus, Splunk, PrivateLink endpoints). No 0.0.0.0/0.
 observability_cidrs = []

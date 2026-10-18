@@ -16,6 +16,8 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
+import structlog
+
 from agents.action.agent import ActionAgent
 from agents.action.pagerduty import resolve_pagerduty_incident
 from agents.diagnosis.graph import DiagnosisAgent
@@ -32,7 +34,7 @@ from shared.episodic_memory import (
     Episode,
     EpisodicMemory,
 )
-from shared.incident_store import IncidentStore
+from shared.incident_store import get_incident_store
 from shared.schemas import (
     AnomalyEvent,
     DiagnosisResult,
@@ -41,7 +43,7 @@ from shared.schemas import (
     Severity,
     TelemetryEvent,
 )
-from shared.utils import LLMCostTracker, Timer, get_logger, setup_logging
+from shared.utils import LLMCostTracker, Timer, get_logger, langfuse_session_context, setup_logging
 
 logger = get_logger("orchestrator")
 
@@ -67,7 +69,7 @@ class AgentOrchestrator:
         self.alert_dedup = AlertDeduplicator()
 
         # Durable incident store (persists across restarts)
-        self.store = IncidentStore()
+        self.store = get_incident_store()
         self.regression_detector = RegressionDetector(self.store)
 
         # Track active incidents in memory (repopulated from durable store)
@@ -118,7 +120,8 @@ class AgentOrchestrator:
 
             # ── Step 2: Monitoring Agent — Anomaly Detection ──
             cost_tracker = LLMCostTracker(incident_id="pending")
-            anomaly = await self.monitoring_agent.process_event(event, cost_tracker)
+            with langfuse_session_context(event.event_id):
+                anomaly = await self.monitoring_agent.process_event(event, cost_tracker)
 
             if not anomaly:
                 return None
@@ -126,6 +129,18 @@ class AgentOrchestrator:
         return await self.process_anomaly(anomaly, cost_tracker, dry_run=dry_run)
 
     async def process_anomaly(
+        self,
+        anomaly: AnomalyEvent,
+        cost_tracker: LLMCostTracker,
+        dry_run: bool = False,
+    ) -> IncidentRecord | None:
+        """Bind the event id to every log line so logs join to the Langfuse session of the same id."""
+        with structlog.contextvars.bound_contextvars(event_id=anomaly.event_id), langfuse_session_context(
+            anomaly.event_id
+        ):
+            return await self._process_anomaly(anomaly, cost_tracker, dry_run=dry_run)
+
+    async def _process_anomaly(
         self,
         anomaly: AnomalyEvent,
         cost_tracker: LLMCostTracker,

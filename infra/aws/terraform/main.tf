@@ -11,7 +11,8 @@ locals {
   private_subnet_cidrs = [
     for index in range(2) : cidrsubnet(var.vpc_cidr, 8, index + 10)
   ]
-  llm_port = 8001
+  llm_port   = 8001
+  embed_port = 8002
   egress_targets = {
     for pair in setproduct(var.observability_cidrs, var.observability_ports) :
     "${pair[0]}:${pair[1]}" => { cidr = pair[0], port = pair[1] }
@@ -246,7 +247,7 @@ resource "aws_vpc_security_group_egress_rule" "task_to_llm" {
   description                  = "Self-hosted LLM inference server."
   from_port                    = local.llm_port
   ip_protocol                  = "tcp"
-  to_port                      = local.llm_port
+  to_port                      = local.embed_port
 }
 
 resource "aws_vpc_security_group_egress_rule" "task_to_db" {
@@ -322,6 +323,17 @@ resource "aws_vpc_endpoint" "logs" {
 resource "aws_vpc_endpoint" "secrets_manager" {
   vpc_id              = aws_vpc.this.id
   service_name        = "com.amazonaws.${data.aws_region.current.region}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.aws_endpoints.id]
+  private_dns_enabled = true
+}
+
+resource "aws_vpc_endpoint" "ssm" {
+  for_each = toset(["ssm", "ssmmessages", "ec2messages"])
+
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.${each.value}"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.aws_endpoints.id]
@@ -659,6 +671,40 @@ resource "aws_iam_role" "task" {
   })
 }
 
+# ECS Exec (via SSM) lets you open a shell in the task to run DB migrations; no inbound port needed.
+resource "aws_iam_role_policy" "task_exec" {
+  name = "${var.name}-task-exec"
+  role = aws_iam_role.task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel",
+      ]
+      Resource = "*"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "execution_llm_key" {
+  name = "${var.name}-task-execution-llm-key"
+  role = aws_iam_role.execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = var.llm_api_key_secret_arn
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "task_efs" {
   name = "${var.name}-task-efs"
   role = aws_iam_role.task.id
@@ -795,6 +841,13 @@ resource "aws_ecs_task_definition" "api" {
         { name = "API_GATEWAY_STAGE_PREFIX", value = "/${var.api_stage_name}" },
         { name = "ENABLE_SYNTHETIC_HEARTBEAT", value = "false" },
         { name = "LLM_BASE_URL", value = "http://${aws_instance.llm.private_ip}:${local.llm_port}/v1" },
+        { name = "EMBEDDING_BASE_URL", value = "http://${aws_instance.llm.private_ip}:${local.embed_port}/v1" },
+        { name = "EMBEDDING_MODEL", value = var.llm_embed_served_name },
+        { name = "DEFAULT_MODEL", value = var.llm_chat_served_name },
+        { name = "MONITORING_AGENT_MODEL", value = var.llm_chat_served_name },
+        { name = "DIAGNOSIS_AGENT_MODEL", value = var.llm_chat_served_name },
+        { name = "ACTION_AGENT_MODEL", value = var.llm_chat_served_name },
+        { name = "FEEDBACK_AGENT_MODEL", value = var.llm_chat_served_name },
         { name = "POSTGRES_HOST", value = aws_db_instance.memory.address },
         { name = "POSTGRES_PORT", value = "5432" },
         { name = "POSTGRES_DB", value = "agent_kb" },
@@ -803,10 +856,16 @@ resource "aws_ecs_task_definition" "api" {
         for name, value in var.application_environment : { name = name, value = value }
       ])
       secrets = concat(
-        [{
-          name      = "POSTGRES_PASSWORD"
-          valueFrom = "${aws_db_instance.memory.master_user_secret[0].secret_arn}:password::"
-        }],
+        [
+          {
+            name      = "POSTGRES_PASSWORD"
+            valueFrom = "${aws_db_instance.memory.master_user_secret[0].secret_arn}:password::"
+          },
+          {
+            name      = "LLM_API_KEY"
+            valueFrom = var.llm_api_key_secret_arn
+          },
+        ],
         [
           for name, arn in var.secret_arns : {
             name      = name
@@ -855,6 +914,8 @@ resource "aws_ecs_service" "api" {
   task_definition = aws_ecs_task_definition.api.arn
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
+
+  enable_execute_command = true
 
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100

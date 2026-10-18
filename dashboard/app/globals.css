@@ -63,6 +63,15 @@ body {
   animation: pulse-neon 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+@keyframes modal-loading {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(310%); }
+}
+
+.animate-modal-loading {
+  animation: modal-loading 1.5s ease-in-out infinite;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

@@ -32,6 +32,8 @@ docker-data/
 *.pem
 *.key
 service-account*.json
+/ankitaddyaSRE_accessKeys.csv
+/ankitaddyaSRE_credentials.csv
 
 # ─── OS ───────────────────────────────────────────────────────
 .DS_Store
@@ -55,3 +57,7 @@ tfplan*
 !infra/aws/terraform/.terraform.lock.hcl
 
 .connector_state.json
+
+
+# ─── Agent Skills ───────────────────────────────────────────────
+*.agents

@@ -12,7 +12,6 @@ import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langfuse.callback import CallbackHandler
 
 from agents.monitoring.prompts import MONITORING_HUMAN_PROMPT, MONITORING_SYSTEM_PROMPT
 from agents.monitoring.tools.monitoring_tools import ALL_MONITORING_TOOLS
@@ -20,7 +19,7 @@ from shared.config import get_settings
 from shared.llm import get_chat_model
 from shared.pii import sanitize_for_llm
 from shared.schemas import AnomalyEvent, AnomalyType, MetricsSnapshot, Severity, TelemetryEvent
-from shared.utils import LLMCostTracker, Timer, get_logger, get_tracer
+from shared.utils import LLMCostTracker, Timer, get_langfuse_handler, get_logger, get_tracer
 
 logger = get_logger("monitoring_agent")
 tracer = get_tracer()
@@ -69,26 +68,15 @@ class MonitoringAgent:
             span.set_attribute("event.source", event.source)
             span.set_attribute("event.service", event.service_name)
 
-            # Only initialize Langfuse if credentials are provided
-            handler = None
-            if self.settings.observability.langfuse_public_key and self.settings.observability.langfuse_enabled:
-                try:
-                    handler = CallbackHandler(
-                        public_key=self.settings.observability.langfuse_public_key,
-                        secret_key=self.settings.observability.langfuse_secret_key,
-                        host=self.settings.observability.langfuse_host,
-                        session_id=event.event_id,
-                        user_id="sre-system",
-                        tags=["agent:monitoring", f"env:{self.settings.app.app_env}"],
-                        metadata={
-                            "agent_version": "1.0.0",
-                            "prompt_version": "mon-react-v1",
-                            "affected_service": event.service_name,
-                        },
-                    )
-                except Exception as e:
-                    logger.warning("langfuse_init_failed", error=str(e))
-                    handler = None
+            handler = get_langfuse_handler(
+                session_id=event.event_id,
+                agent="monitoring",
+                metadata={
+                    "agent_version": "1.0.0",
+                    "prompt_version": "mon-react-v1",
+                    "affected_service": event.service_name,
+                },
+            )
 
             timer = Timer()
             with timer:
@@ -126,7 +114,7 @@ class MonitoringAgent:
         self,
         event: TelemetryEvent,
         cost_tracker: LLMCostTracker | None = None,
-        handler: CallbackHandler | None = None,
+        handler: Any | None = None,
     ) -> AnomalyEvent | None:
         """Run the ReAct reasoning loop with tool calls."""
 

@@ -1,6 +1,6 @@
-# AWS Pilot Deployment and Security
+# Future AWS Deployment and Security Design
 
-The active (and only) deployment target is AWS. The old GCP/GKE Terraform, Kubernetes manifests, Helm chart and ArgoCD application were removed; if GCP resources were ever created from them, inspect and destroy them from the original Terraform state, since deleting the source does not delete cloud resources.
+The current demonstration runs the FastAPI backend and Next.js dashboard locally, uses local Docker Postgres, and calls vLLM endpoints hosted on Modal. Use synthetic data only: the Modal inference endpoints are public HTTPS services protected by vLLM API keys. This guide describes a **possible later AWS migration**, not an applied or production-verified deployment. The old GCP/GKE Terraform, Kubernetes manifests, Helm chart and ArgoCD application were removed; if GCP resources were ever created from them, inspect and destroy them from the original Terraform state, since deleting the source does not delete cloud resources.
 
 ## AWS Terraform deployment
 
@@ -16,8 +16,8 @@ The stack creates:
 - A VPC Link v2 with a dedicated security group, an internal ALB that accepts traffic only from that VPC Link, and an ECS/Fargate service whose application port accepts traffic only from the ALB.
 - Separate managed invoke policies for SRE responders, telemetry producers, knowledge-base administrators, and platform health checks. These policies contain method- and route-specific `execute-api:Invoke` permissions; attach only the relevant policy to an existing, trusted IAM role.
 - An ECR repository that retains build-SHA tags and a mutable `pilot` deployment tag. ECS uses the `pilot` tag and CI forces a new deployment after updating it, avoiding Terraform drift on every application release.
-- An encrypted EFS volume mounted at `/app/data` through a scoped access point. It retains the SQLite incident store and local model files across task replacements; ECS is constrained to one task because SQLite is not safe for multi-task concurrent use.
-- A task execution role limited to the configured ECR repository, application log stream, supplied Secrets Manager ARNs, and optional customer KMS keys. The application task role can access only its EFS access point by default.
+- The current application uses Postgres for incident, approval, audit and episodic state. The Terraform still defines encrypted EFS resources and access permissions inherited from an earlier SQLite design; verify whether they are needed and remove or repurpose them before applying.
+- A task execution role limited to the configured ECR repository, application log stream, supplied Secrets Manager ARNs, and optional customer KMS keys. Reconcile task permissions with current runtime integrations before deployment.
 - A GitHub Actions OIDC role restricted to the selected repository's `main` branch. It can push to the application ECR repository and update only the configured ECS service.
 
 ### Prepare and deploy
@@ -45,7 +45,7 @@ The stack creates:
    ```
 
 5. Configure `secret_arns`, `kms_key_arns`, and `application_environment` in `terraform.tfvars`. The pilot defaults to the simulator. To use a real adapter, set `TELEMETRY_CONNECTOR_MODE` to `prometheus`, `datadog`, or `splunk`, set its non-secret endpoint/settings in `application_environment`, and put API tokens in Secrets Manager using the environment variable names in `shared/config.py`.
-6. Run `terraform fmt -check`, `terraform validate`, and `terraform plan -out=tfplan`; review the plan before `terraform apply tfplan`. It creates billable EC2 GPU, RDS, EFS, interface endpoint, ALB, API Gateway, and ECS resources. Configure encrypted remote state and locking before team use. This stack has not been applied to AWS.
+6. Run `terraform fmt -check`, `terraform validate`, and `terraform plan -out=tfplan`; review the plan before `terraform apply tfplan`. It creates billable EC2 GPU, RDS, EFS (pending design reconciliation), interface endpoint, ALB, API Gateway, and ECS resources. Configure encrypted remote state and locking before team use. This stack has not been applied to AWS.
 7. Create/attach caller IAM identities through your organization's federation or IAM Identity Center; attach the smallest applicable `caller_policy_arns` policy from Terraform outputs. Do not create long-lived browser keys.
 8. Set these GitHub repository variables from Terraform outputs: `AWS_DEPLOY_ENABLED=true`, `AWS_REGION`, `AWS_ECR_REPOSITORY` (`ecr_repository_name`), `AWS_ECS_CLUSTER` (`ecs_cluster_name`), and `AWS_ECS_SERVICE` (`ecs_service_name`). Set `AWS_ROLE_TO_ASSUME` as a GitHub Actions secret to `github_actions_role_arn`. Deployment stays disabled until `AWS_DEPLOY_ENABLED` is set. After configuration, pushes to `main` run tests, build the image, push both the commit SHA and `pilot` tags, force an ECS deployment, and wait for the service to become stable. Pull requests do not request AWS credentials.
 9. From an authorized VPC client, sign requests to the private invoke URL from `api_invoke_url` with SigV4. Confirm an allowed route succeeds, a disallowed route is denied, a request from outside the allowed network cannot connect, and a supplied `X-Authenticated-User` value is replaced by the IAM principal ARN.
@@ -54,8 +54,8 @@ The API Gateway stage is included in private integration request paths. The ECS 
 
 ### Readiness constraints
 
-- The pilot uses one ECS task and EFS-backed SQLite to retain its state between task replacements. Do not scale beyond one task; move incident/approval persistence to a database designed for concurrent clients before scaling.
-- The API task role is limited to its EFS access point. Add narrow workload permissions only when the application actually uses a specific AWS API.
+- The Terraform and deployment guide have not been reconciled with the current Postgres-backed incident store. Confirm database initialization, migrations, credentials, backups and restore before deployment; do not rely on the old EFS/SQLite description.
+- Review the task role and EFS configuration against current code. Add only scoped workload permissions the application actually uses.
 - The ECR `pilot` tag is mutable so CI can update it and force ECS to pull the new image without Terraform drifting on every release. Commit-SHA tags are also pushed for traceability but are not registry-enforced as immutable; move to digest-pinned deployments before production.
 - The air-gapped VPC means SaaS vendors (Datadog, Splunk Cloud, PagerDuty, Slack, GitHub) are unreachable unless you provide a PrivateLink endpoint or private route and list its CIDR in `observability_cidrs`. Interface endpoint and EC2 GPU hourly charges apply. The LLM server is a single instance with no failover.
 - This stack does **not** authorize live remediation on its own. Keep live execution disabled until target/service allowlists, live-state preconditions, durable approval/audit records, and independent verification are implemented and tested.

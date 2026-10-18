@@ -98,8 +98,14 @@ def local_judge_fn(model: str) -> JudgeFn:
     from shared.config import get_settings
     from shared.llm import get_chat_model
 
-    assert_judge_independent(model, get_settings().llm)
-    llm = get_chat_model(model, temperature=0)
+    llm_settings = get_settings().llm
+    assert_judge_independent(model, llm_settings)
+    llm = get_chat_model(
+        model,
+        temperature=0,
+        base_url=llm_settings.judge_base_url or None,
+        api_key=llm_settings.judge_api_key or None,
+    )
 
     async def call(system: str, user: str) -> str:
         resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])

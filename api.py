@@ -14,9 +14,11 @@ from __future__ import annotations
 import asyncio
 import hmac
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
@@ -33,8 +35,9 @@ from data_pipeline.connectors.ingestion import TelemetryIngestionService
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from orchestrator import AgentOrchestrator
 from shared.config import get_settings
+from shared.egress import EgressViolation, check_url, guarded_async_client
 from shared.schemas import ActionPolicyDecision, TelemetryEvent
-from shared.utils import LLMCostTracker, get_logger, setup_logging
+from shared.utils import LLMCostTracker, get_logger, setup_logging, setup_tracing
 
 # ─── Global State ────────────────────────────────────────────────
 
@@ -42,6 +45,9 @@ orchestrator: AgentOrchestrator | None = None
 ingestion: TelemetryIngestionService | None = None
 producer = SyntheticTelemetryProducer()
 logger = get_logger("api")
+_INFERENCE_READINESS_TTL_SECONDS = 5.0
+_inference_readiness_cache: tuple[float, dict[str, str]] | None = None
+_inference_readiness_lock = asyncio.Lock()
 
 
 @asynccontextmanager
@@ -49,7 +55,7 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
     """Application lifespan: startup and shutdown."""
     global orchestrator
     setup_logging()
-    connector_store.load()
+    setup_tracing(app)
     orchestrator = AgentOrchestrator()
 
     settings = get_settings()
@@ -131,6 +137,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://0.0.0.0:3000",
         "http://[::1]:3000",
+        *[o.strip() for o in os.environ.get("CORS_EXTRA_ORIGINS", "").split(",") if o.strip()],
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -266,13 +273,15 @@ async def health_check() -> HealthResponse:
 
 
 @app.get("/api/v1/health/detailed", tags=["Health"])
-async def detailed_health() -> dict[str, Any]:
+async def detailed_health(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Detailed health for UI diagnostics."""
     if not orchestrator:
         return {"status": "uninitialized", "error": "Orchestrator not found"}
 
+    inference = await _get_inference_readiness()
     return {
         "status": "healthy",
+        "inference": inference,
         "orchestrator": {
             "active_count": len(orchestrator.active_incidents),
             "resolved_count": len(orchestrator.resolved_incidents),
@@ -287,10 +296,59 @@ async def detailed_health() -> dict[str, Any]:
     }
 
 
+async def _probe_inference_endpoint(base_url: str, api_key: str) -> str:
+    """Check whether an OpenAI-compatible server has finished loading its models."""
+    if not base_url:
+        return "unavailable"
+
+    try:
+        models_url = f"{check_url(base_url).rstrip('/')}/models"
+        async with guarded_async_client(timeout=5.0, follow_redirects=True) as client:
+            response = await client.get(models_url, headers={"Authorization": f"Bearer {api_key}"})
+    except httpx.TimeoutException:
+        return "starting"
+    except (EgressViolation, httpx.RequestError, ValueError) as exc:
+        logger.warning("inference_readiness_probe_failed", error=str(exc))
+        return "unavailable"
+
+    if response.status_code == 200:
+        return "ready"
+    if response.status_code in {404, 429, 502, 503, 504}:
+        return "starting"
+    logger.warning("inference_readiness_probe_rejected", status_code=response.status_code)
+    return "unavailable"
+
+
+async def _get_inference_readiness() -> dict[str, str]:
+    """Probe chat and embeddings, reusing a short-lived result to avoid polling Modal too often."""
+    global _inference_readiness_cache
+    now = time.monotonic()
+    if (
+        _inference_readiness_cache is not None
+        and now - _inference_readiness_cache[0] < _INFERENCE_READINESS_TTL_SECONDS
+    ):
+        return _inference_readiness_cache[1]
+
+    async with _inference_readiness_lock:
+        now = time.monotonic()
+        if (
+            _inference_readiness_cache is not None
+            and now - _inference_readiness_cache[0] < _INFERENCE_READINESS_TTL_SECONDS
+        ):
+            return _inference_readiness_cache[1]
+
+        llm = get_settings().llm
+        chat, embeddings = await asyncio.gather(
+            _probe_inference_endpoint(llm.base_url, llm.api_key),
+            _probe_inference_endpoint(llm.embeddings_url, llm.api_key),
+        )
+        _inference_readiness_cache = (time.monotonic(), {"chat": chat, "embeddings": embeddings})
+        return _inference_readiness_cache[1]
+
+
 @app.post("/api/v1/events/process", tags=["Events"])
 async def process_event(request: ProcessEventRequest, _auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Submit a single telemetry event for processing."""
-    print(f"DEBUG: Processing inbound UI event from {request.source}")
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
@@ -362,7 +420,7 @@ async def run_demo(request: RunDemoRequest, _auth: str = Depends(verify_auth)) -
 
 
 @app.get("/api/v1/demo/scenarios", tags=["Demo"])
-async def list_scenarios() -> dict[str, Any]:
+async def list_scenarios(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """List available story-based incident simulation scenarios."""
     from data_pipeline.connectors.story_simulation import StorySimulationEngine
 
@@ -419,7 +477,7 @@ async def start_stream(request: StreamRequest, _auth: str = Depends(verify_auth)
 
 
 @app.get("/api/v1/ingestion/status", tags=["Monitoring"])
-async def ingestion_status() -> dict[str, Any]:
+async def ingestion_status(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Per-vendor live ingestion health (last success, errors, backoff state)."""
     if ingestion is None:
         return {"enabled": False}
@@ -543,7 +601,7 @@ async def deactivate_ingestion(_auth: str = Depends(verify_auth)) -> dict[str, A
 
 
 @app.get("/api/v1/telemetry/recent", tags=["Monitoring"])
-async def get_recent_telemetry() -> dict[str, Any]:
+async def get_recent_telemetry(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Get the last 100 telemetry events for real-time pulsing."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -555,7 +613,7 @@ async def get_recent_telemetry() -> dict[str, Any]:
 
 
 @app.get("/api/v1/incidents/active", tags=["Incidents"])
-async def list_active_incidents() -> dict[str, Any]:
+async def list_active_incidents(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """List incidents currently in-flight or awaiting approval."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -568,7 +626,7 @@ async def list_active_incidents() -> dict[str, Any]:
 
 
 @app.get("/api/v1/incidents/{incident_id}", tags=["Incidents"])
-async def get_incident(incident_id: str) -> dict[str, Any]:
+async def get_incident(incident_id: str, _auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Get a specific incident by ID."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -586,7 +644,7 @@ async def get_incident(incident_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/status", tags=["Monitoring"])
-async def get_status() -> dict[str, Any]:
+async def get_status(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Get current system status and agent metrics."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -595,7 +653,7 @@ async def get_status() -> dict[str, Any]:
 
 
 @app.get("/api/v1/episodes/{episode_id}", tags=["Memory"])
-async def get_episode(episode_id: str) -> dict[str, Any]:
+async def get_episode(episode_id: str, _auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Episodic memory: the episode, its SRE brief and the per-stage timeline of how it was handled."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -609,7 +667,7 @@ async def get_episode(episode_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/incidents/{incident_id}/brief", tags=["Incidents"])
-async def get_incident_brief(incident_id: str) -> dict[str, Any]:
+async def get_incident_brief(incident_id: str, _auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """SRE-facing brief: issue, root cause, fix applied or recommended steps, gaps, duplicate linkage."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -620,7 +678,7 @@ async def get_incident_brief(incident_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/actions/tiers", tags=["Actions"])
-async def get_action_tiers() -> dict[str, Any]:
+async def get_action_tiers(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Get action tier classification reference."""
     return {
         tier_name: {
@@ -797,7 +855,9 @@ async def approve_tier2_action(
 
 
 @app.get("/api/v1/incidents", tags=["Incidents"])
-async def list_incidents(limit: int = 50, status: str | None = None) -> dict[str, Any]:
+async def list_incidents(
+    limit: int = 50, status: str | None = None, _auth: str = Depends(verify_auth)
+) -> dict[str, Any]:
     """List recent incidents from durable store."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -836,7 +896,9 @@ async def seed_knowledge_base(_auth: str = Depends(verify_auth)) -> dict[str, An
 
 
 @app.get("/api/v1/knowledge/search", tags=["Knowledge Base"])
-async def search_knowledge_base(q: str = "latency spike", service: str | None = None, top_k: int = 5) -> dict[str, Any]:
+async def search_knowledge_base(
+    q: str = "latency spike", service: str | None = None, top_k: int = 5, _auth: str = Depends(verify_auth)
+) -> dict[str, Any]:
     """Search the runbook knowledge base via hybrid RAG."""
     from knowledge_base.retrieval.search import HybridSearchService
 
@@ -852,7 +914,7 @@ async def search_knowledge_base(q: str = "latency spike", service: str | None = 
 
 
 @app.get("/api/v1/knowledge/health", tags=["Knowledge Base"])
-async def knowledge_base_health() -> dict[str, Any]:
+async def knowledge_base_health(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Check knowledge base connectivity and document count."""
     from knowledge_base.retrieval.search import HybridSearchService
 

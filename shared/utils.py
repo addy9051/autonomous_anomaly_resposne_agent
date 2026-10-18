@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable  # noqa: TC003
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -29,11 +30,21 @@ from shared.config import get_settings
 # ─── Structured Logging ──────────────────────────────────────────
 
 
+def _add_trace_ids(_logger: Any, _method: str, event_dict: dict[str, Any]) -> dict[str, Any]:  # noqa: ANN401
+    """Attach the active OpenTelemetry trace/span id so logs join to API traces."""
+    ctx = trace.get_current_span().get_span_context()
+    if ctx.is_valid:
+        event_dict["trace_id"] = format(ctx.trace_id, "032x")
+        event_dict["span_id"] = format(ctx.span_id, "016x")
+    return event_dict
+
+
 def setup_logging(log_level: str = "INFO") -> None:
     """Configure structlog for consistent JSON logging."""
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
+            _add_trace_ids,
             structlog.processors.add_log_level,
             structlog.processors.StackInfoRenderer(),
             structlog.dev.set_exc_info,
@@ -57,15 +68,20 @@ def get_logger(name: str) -> structlog.BoundLogger:
 # ─── OpenTelemetry Tracing ───────────────────────────────────────
 
 
-def setup_tracing() -> trace.Tracer:
-    """Initialize OpenTelemetry tracing with OTLP exporter."""
+def setup_tracing(app: Any | None = None) -> trace.Tracer:  # noqa: ANN401
+    """
+    Initialize OpenTelemetry tracing and, when given a FastAPI app, instrument its requests.
+
+    Spans are exported only when OTEL_EXPORTER_OTLP_ENDPOINT is set and passes the egress policy
+    (in-VPC collector, e.g. ADOT). Otherwise spans are created in-process (so trace ids still exist
+    for logs) but are not exported.
+    """
     settings = get_settings()
+    logger = get_logger("tracing_setup")
 
     try:
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         resource = Resource.create(
             {
@@ -75,18 +91,28 @@ def setup_tracing() -> trace.Tracer:
         )
         provider = TracerProvider(resource=resource)
 
-        if settings.observability.otel_exporter_otlp_endpoint:
-            otlp_exporter = OTLPSpanExporter(
-                endpoint=settings.observability.otel_exporter_otlp_endpoint,
-                insecure=True,
-            )
-            provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+        endpoint = settings.observability.otel_exporter_otlp_endpoint
+        if endpoint:
+            try:
+                from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+                from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+                from shared.egress import check_url
+
+                check_url(endpoint)
+                provider.add_span_processor(
+                    BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, insecure=endpoint.startswith("http://")))
+                )
+            except Exception as exc:  # noqa: BLE001 - tracing must never block startup
+                logger.warning("otlp_export_disabled", endpoint=endpoint, error=str(exc))
 
         trace.set_tracer_provider(provider)
+
+        if app is not None:
+            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+            FastAPIInstrumentor.instrument_app(app)
     except (ImportError, ModuleNotFoundError) as e:
-        # Graceful degradation if SDK or OTLP exporter is missing
-        # We still return the default tracer provider (which usually defaults to a NoOp provider)
-        logger = get_logger("tracing_setup")
         logger.warning("opentelemetry_sdk_missing", error=str(e), action="falling_back_to_noop")
 
     return trace.get_tracer(settings.observability.otel_service_name)
@@ -101,32 +127,82 @@ def get_tracer() -> trace.Tracer:
 # ─── Langfuse Observability ──────────────────────────────────────
 
 
-def get_langfuse_callbacks(session_id: str | None = None) -> list[Any]:
+def get_langfuse_handler(
+    session_id: str | None = None,
+    agent: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Any | None:  # noqa: ANN401
     """
-    Get a pre-configured list containing the Langfuse CallbackHandler.
-    Returns an empty list if Langfuse is disabled or not fully configured.
-    """
-    settings = get_settings()
-    if not settings.observability.langfuse_enabled:
-        return []
+    Build a Langfuse CallbackHandler, or None when tracing is off, unconfigured, unavailable, or blocked.
 
-    if not (settings.observability.langfuse_secret_key and settings.observability.langfuse_public_key):
-        return []
+    Fails closed: the Langfuse host must pass the egress policy (in-VPC by default), so traces cannot
+    leave the sandbox through a hosted instance. The langfuse package is optional.
+    """
+    obs = get_settings().observability
+    if not obs.langfuse_enabled or not (obs.langfuse_public_key and obs.langfuse_secret_key):
+        return None
+
+    logger = get_logger("langfuse_setup")
+    try:
+        from shared.egress import check_url
+
+        host = check_url(obs.langfuse_host)
+    except Exception as exc:  # noqa: BLE001 - tracing must never break an investigation
+        logger.warning("langfuse_blocked_by_egress_policy", host=obs.langfuse_host, error=str(exc))
+        return None
 
     try:
-        from langfuse.callback import CallbackHandler
-
-        handler = CallbackHandler(
-            public_key=settings.observability.langfuse_public_key,
-            secret_key=settings.observability.langfuse_secret_key,
-            host=settings.observability.langfuse_host,
-            session_id=session_id,
-        )
-        return [handler]
+        try:
+            from langfuse.callback import CallbackHandler  # langfuse 2.x
+        except ImportError:
+            CallbackHandler = None  # noqa: N806
+            from langfuse import Langfuse
+            from langfuse.langchain import CallbackHandler as V3Handler  # langfuse 3.x
     except ImportError:
-        logger = get_logger("langfuse_setup")
-        logger.warning("Langfuse package missing. Cannot initialize callbacks.")
-        return []
+        logger.warning("langfuse_package_missing", action="tracing_disabled")
+        return None
+
+    try:
+        if CallbackHandler is None:
+            # v3 takes no host/secret/session arguments: the client carries them (egress-checked host),
+            # and the handler binds to it by public key.
+            Langfuse(public_key=obs.langfuse_public_key, secret_key=obs.langfuse_secret_key, host=host)
+            logger.info("langfuse_v3_handler", note="session set via langfuse_session_context")
+            return V3Handler(public_key=obs.langfuse_public_key)
+        return CallbackHandler(
+            public_key=obs.langfuse_public_key,
+            secret_key=obs.langfuse_secret_key,
+            host=host,
+            session_id=session_id,
+            user_id="sre-system",
+            tags=[f"agent:{agent}", f"env:{get_settings().app.app_env}"] if agent else None,
+            metadata=metadata,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("langfuse_init_failed", error=str(exc))
+        return None
+
+
+def langfuse_session_context(session_id: str) -> AbstractContextManager[Any]:
+    """
+    Groups every Langfuse trace of one investigation under `session_id` on Langfuse 3.x, where the
+    handler no longer takes a session id. A no-op when tracing is off or the package is the 2.x line
+    (2.x sets the session on each handler instead).
+    """
+    obs = get_settings().observability
+    if not obs.langfuse_enabled or not (obs.langfuse_public_key and obs.langfuse_secret_key):
+        return nullcontext()
+    try:
+        from langfuse import propagate_attributes
+    except ImportError:
+        return nullcontext()
+    return propagate_attributes(session_id=session_id, user_id="sre-system")
+
+
+def get_langfuse_callbacks(session_id: str | None = None) -> list[Any]:
+    """List form of `get_langfuse_handler` (empty when tracing is unavailable)."""
+    handler = get_langfuse_handler(session_id=session_id)
+    return [handler] if handler else []
 
 
 # ─── Redis Client ────────────────────────────────────────────────

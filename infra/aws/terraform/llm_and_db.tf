@@ -18,7 +18,7 @@ resource "aws_vpc_security_group_ingress_rule" "llm_from_task" {
   description                  = "OpenAI-compatible API from the agent task."
   from_port                    = local.llm_port
   ip_protocol                  = "tcp"
-  to_port                      = local.llm_port
+  to_port                      = local.embed_port
 }
 
 resource "aws_vpc_security_group_egress_rule" "llm_to_endpoints" {
@@ -76,6 +76,11 @@ resource "aws_iam_role_policy" "llm" {
           Resource = "${aws_cloudwatch_log_group.llm.arn}:*"
         },
       ],
+      [{
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = var.llm_api_key_secret_arn
+      }],
       var.llm_models_bucket != "" ? [
         {
           Effect   = "Allow"
@@ -85,6 +90,11 @@ resource "aws_iam_role_policy" "llm" {
       ] : [],
     )
   })
+}
+
+resource "aws_iam_role_policy_attachment" "llm_ssm" {
+  role       = aws_iam_role.llm.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_iam_instance_profile" "llm" {
@@ -129,17 +139,25 @@ resource "aws_instance" "llm" {
     encrypted   = true
   }
 
-  # Runs the OpenAI-compatible server (vLLM image you pushed to the private ECR repo) with weights
-  # copied from the private S3 bucket. Nothing is pulled from the internet.
+  # Two OpenAI-compatible vLLM servers from the private ECR image, weights from the private S3 bucket,
+  # no Hugging Face access (offline mode). Both require the API key stored in Secrets Manager.
   user_data = <<-EOT
     #!/bin/bash
     set -euo pipefail
-    aws ecr get-login-password --region ${data.aws_region.current.region} | docker login --username AWS --password-stdin ${aws_ecr_repository.llm.repository_url}
+    REGION=${data.aws_region.current.region}
+    IMAGE=${aws_ecr_repository.llm.repository_url}:${var.llm_image_tag}
+    aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin ${aws_ecr_repository.llm.repository_url}
     mkdir -p /models
-    %{if var.llm_models_bucket != ""}aws s3 sync s3://${var.llm_models_bucket} /models%{endif}
-    docker run -d --restart unless-stopped --gpus all -p ${local.llm_port}:8000 -v /models:/models \
-      --log-driver=awslogs --log-opt awslogs-region=${data.aws_region.current.region} --log-opt awslogs-group=${aws_cloudwatch_log_group.llm.name} \
-      ${aws_ecr_repository.llm.repository_url}:${var.llm_image_tag}
+    aws s3 sync s3://${var.llm_models_bucket} /models
+    API_KEY=$(aws secretsmanager get-secret-value --region $REGION --secret-id ${var.llm_api_key_secret_arn} --query SecretString --output text)
+    LOGOPTS="--log-driver=awslogs --log-opt awslogs-region=$REGION --log-opt awslogs-group=${aws_cloudwatch_log_group.llm.name}"
+    COMMON="--restart unless-stopped -v /models:/models:ro -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e VLLM_API_KEY=$API_KEY"
+    docker run -d --name vllm-chat $COMMON $LOGOPTS --gpus '"device=${var.llm_chat_gpu_devices}"' -p ${local.llm_port}:8000 $IMAGE \
+      --model /models/${var.llm_chat_model_dir} --served-model-name ${var.llm_chat_served_name} \
+      --tensor-parallel-size ${var.llm_chat_tensor_parallel} --max-model-len ${var.llm_chat_max_len} \
+      --enable-auto-tool-choice --tool-call-parser ${var.llm_tool_call_parser}
+    docker run -d --name vllm-embed $COMMON $LOGOPTS --gpus '"device=${var.llm_embed_gpu_device}"' -p ${local.embed_port}:8000 $IMAGE \
+      --model /models/${var.llm_embed_model_dir} --served-model-name ${var.llm_embed_served_name} --gpu-memory-utilization 0.5
   EOT
 
   tags = {

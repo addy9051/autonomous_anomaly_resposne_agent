@@ -13,7 +13,8 @@ import {
   fetchDetailedHealth,
   triggerDemo,
   TelemetryEvent,
-  IncidentRecord
+  IncidentRecord,
+  InferenceReadiness
 } from '@/lib/api';
 
 export default function Dashboard() {
@@ -23,14 +24,12 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [isInjecting, setIsInjecting] = useState(false);
   const [isBackendOnline, setIsBackendOnline] = useState<boolean | null>(null);
+  const [inference, setInference] = useState<InferenceReadiness | null>(null);
   const [errorCount, setErrorCount] = useState(0);
+  const isInferenceReady = inference?.chat === 'ready' && inference?.embeddings === 'ready';
 
   const refreshData = useCallback(async () => {
     try {
-      // Check detailed health for connectivity status
-      const health = await fetchDetailedHealth();
-      setIsBackendOnline(health?.status === 'healthy');
-      
       const [s, t, a] = await Promise.all([
         fetchStats(),
         fetchRecentTelemetry(),
@@ -48,11 +47,28 @@ export default function Dashboard() {
     }
   }, []);
 
+  const refreshHealth = useCallback(async () => {
+    try {
+      const health = await fetchDetailedHealth();
+      setIsBackendOnline(health?.status === 'healthy');
+      setInference(health?.inference ?? null);
+    } catch (err) {
+      console.error("Health refresh failed:", err);
+      setIsBackendOnline(false);
+      setInference(null);
+    }
+  }, []);
+
   useEffect(() => {
     refreshData();
+    refreshHealth();
     const interval = setInterval(refreshData, 3000);
-    return () => clearInterval(interval);
-  }, [refreshData]);
+    const healthInterval = setInterval(refreshHealth, 5000);
+    return () => {
+      clearInterval(interval);
+      clearInterval(healthInterval);
+    };
+  }, [refreshData, refreshHealth]);
 
   const handleTriggerDemo = async () => {
     setIsInjecting(true);
@@ -86,15 +102,21 @@ export default function Dashboard() {
 
           {/* Connection Status Indicator */}
           <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${
-            isBackendOnline === true 
+            isBackendOnline === true && isInferenceReady
               ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
-              : isBackendOnline === false 
+              : isBackendOnline === false || inference?.chat === 'unavailable' || inference?.embeddings === 'unavailable'
                 ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse'
                 : 'bg-white/5 text-white/40 border-white/10'
           }`}>
-            {isBackendOnline === true ? <Wifi size={12} /> : <WifiOff size={12} />}
-            {isBackendOnline === true ? 'SYSTEM CONNECTED' : isBackendOnline === false ? 'CONNECTION FAILED' : 'CONNECTING...'}
-          </div>
+              {isBackendOnline === true && isInferenceReady ? <Wifi size={12} /> : <WifiOff size={12} />}
+              {isBackendOnline === false
+                ? 'API CONNECTION FAILED'
+                : inference?.chat === 'unavailable' || inference?.embeddings === 'unavailable'
+                  ? 'MODEL CONNECTION FAILED'
+                  : isBackendOnline === true && isInferenceReady
+                    ? 'SYSTEM CONNECTED'
+                    : 'STARTING INFERENCE'}
+            </div>
         </div>
         
         <div className="hidden lg:flex items-center gap-8 ml-12">
@@ -109,26 +131,68 @@ export default function Dashboard() {
 
         <button 
           onClick={handleTriggerDemo}
-          disabled={isInjecting || !isBackendOnline}
+          disabled={isInjecting || !isBackendOnline || !isInferenceReady}
           className={`flex items-center gap-2 font-bold text-xs uppercase tracking-widest px-6 py-3 rounded-2xl transition-all active:scale-95 disabled:opacity-50 ${
-            isBackendOnline 
+            isBackendOnline && isInferenceReady
               ? 'bg-white text-black hover:bg-primary' 
               : 'bg-white/5 text-white/20'
           }`}
         >
           <Play size={14} fill="currentColor" />
-          {isInjecting ? "Injecting..." : "Synthesize Anomaly"}
+          {isInjecting ? "Injecting..." : !isInferenceReady ? "Warming up models..." : "Synthesize Anomaly"}
         </button>
       </nav>
 
       {/* Main Content */}
       <main className="p-8 pb-16 space-y-8 animate-in fade-in duration-1000">
+        {isBackendOnline && !isInferenceReady && inference?.chat !== 'unavailable' && inference?.embeddings !== 'unavailable' && (
+          <section
+            className="glass mx-auto max-w-2xl rounded-2xl border border-primary/20 p-5"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex items-start gap-3">
+              <Activity size={18} className="mt-0.5 shrink-0 animate-pulse text-primary" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-black uppercase tracking-widest text-primary">
+                  {inference ? 'Starting inference models' : 'Checking model readiness'}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-foreground/60">
+                  Modal is waking the GPU workers and loading model weights. The first start after an idle period can take a few minutes.
+                  The demo button will enable when chat and embeddings are ready.
+                </p>
+                <div
+                  className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/10"
+                  role="progressbar"
+                  aria-label="Waiting for inference models to start"
+                  aria-valuetext="Model startup is in progress"
+                >
+                  <div className="h-full w-1/3 rounded-full bg-primary shadow-neon animate-modal-loading" />
+                </div>
+                {inference && (
+                  <div className="mt-3 flex gap-4 text-[10px] font-bold uppercase tracking-wider text-foreground/40">
+                    <span>Chat: {inference.chat}</span>
+                    <span>Embeddings: {inference.embeddings}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {isBackendOnline && (inference?.chat === 'unavailable' || inference?.embeddings === 'unavailable') && (
+          <div className="mx-auto max-w-2xl rounded-2xl border border-rose-500/20 bg-rose-500/10 p-4 text-xs text-rose-400" role="alert">
+            An inference endpoint is unavailable. Check the Modal deployment, vLLM API key and model endpoint settings.
+            {inference && <span className="ml-2">Chat: {inference.chat}; embeddings: {inference.embeddings}.</span>}
+          </div>
+        )}
+
         {errorCount > 3 && (
           <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl flex items-center gap-4 text-rose-500 max-w-2xl mx-auto">
             <AlertCircle size={24} />
             <div className="text-xs">
               <p className="font-black uppercase">Dashboard Sync Failure</p>
-              <p className="opacity-70 font-bold mt-1">We are unable to reach the FastAPI orchestrator at http://localhost:8050. Please ensure the backend server is running and CORS is configured.</p>
+              <p className="opacity-70 font-bold mt-1">We are unable to reach the FastAPI orchestrator. Please ensure the backend server is running and CORS is configured.</p>
             </div>
           </div>
         )}

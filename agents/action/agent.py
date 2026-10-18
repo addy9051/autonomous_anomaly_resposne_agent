@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langfuse.callback import CallbackHandler
 
 from agents.action.policy import DeterministicActionPolicy, compute_proposal_hash
 from agents.action.tiers import classify_action
@@ -33,7 +32,7 @@ from shared.schemas import (
     RecommendedAction,
     VerificationOutcome,
 )
-from shared.utils import LLMCostTracker, Timer, get_logger, get_tracer
+from shared.utils import LLMCostTracker, Timer, get_langfuse_handler, get_logger, get_tracer
 
 logger = get_logger("action_agent")
 tracer = get_tracer()
@@ -106,22 +105,15 @@ class ActionAgent:
                     elapsed_ms=timer.elapsed_ms,
                 )
 
-            # Langfuse observability
-            handler = None
-            if self.settings.observability.langfuse_public_key and self.settings.observability.langfuse_enabled:
-                try:
-                    handler = CallbackHandler(
-                        public_key=self.settings.observability.langfuse_public_key,
-                        secret_key=self.settings.observability.langfuse_secret_key,
-                        host=self.settings.observability.langfuse_host,
-                        session_id=diagnosis.incident_id,
-                        user_id="sre-system",
-                        tags=["agent:action", f"env:{self.settings.app.app_env}"],
-                        metadata={"agent_version": "1.0.0", "prompt_version": "act-tier-v1.8.0"},
-                    )
-                except Exception as e:
-                    logger.warning("langfuse_init_failed", error=str(e))
-                    handler = None
+            handler = get_langfuse_handler(
+                session_id=diagnosis.event_id,
+                agent="action",
+                metadata={
+                    "agent_version": "1.0.0",
+                    "prompt_version": "act-tier-v1.8.0",
+                    "incident_id": diagnosis.incident_id,
+                },
+            )
 
             summary = await self._generate_incident_summary(diagnosis, results, cost_tracker, handler)
 
@@ -376,7 +368,7 @@ class ActionAgent:
         diagnosis: DiagnosisResult,
         results: list[ActionResult],
         cost_tracker: LLMCostTracker | None = None,
-        handler: CallbackHandler | None = None,
+        handler: Any | None = None,
     ) -> str:
         """Generate a plain-language incident summary (≤200 words)."""
         prompt = f"""Generate a concise incident summary (max 200 words) for Slack notification.

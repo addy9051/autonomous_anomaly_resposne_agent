@@ -4,7 +4,7 @@
  */
 
 // Use localhost consistently to match the browser's address bar and resolve CORS issues on Windows
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8050/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8010/api/v1";
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY;
 
 function authHeaders(): Record<string, string> {
@@ -31,12 +31,25 @@ export interface IncidentRecord {
   total_llm_cost_usd: number;
 }
 
+export interface InferenceReadiness {
+  chat: "ready" | "starting" | "unavailable";
+  embeddings: "ready" | "starting" | "unavailable";
+}
+
+export interface DetailedHealth {
+  status: string;
+  inference?: InferenceReadiness;
+}
+
 /**
  * Enhanced fetcher with logging
  */
 async function fetchWithLogs(url: string, options: RequestInit = {}) {
   try {
-    const res = await fetch(url, options);
+    const res = await fetch(url, {
+      ...options,
+      headers: { ...authHeaders(), ...(options.headers as Record<string, string> | undefined) },
+    });
     if (!res.ok) {
       const errorText = await res.text();
       console.error(`API Error [${res.status}] at ${url}:`, errorText);
@@ -68,7 +81,7 @@ export async function fetchResolvedIncidents(limit = 10): Promise<IncidentRecord
   return data.incidents || [];
 }
 
-export async function fetchDetailedHealth() {
+export async function fetchDetailedHealth(): Promise<DetailedHealth> {
   return fetchWithLogs(`${API_BASE}/health/detailed`, { cache: 'no-store' });
 }
 

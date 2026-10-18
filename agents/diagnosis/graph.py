@@ -16,7 +16,6 @@ import json
 from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langfuse.callback import CallbackHandler
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
@@ -50,7 +49,7 @@ from shared.schemas import (
     Severity,
     SubAgentReport,
 )
-from shared.utils import LLMCostTracker, Timer, get_logger, get_tracer
+from shared.utils import LLMCostTracker, Timer, get_langfuse_handler, get_logger, get_tracer
 
 logger = get_logger("diagnosis_agent")
 tracer = get_tracer()
@@ -415,22 +414,15 @@ class DiagnosisAgent:
                     "messages": [],
                 }
 
-                settings = get_settings()
-                handler = None
-                if settings.observability.langfuse_public_key and settings.observability.langfuse_enabled:
-                    try:
-                        handler = CallbackHandler(
-                            public_key=settings.observability.langfuse_public_key,
-                            secret_key=settings.observability.langfuse_secret_key,
-                            host=settings.observability.langfuse_host,
-                            session_id=anomaly_event.event_id,
-                            user_id="sre-system",
-                            tags=["agent:diagnosis", f"env:{settings.app.app_env}"],
-                            metadata={"agent_version": "1.0.0", "prompt_version": "diag-rag-v3"},
-                        )
-                    except Exception as e:
-                        logger.warning("langfuse_init_failed", error=str(e))
-                        handler = None
+                handler = get_langfuse_handler(
+                    session_id=anomaly_event.event_id,
+                    agent="diagnosis",
+                    metadata={
+                        "agent_version": "1.0.0",
+                        "prompt_version": "diag-rag-v3",
+                        "event_id": anomaly_event.event_id,
+                    },
+                )
 
                 callbacks = [handler] if handler else []
 
