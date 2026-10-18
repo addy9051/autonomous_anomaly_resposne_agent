@@ -75,7 +75,7 @@ Open `/connectors` in the dashboard:
 2. **Credentials**: fill in and "Test connection" for each. Saved secrets are never returned by the API (shown as "saved").
 3. **Activate**: choose services, dry-run and poll interval. The selection builds `CONNECTOR_MODES` at runtime and starts combined live ingestion (`/api/v1/connectors*`, `/api/v1/ingestion/status`). Missing credentials do not crash startup; ingestion just stays inactive.
 
-State is persisted to `.connector_state.json` (gitignored, **plaintext secrets**; use a secret manager in production) and overrides `CONNECTOR_MODES` from `.env`. Dashboard env: `NEXT_PUBLIC_API_BASE` (default `http://localhost:8050/api/v1`; use `:8010` with `make api`) and `NEXT_PUBLIC_API_KEY` (sent as `X-API-Key`). Default query templates are assumptions; override with `TELEMETRY_QUERY_TEMPLATES`. Not yet validated against live vendors.
+State is persisted to `.connector_state.json` (gitignored, **plaintext secrets**; use a secret manager in production) and overrides `CONNECTOR_MODES` from `.env`. The browser calls the dashboard's same-origin server-side proxy; configure that proxy with `DASHBOARD_API_URL` and `API_AUTH_TOKEN` in the dashboard server environment, not with browser-exposed `NEXT_PUBLIC_*` credentials. Default query templates are assumptions; override with `TELEMETRY_QUERY_TEMPLATES`. Not yet validated against live vendors.
 
 ## Dashboard
 
@@ -87,14 +87,15 @@ State is persisted to `.connector_state.json` (gitignored, **plaintext secrets**
 | Connection status | `GET /api/v1/health/detailed` |
 | Connector wizard | `/api/v1/connectors*` |
 
-```bash
-# Terminal 1: backend (port 8010; set NEXT_PUBLIC_API_BASE to http://localhost:8010/api/v1)
-make api
+```powershell
+# Terminal 1: backend (port 8010)
+poetry run uvicorn api:app --host 127.0.0.1 --port 8010 --reload
 
-# Terminal 2: dashboard (http://localhost:3000)
-cd dashboard
-npm install
-npm run dev
+# Terminal 2: dashboard (http://localhost:3010); set the server-side proxy/auth
+# variables as shown in the Windows quick start above.
+Set-Location dashboard
+npm ci
+npm run dev -- -p 3010
 ```
 
 ### Screenshots
@@ -123,20 +124,83 @@ Full-page captures of the light-theme dashboard (1440px wide, local dev data).
 
 ## Quick start
 
-Prerequisites: Python 3.11+, Docker Desktop, Node.js 18+, and an OpenAI-compatible inference server (vLLM) reachable from the app. Without a local GPU, use the Modal dev servers below.
+These steps are for a **fresh Windows local demo** using this repository's FastAPI API, Next.js dashboard, local Postgres and Modal-hosted models. Allow time for the first model cold start and image/model downloads. The demo uses synthetic alerts and does not execute infrastructure remediation.
 
-```bash
-pip install poetry
+Prerequisites: Python 3.11+, Poetry, Docker Desktop, Node.js/npm, a Modal account, and network access to Modal. Open three PowerShell terminals at the repository root (the API, dashboard, and demo commands run in separate terminals).
+
+### 1. Install and configure
+
+```powershell
 poetry install
-copy .env.example .env        # set the LLM_*, EMBEDDING_*, JUDGE_* and EGRESS_* values (see below)
-docker compose up -d postgres prometheus   # migrations in knowledge_base/migrations run on first start
-poetry run python -c "import asyncio; from knowledge_base.ingestion.pipeline import RunbookIngestionPipeline; asyncio.run(RunbookIngestionPipeline().ingest_sample_runbooks())"
-make api                      # API on http://127.0.0.1:8010
-make demo                     # fires a critical sample alert; `make demo-warning` fires a non-critical one
-poetry run pytest tests/unit tests/evals -q
+Copy-Item .env.example .env
+Set-Location dashboard
+npm ci
+Set-Location ..
 ```
 
-Local auth: with `APP_ENV=development` set `REQUIRE_GATEWAY_AUTH=false` and `API_AUTH_TOKEN=<token>`, and send it as `X-API-Key`. In any other environment requests must carry the API Gateway identity header.
+Edit the root `.env` (never commit it). Set a non-empty local `API_AUTH_TOKEN`, keep `APP_ENV=development` and `REQUIRE_GATEWAY_AUTH=false`, and leave auto-remediation disabled. Modal endpoint values are filled in after deployment in step 2. Do not use production credentials, telemetry, or personal data in this demo.
+
+### 2. Start the Modal model endpoints
+
+Authenticate the Modal CLI once per development machine, then create the Modal secret once per Modal environment. Use a long random key and keep it private; set the same value as `LLM_API_KEY` and `JUDGE_API_KEY` in `.env`.
+
+```powershell
+poetry run modal setup
+poetry run modal secret create vllm-api-key VLLM_API_KEY=<long-random-string>
+poetry run modal deploy infra/modal/vllm_app.py
+```
+
+If the `vllm-api-key` secret already exists, do not create a duplicate; use the existing secret configured for this app. The deploy output includes the chat, judge, embedding, and offline labeller URLs. Copy the chat URL to `LLM_BASE_URL`, the judge URL to `JUDGE_BASE_URL`, and the embedding URL to `EMBEDDING_BASE_URL`, appending `/v1` to each URL. Set `LLM_API_KEY` and `JUDGE_API_KEY` to the same Modal key. Set `DEFAULT_MODEL`, `MONITORING_AGENT_MODEL`, `DIAGNOSIS_AGENT_MODEL`, `ACTION_AGENT_MODEL`, and `FEEDBACK_AGENT_MODEL` to `qwen2.5-7b-instruct`; set `JUDGE_MODEL=llama-3.1-8b-instruct`, `EMBEDDING_MODEL=bge-base-en-v1.5`, and `EMBEDDING_DIMENSIONS=768`. Include the Modal host in `EGRESS_ALLOWED_HOSTS` (the example deployment uses `*.modal.run`). Do not use the offline labeller endpoint for diagnosis or judgment.
+
+### 3. Start local data services and load runbooks
+
+Start Docker Desktop, then run:
+
+```powershell
+docker compose up -d postgres
+poetry run python -c "import asyncio; from knowledge_base.ingestion.pipeline import RunbookIngestionPipeline; asyncio.run(RunbookIngestionPipeline().ingest_sample_runbooks())"
+```
+
+The SQL migrations under `knowledge_base/migrations` run when the Postgres data volume is initialized for the first time. The sample ingestion command can be run again if the runbooks need to be reloaded. Prometheus and Langfuse are optional for this synthetic-alert walkthrough; start them separately with `docker compose up -d prometheus` or `docker compose up -d langfuse-server` if you want to demonstrate those components.
+
+### 4. Start the API and dashboard
+
+In **PowerShell terminal 1** (repository root), start the API:
+
+```powershell
+poetry run uvicorn api:app --host 127.0.0.1 --port 8010 --reload
+```
+
+In **PowerShell terminal 2** (repository root), start the dashboard with local demo authentication. Use the same local token configured as `API_AUTH_TOKEN` in `.env`:
+
+```powershell
+$env:DASHBOARD_AUTH_MODE = "dev"
+$env:DASHBOARD_DEV_ROLE = "sre"
+$env:DASHBOARD_API_URL = "http://127.0.0.1:8010"
+$env:API_AUTH_TOKEN = "<same-local-token-as-.env>"
+Set-Location dashboard
+npm run dev -- -p 3010
+```
+
+Open <http://localhost:3010>. The dashboard routes API calls through its local server-side proxy; do not set browser-side API credentials. To present the AI PM experience instead, set `DASHBOARD_DEV_ROLE` to `pm` before starting Next.js. Development dashboard authentication is only for a local walkthrough, not production use.
+
+### 5. Run the demo
+
+In **PowerShell terminal 3** (repository root), send a synthetic critical alert:
+
+```powershell
+poetry run python scripts/send_sample_alert.py --severity critical --token $env:API_AUTH_TOKEN
+```
+
+The sample script sends a dry-run Alertmanager request. Critical severity is RCA-only; non-critical responses still pass the deterministic policy gate, and remediation executors are mocked. For a warning example, use `--severity warning`. View the resulting incident in the dashboard. If a Modal model is still starting, allow its cold start to finish and retry if the first request returns a temporary redirect or unavailable response.
+
+When finished, stop the API and dashboard with `Ctrl+C` in their terminals. Stop local Docker services with `docker compose stop` (or stop Docker Desktop); stop the Modal app to terminate its deployed workers:
+
+```powershell
+poetry run modal app stop sre-agent-vllm --yes
+```
+
+Restart with steps 3–5; the Modal app may need to be deployed again with step 2 if it was stopped. Stopping containers preserves Docker volumes. Do not run `docker compose down -v` unless you intentionally want to delete the local database and runbook data.
 
 ### Dev inference on Modal (vLLM)
 
@@ -156,11 +220,11 @@ The dashboard polls `/api/v1/health/detailed` for chat and embedding model readi
 
 **Demo path (today):**
 
-1. Deploy the Modal model endpoints and configure their URLs and API keys in the local `.env`.
-2. Start local Postgres and Prometheus with `docker compose up -d postgres prometheus`; Postgres runs the mounted SQL migrations on first initialization. The incident, approval, audit and episodic stores use Postgres by default.
-3. Start the API with `make api` (port 8010) and the dashboard from `dashboard` with `npm run dev -- -p 3010`. For local dashboard calls, set `CORS_EXTRA_ORIGINS=http://localhost:3010`, `NEXT_PUBLIC_API_BASE=http://localhost:8010/api/v1` and `NEXT_PUBLIC_API_KEY` to the development API token before starting/building Next.js.
-4. Use `make demo` or `make demo-warning` to show a synthetic investigation. Remediation executors are mocked; no live infrastructure changes occur.
-5. Stop Modal when finished with `make modal-stop`. This stops GPU work; local API, dashboard and Docker services are managed separately.
+1. Follow the [Windows quick start](#quick-start): install dependencies, authenticate with Modal, deploy the protected model endpoints, and copy their URLs into the local `.env`.
+2. Start local Postgres and ingest sample runbooks. Prometheus and Langfuse are optional for the synthetic-alert demonstration.
+3. Start the API on port 8010 and the dashboard on port 3010 in separate terminals. Configure the dashboard's server-side proxy with `DASHBOARD_API_URL`, local dev auth, and the same API token used by the backend; the browser does not call the API directly.
+4. Send a dry-run synthetic critical or warning alert using `scripts/send_sample_alert.py` and inspect the incident in the dashboard. Remediation executors are mocked; no live infrastructure changes occur.
+5. Stop the local processes and Docker services, then stop the Modal app to terminate deployed model workers. Restart by repeating the relevant quick-start steps; Docker volumes preserve local data unless explicitly removed.
 
 This setup is suitable for a controlled walkthrough, not a production launch: the API/dashboard are local, the model endpoints are public, local development auth is not production identity, connector state may contain plaintext credentials, and live vendor integrations/remediation have not been validated.
 
