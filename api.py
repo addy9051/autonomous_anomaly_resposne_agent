@@ -12,19 +12,22 @@ Provides endpoints for:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
+import json
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, AsyncIterator, Literal
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request, Security
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from agents.action.pagerduty import resolve_pagerduty_incident
 from agents.action.tiers import ACTION_TIERS, get_tier_description
@@ -36,7 +39,7 @@ from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProduc
 from orchestrator import AgentOrchestrator
 from shared.config import get_settings
 from shared.egress import EgressViolation, check_url, guarded_async_client
-from shared.schemas import ActionPolicyDecision, TelemetryEvent
+from shared.schemas import ActionPolicyDecision, IncidentStatus, TelemetryEvent
 from shared.utils import LLMCostTracker, get_logger, setup_logging, setup_tracing
 
 # ─── Global State ────────────────────────────────────────────────
@@ -223,6 +226,22 @@ class ApproveActionRequest(BaseModel):
 
     approved: bool
     reason: str | None = None
+
+
+class IncidentFeedbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: Literal["helpful", "unhelpful"]
+    category: Literal["wrong_root_cause", "unsafe_fix", "too_slow", "missed_context", "other"] | None = None
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+class AgentControlsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    paused: bool | None = None
+    service: str | None = Field(default=None, min_length=1, max_length=200)
+    autonomy: Literal["observe", "suggest", "approve_to_act", "autonomous"] | None = None
 
 
 class RunDemoRequest(BaseModel):
@@ -650,6 +669,203 @@ async def get_status(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
     return orchestrator.get_status()
+
+
+@app.get("/api/v1/metrics/performance", tags=["Monitoring"])
+async def get_performance_metrics(
+    window: Literal["24h", "7d", "30d"] = Query(default="7d"),
+    _auth: str = Depends(verify_auth),
+) -> dict[str, Any]:
+    """Return incident-derived reliability, autonomy, latency and cost metrics."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+
+    duration = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}[window]
+    incidents = orchestrator.store.list_since(datetime.now(UTC) - duration, limit=5000)
+    total = len(incidents)
+    recovered = sum(
+        incident.status in {IncidentStatus.VERIFIED_RECOVERED, IncidentStatus.RESOLVED}
+        for incident in incidents
+    )
+    auto_resolved = sum(incident.auto_resolved for incident in incidents)
+    overridden = sum(incident.human_overrode for incident in incidents)
+    false_positives = sum(
+        incident.false_positive or incident.status == IncidentStatus.FALSE_POSITIVE for incident in incidents
+    )
+    diagnosed = sum(incident.diagnosis_result is not None for incident in incidents)
+    recommendations = sum(
+        bool(incident.diagnosis_result and incident.diagnosis_result.recommended_actions) for incident in incidents
+    )
+    actions_recorded = sum(bool(incident.action_results) for incident in incidents)
+    total_cost = sum(incident.total_llm_cost_usd for incident in incidents)
+    total_tokens = sum(incident.total_llm_tokens_used for incident in incidents)
+
+    def average(values: list[float | None]) -> float | None:
+        valid = [float(value) for value in values if value is not None]
+        return round(sum(valid) / len(valid), 2) if valid else None
+
+    return {
+        "window": window,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "totals": {
+            "incidents": total,
+            "recovered": recovered,
+            "auto_resolved": auto_resolved,
+            "human_overrides": overridden,
+            "false_positives": false_positives,
+        },
+        "rates": {
+            "resolution": round(recovered / total, 4) if total else None,
+            "autonomous_resolution": round(auto_resolved / total, 4) if total else None,
+            "human_override": round(overridden / total, 4) if total else None,
+            "false_positive": round(false_positives / total, 4) if total else None,
+        },
+        "timings_seconds": {
+            "mean_time_to_detect": average([incident.time_to_detect_seconds for incident in incidents]),
+            "mean_time_to_mitigate": average([incident.time_to_mitigate_seconds for incident in incidents]),
+        },
+        "cost": {
+            "total_usd": round(total_cost, 6),
+            "per_incident_usd": round(total_cost / total, 6) if total else None,
+            "total_tokens": total_tokens,
+            "tokens_per_incident": round(total_tokens / total, 2) if total else None,
+        },
+        "funnel": {
+            "detected": total,
+            "diagnosed": diagnosed,
+            "with_recommendations": recommendations,
+            "with_actions_recorded": actions_recorded,
+            "verified_recovered": recovered,
+        },
+    }
+
+
+@app.get("/api/v1/audit", tags=["Monitoring"])
+async def get_audit_entries(
+    incident_id: str | None = None,
+    before_id: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=100, ge=1, le=500),
+    _auth: str = Depends(verify_auth),
+) -> dict[str, Any]:
+    """Query the durable audit log, optionally scoped to an incident or cursor."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    entries = orchestrator.store.list_audit(limit=limit, incident_id=incident_id, before_id=before_id)
+    return {"entries": entries, "count": len(entries)}
+
+
+@app.get("/api/v1/agent/controls", tags=["Actions"])
+async def get_agent_controls(_auth: str = Depends(verify_auth)) -> dict[str, Any]:
+    """Read the persisted global pause state and per-service autonomy levels."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    return orchestrator.store.get_agent_controls()
+
+
+@app.put("/api/v1/agent/controls", tags=["Actions"])
+async def update_agent_controls(
+    request: AgentControlsUpdate,
+    actor: str = Depends(verify_auth),
+) -> dict[str, Any]:
+    """Persist safety controls; autonomy settings can only constrain deterministic policy."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    fields = request.model_fields_set
+    if not fields:
+        raise HTTPException(status_code=422, detail="At least one control update is required.")
+    if "paused" in fields and request.paused is None:
+        raise HTTPException(status_code=422, detail="paused must be true or false.")
+    if ("service" in fields) != ("autonomy" in fields):
+        raise HTTPException(
+            status_code=422,
+            detail="service and autonomy must be supplied together; set autonomy to null to remove an override.",
+        )
+    if "service" in fields and (request.service is None or not request.service.strip()):
+        raise HTTPException(status_code=422, detail="service must not be blank.")
+
+    patch = request.model_dump(exclude_unset=True)
+    if request.service is not None:
+        patch["service"] = request.service.strip()
+    before = orchestrator.store.get_agent_controls()
+    controls = orchestrator.store.update_agent_controls(patch)
+    orchestrator.store.record_audit(
+        "system",
+        actor,
+        "agent_controls_updated",
+        {"before": before, "after": controls},
+    )
+    return controls
+
+
+@app.post("/api/v1/incidents/{incident_id}/feedback", tags=["Incidents"])
+async def submit_incident_feedback(
+    incident_id: str,
+    request: IncidentFeedbackRequest,
+    actor: str = Depends(verify_auth),
+) -> dict[str, Any]:
+    """Record reviewer feedback on the agent's handling of an incident for quality review."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    incident = orchestrator.active_incidents.get(incident_id) or orchestrator.store.get(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    if request.verdict == "unhelpful" and request.category is None:
+        raise HTTPException(status_code=422, detail="category is required for unhelpful feedback.")
+
+    summary = f"{request.verdict}" + (f" ({request.category})" if request.category else "")
+    incident.human_feedback = f"{summary}: {request.comment}" if request.comment else summary
+    orchestrator.store.save(incident)
+    if incident_id in orchestrator.active_incidents:
+        orchestrator.active_incidents[incident_id] = incident
+    orchestrator.store.record_audit(
+        incident_id,
+        actor,
+        "feedback_submitted",
+        {"verdict": request.verdict, "category": request.category, "comment": request.comment},
+    )
+    return {"incident_id": incident_id, "verdict": request.verdict, "category": request.category}
+
+
+@app.get("/api/v1/events/stream", tags=["Streaming"])
+async def stream_incident_updates(
+    request: Request,
+    _auth: str = Depends(verify_auth),
+) -> StreamingResponse:
+    """Stream incident changes over SSE, polling the durable store for cross-worker updates."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+
+    async def events() -> AsyncIterator[str]:
+        last_signature: str | None = None
+        while not await request.is_disconnected():
+            active = orchestrator.store.list_active()
+            recent = orchestrator.store.list_recent(limit=50)
+            snapshot = {
+                "active_incidents": [item.model_dump(mode="json") for item in active],
+                "recent_incidents": [item.model_dump(mode="json") for item in recent],
+                "generated_at": datetime.now(UTC).isoformat(),
+            }
+            signature_payload = [
+                (item.incident_id, item.status.value, item.updated_at.isoformat())
+                for item in sorted({item.incident_id: item for item in [*active, *recent]}.values(),
+                                   key=lambda incident: incident.incident_id)
+            ]
+            signature = hashlib.sha256(
+                json.dumps(signature_payload, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            if signature != last_signature:
+                yield f"event: snapshot\ndata: {json.dumps(snapshot, default=str)}\n\n"
+                last_signature = signature
+            else:
+                yield ": keep-alive\n\n"
+            await asyncio.sleep(2)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/v1/episodes/{episode_id}", tags=["Memory"])

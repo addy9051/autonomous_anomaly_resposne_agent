@@ -242,7 +242,13 @@ class AgentOrchestrator:
             incident.status = IncidentStatus.RECOMMENDATION_READY
             self.store.save(incident)
 
-            await self.action_agent.execute(diagnosis, incident, cost_tracker, dry_run=dry_run)
+            await self.action_agent.execute(
+                diagnosis,
+                incident,
+                cost_tracker,
+                dry_run=dry_run,
+                controls=self.store.get_agent_controls(),
+            )
             incident.time_to_mitigate_seconds = (datetime.now(timezone.utc) - incident.created_at).total_seconds()
 
             # Sync cost tracker

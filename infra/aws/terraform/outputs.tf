@@ -13,6 +13,11 @@ output "caller_policy_arns" {
   value       = { for name, policy in aws_iam_policy.caller : name => policy.arn }
 }
 
+output "dashboard_caller_role_arns" {
+  description = "Set DASHBOARD_SRE_ROLE_ARN and DASHBOARD_PM_ROLE_ARN on the dashboard server from these."
+  value       = { for name, role in aws_iam_role.dashboard_caller : name => role.arn }
+}
+
 output "ecs_cluster_name" {
   description = "ECS cluster name."
   value       = aws_ecs_cluster.api.name

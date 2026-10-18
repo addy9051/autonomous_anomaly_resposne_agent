@@ -3,12 +3,27 @@
  * Centralized logic for interacting with the Anomaly Response Agent FastAPI.
  */
 
-// Use localhost consistently to match the browser's address bar and resolve CORS issues on Windows
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8010/api/v1";
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY;
+// Calls go to the dashboard's own server-side proxy, which authenticates the user and signs
+// the request. No credential ever reaches the browser.
+const API_BASE = "/api/backend/api/v1";
 
-function authHeaders(): Record<string, string> {
-  return API_KEY ? { "X-API-Key": API_KEY } : {};
+export interface Capabilities {
+  approve: boolean;
+  control: boolean;
+  manageConnectors: boolean;
+  demo: boolean;
+}
+
+export interface DashboardSession {
+  user: string;
+  role: "sre" | "pm";
+  capabilities: Capabilities;
+}
+
+export async function fetchSession(): Promise<DashboardSession> {
+  const res = await fetch("/api/session", { cache: "no-store" });
+  if (!res.ok) throw new Error(`Session unavailable (${res.status})`);
+  return res.json();
 }
 
 export interface TelemetryEvent {
@@ -24,11 +39,120 @@ export interface IncidentRecord {
   incident_id: string;
   status: string;
   created_at: string;
-  anomaly_event?: any;
-  diagnosis_result?: any;
-  action_results: any[];
-  verification_result?: any;
+  updated_at?: string;
+  resolved_at?: string | null;
+  anomaly_event?: {
+    severity?: string;
+    anomaly_type?: string;
+    affected_services?: string[];
+    confidence?: number;
+    timestamp?: string;
+    metrics_snapshot?: Record<string, number | null>;
+  } | null;
+  diagnosis_result?: {
+    root_cause?: string;
+    root_cause_category?: string;
+    decision_summary?: string;
+    reasoning_chain?: string;
+    confidence?: number;
+    confidence_band?: string;
+    hypotheses?: Array<{
+      hypothesis: string;
+      confidence_band: string;
+      affected_scope?: string[];
+      supporting_evidence?: Array<{ source: string; description?: string; value?: unknown; unit?: string }>;
+      contradicting_evidence?: Array<{ source: string; description?: string; value?: unknown; unit?: string }>;
+      missing_evidence?: string[];
+    }>;
+    sub_agent_reports?: Record<string, { findings: string; confidence: number }>;
+    evidence_timeline?: Array<{
+      source: string;
+      description?: string;
+      value?: unknown;
+      unit?: string;
+      observed_at?: string;
+    }>;
+    recommended_actions?: Array<{
+      action: string;
+      estimated_impact?: string;
+      rollback_steps?: string[];
+    }>;
+  } | null;
+  action_results: Array<{
+    action_taken: string;
+    execution_status: string;
+    output?: Record<string, unknown>;
+    error?: string | null;
+  }>;
+  verification_result?: {
+    outcome: string;
+    details?: string;
+    checked_signals?: Record<string, unknown>;
+  } | null;
+  auto_resolved?: boolean;
+  human_overrode?: boolean;
+  human_feedback?: string | null;
+  false_positive?: boolean;
+  regressed?: boolean | null;
+  time_to_detect_seconds?: number | null;
+  time_to_mitigate_seconds?: number | null;
   total_llm_cost_usd: number;
+  total_llm_tokens_used?: number;
+}
+
+export interface PerformanceMetrics {
+  window: "24h" | "7d" | "30d";
+  generated_at: string;
+  totals: {
+    incidents: number;
+    recovered: number;
+    auto_resolved: number;
+    human_overrides: number;
+    false_positives: number;
+  };
+  rates: {
+    resolution: number | null;
+    autonomous_resolution: number | null;
+    human_override: number | null;
+    false_positive: number | null;
+  };
+  timings_seconds: {
+    mean_time_to_detect: number | null;
+    mean_time_to_mitigate: number | null;
+  };
+  cost: {
+    total_usd: number;
+    per_incident_usd: number | null;
+    total_tokens: number;
+    tokens_per_incident: number | null;
+  };
+  funnel: {
+    detected: number;
+    diagnosed: number;
+    with_recommendations: number;
+    with_actions_recorded: number;
+    verified_recovered: number;
+  };
+}
+
+export interface AgentControls {
+  paused: boolean;
+  service_autonomy: Record<string, "observe" | "suggest" | "approve_to_act" | "autonomous">;
+}
+
+export interface AuditEntry {
+  id: number;
+  incident_id: string;
+  timestamp: string;
+  actor: string;
+  action: string;
+  details: Record<string, unknown>;
+}
+
+export interface IncidentStreamSnapshot {
+  active_incidents: IncidentRecord[];
+  recent_incidents: IncidentRecord[];
+  generated_at: string;
 }
 
 export interface InferenceReadiness {
@@ -46,10 +170,7 @@ export interface DetailedHealth {
  */
 async function fetchWithLogs(url: string, options: RequestInit = {}) {
   try {
-    const res = await fetch(url, {
-      ...options,
-      headers: { ...authHeaders(), ...(options.headers as Record<string, string> | undefined) },
-    });
+    const res = await fetch(url, options);
     if (!res.ok) {
       const errorText = await res.text();
       console.error(`API Error [${res.status}] at ${url}:`, errorText);
@@ -64,6 +185,58 @@ async function fetchWithLogs(url: string, options: RequestInit = {}) {
 
 export async function fetchStats() {
   return fetchWithLogs(`${API_BASE}/status`, { cache: 'no-store' });
+}
+
+export async function fetchPerformanceMetrics(window: PerformanceMetrics["window"] = "7d"): Promise<PerformanceMetrics> {
+  return fetchWithLogs(`${API_BASE}/metrics/performance?window=${window}`, { cache: "no-store" });
+}
+
+export async function fetchAgentControls(): Promise<AgentControls> {
+  return fetchWithLogs(`${API_BASE}/agent/controls`, { cache: "no-store" });
+}
+
+export async function saveAgentControls(
+  patch: { paused?: boolean } | { service: string; autonomy: AgentControls["service_autonomy"][string] | null },
+): Promise<AgentControls> {
+  return fetchWithLogs(`${API_BASE}/agent/controls`, jsonRequest("PUT", patch));
+}
+
+export async function fetchAuditEntries(limit = 100): Promise<AuditEntry[]> {
+  const data = await fetchWithLogs(`${API_BASE}/audit?limit=${limit}`, { cache: "no-store" });
+  return data.entries;
+}
+
+export async function streamIncidentUpdates(
+  signal: AbortSignal,
+  onSnapshot: (snapshot: IncidentStreamSnapshot) => void,
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/events/stream`, {
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    const body = await response.text();
+    throw new Error(`Incident stream failed (${response.status}): ${body}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() ?? "";
+    for (const block of blocks) {
+      const data = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n");
+      if (data) onSnapshot(JSON.parse(data) as IncidentStreamSnapshot);
+    }
+  }
 }
 
 export async function fetchRecentTelemetry(): Promise<TelemetryEvent[]> {
@@ -127,7 +300,7 @@ function jsonRequest(method: string, body?: unknown): RequestInit {
   return {
     method,
     cache: "no-store",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   };
 }
@@ -166,12 +339,23 @@ export async function deactivateIngestion(): Promise<ConnectorsView> {
   return fetchWithLogs(`${API_BASE}/connectors/deactivate`, jsonRequest("POST"));
 }
 
-export async function approveAction(incidentId: string, approved: boolean) {
+export async function approveAction(incidentId: string, approved: boolean, reason?: string) {
   return fetchWithLogs(`${API_BASE}/incidents/${incidentId}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ approved }),
+    body: JSON.stringify({ approved, reason }),
   });
+}
+
+export async function submitIncidentFeedback(
+  incidentId: string,
+  feedback: {
+    verdict: "helpful" | "unhelpful";
+    category?: "wrong_root_cause" | "unsafe_fix" | "too_slow" | "missed_context" | "other";
+    comment?: string;
+  },
+) {
+  return fetchWithLogs(`${API_BASE}/incidents/${encodeURIComponent(incidentId)}/feedback`, jsonRequest("POST", feedback));
 }
 
 export async function triggerDemo() {

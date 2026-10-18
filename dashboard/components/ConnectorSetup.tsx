@@ -151,8 +151,8 @@ export default function ConnectorSetup() {
     return (
       <Shell>
         <p className="text-rose-400 text-sm font-bold">
-          Cannot reach the orchestrator API. Check that the backend is running and that NEXT_PUBLIC_API_BASE
-          {' '}(and NEXT_PUBLIC_API_KEY if API_AUTH_TOKEN is set) are correct.
+          Cannot reach the orchestrator API.           Check that the backend is running and that DASHBOARD_API_URL
+                    {' '}(and API_AUTH_TOKEN in dev mode) are set for the dashboard server.
         </p>
       </Shell>
     );

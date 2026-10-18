@@ -60,6 +60,17 @@ variable "allowed_client_cidrs" {
   }
 }
 
+variable "dashboard_principal_arns" {
+  description = "IAM role ARNs of the dashboard server (for example its ECS task role) allowed to assume the per-role API caller roles. Leave empty to create no dashboard roles."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for arn in var.dashboard_principal_arns : can(regex("^arn:[^:]+:iam::[0-9]{12}:role/.+$", arn))])
+    error_message = "dashboard_principal_arns must contain only IAM role ARNs."
+  }
+}
+
 variable "secret_arns" {
   description = "Environment variable name to Secrets Manager secret ARN mappings for application credentials."
   type        = map(string)

@@ -105,6 +105,20 @@ class IncidentStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_audit_trail_timestamp
+                ON audit_trail (timestamp DESC, id DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS system_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
             conn.commit()
 
     def save(self, incident: IncidentRecord) -> None:
@@ -223,6 +237,91 @@ class IncidentStore:
                 logger.warning("corrupted_incident_record", error=str(exc))
         return recovered
 
+    def list_since(self, since: datetime, limit: int = 5000) -> list[IncidentRecord]:
+        """Fetch recent incidents created at or after a UTC timestamp."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT data FROM incidents WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
+                (since.isoformat(), limit),
+            ).fetchall()
+        return self._parse_incident_rows(rows)
+
+    def list_recent(self, limit: int = 100) -> list[IncidentRecord]:
+        """Fetch the most recently updated incidents, including active and terminal records."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT data FROM incidents ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return self._parse_incident_rows(rows)
+
+    def list_audit(
+        self, limit: int = 100, incident_id: str | None = None, before_id: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Fetch audit entries newest first with optional incident and cursor filters."""
+        query = "SELECT id, incident_id, timestamp, actor, action, details FROM audit_trail"
+        conditions: list[str] = []
+        params: list[Any] = []
+        if incident_id is not None:
+            conditions.append("incident_id = ?")
+            params.append(incident_id)
+        if before_id is not None:
+            conditions.append("id < ?")
+            params.append(before_id)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "incident_id": row["incident_id"],
+                "timestamp": row["timestamp"],
+                "actor": row["actor"],
+                "action": row["action"],
+                "details": json.loads(row["details"]),
+            }
+            for row in rows
+        ]
+
+    def get_agent_controls(self) -> dict[str, Any]:
+        """Read persisted agent-wide and per-service autonomy controls."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM system_settings WHERE key = ?",
+                ("agent_controls",),
+            ).fetchone()
+        return json.loads(row["value"]) if row else {"paused": False, "service_autonomy": {}}
+
+    def update_agent_controls(self, patch: dict[str, Any]) -> dict[str, Any]:
+        """Atomically persist a partial update to agent autonomy controls."""
+        with self._get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT value FROM system_settings WHERE key = ?",
+                ("agent_controls",),
+            ).fetchone()
+            controls = json.loads(row["value"]) if row else {"paused": False, "service_autonomy": {}}
+            if "paused" in patch:
+                controls["paused"] = patch["paused"]
+            if "service" in patch:
+                service_autonomy = controls.setdefault("service_autonomy", {})
+                if patch.get("autonomy") is None:
+                    service_autonomy.pop(patch["service"], None)
+                else:
+                    service_autonomy[patch["service"]] = patch["autonomy"]
+            conn.execute(
+                """
+                INSERT INTO system_settings (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                ("agent_controls", json.dumps(controls)),
+            )
+            conn.commit()
+        return controls
+
     def record_audit(self, incident_id: str, actor: str, action: str, details: dict[str, Any]) -> None:
         """Append an audit log entry for compliance and review."""
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -235,6 +334,16 @@ class IncidentStore:
                 (incident_id, now_iso, actor, action, json.dumps(details)),
             )
             conn.commit()
+
+    @staticmethod
+    def _parse_incident_rows(rows: list[sqlite3.Row]) -> list[IncidentRecord]:
+        incidents = []
+        for row in rows:
+            try:
+                incidents.append(IncidentRecord.model_validate_json(row["data"]))
+            except Exception as exc:
+                logger.warning("corrupted_incident_record", error=str(exc))
+        return incidents
 
 
 _PG_SCHEMA = """
@@ -256,6 +365,11 @@ CREATE TABLE IF NOT EXISTS incident_audit_trail (
     details JSONB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_incident_audit_incident ON incident_audit_trail (incident_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_incident_audit_timestamp ON incident_audit_trail (timestamp DESC, id DESC);
+CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL
+);
 """
 
 
@@ -365,6 +479,87 @@ class PostgresIncidentStore:
             (statuses, limit),
         )
         return self._parse(rows)
+
+    def list_since(self, since: datetime, limit: int = 5000) -> list[IncidentRecord]:
+        """Fetch recent incidents created at or after a UTC timestamp."""
+        rows = self._fetch(
+            "SELECT data FROM incident_records WHERE created_at >= %s ORDER BY created_at DESC LIMIT %s",
+            (since, limit),
+        )
+        return self._parse(rows)
+
+    def list_recent(self, limit: int = 100) -> list[IncidentRecord]:
+        """Fetch the most recently updated incidents, including active and terminal records."""
+        rows = self._fetch(
+            "SELECT data FROM incident_records ORDER BY updated_at DESC LIMIT %s",
+            (limit,),
+        )
+        return self._parse(rows)
+
+    def list_audit(
+        self, limit: int = 100, incident_id: str | None = None, before_id: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Fetch audit entries newest first with optional incident and cursor filters."""
+        conditions: list[str] = []
+        params: list[Any] = []
+        if incident_id is not None:
+            conditions.append("incident_id = %s")
+            params.append(incident_id)
+        if before_id is not None:
+            conditions.append("id < %s")
+            params.append(before_id)
+        query = "SELECT id, incident_id, timestamp, actor, action, details FROM incident_audit_trail"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY id DESC LIMIT %s"
+        params.append(limit)
+        rows = self._fetch(query, tuple(params))
+        return [
+            {
+                "id": row[0],
+                "incident_id": row[1],
+                "timestamp": row[2].isoformat(),
+                "actor": row[3],
+                "action": row[4],
+                "details": row[5],
+            }
+            for row in rows
+        ]
+
+    def get_agent_controls(self) -> dict[str, Any]:
+        """Read persisted agent-wide and per-service autonomy controls."""
+        rows = self._fetch("SELECT value FROM system_settings WHERE key = %s", ("agent_controls",))
+        return rows[0][0] if rows else {"paused": False, "service_autonomy": {}}
+
+    def update_agent_controls(self, patch: dict[str, Any]) -> dict[str, Any]:
+        """Atomically persist a partial update to agent autonomy controls."""
+        conn = self._connect()
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO system_settings (key, value) VALUES (%s, %s::jsonb)
+                    ON CONFLICT (key) DO NOTHING
+                    """,
+                    ("agent_controls", json.dumps({"paused": False, "service_autonomy": {}})),
+                )
+                cur.execute("SELECT value FROM system_settings WHERE key = %s FOR UPDATE", ("agent_controls",))
+                controls = cur.fetchone()[0]
+                if "paused" in patch:
+                    controls["paused"] = patch["paused"]
+                if "service" in patch:
+                    service_autonomy = controls.setdefault("service_autonomy", {})
+                    if patch.get("autonomy") is None:
+                        service_autonomy.pop(patch["service"], None)
+                    else:
+                        service_autonomy[patch["service"]] = patch["autonomy"]
+                cur.execute(
+                    "UPDATE system_settings SET value = %s::jsonb WHERE key = %s",
+                    (json.dumps(controls), "agent_controls"),
+                )
+                return controls
+        finally:
+            conn.close()
 
     def record_audit(self, incident_id: str, actor: str, action: str, details: dict[str, Any]) -> None:
         conn = self._connect()

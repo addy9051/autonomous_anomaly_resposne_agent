@@ -66,6 +66,7 @@ class ActionAgent:
         incident: IncidentRecord,
         cost_tracker: LLMCostTracker | None = None,
         dry_run: bool = False,
+        controls: dict[str, Any] | None = None,
     ) -> list[ActionResult]:
         """
         Execute or propose recommended actions based on deterministic policy.
@@ -86,12 +87,26 @@ class ActionAgent:
             service = "unknown"
             if incident.anomaly_event and incident.anomaly_event.affected_services:
                 service = incident.anomaly_event.affected_services[0]
+            service_autonomy = (controls or {}).get("service_autonomy", {})
+            autonomy = service_autonomy.get(service, "autonomous")
+            paused = bool((controls or {}).get("paused", False))
+
+            if autonomy == "observe":
+                incident.action_results = []
+                incident.status = IncidentStatus.RECOMMENDATION_READY
+                return []
 
             for action in diagnosis.recommended_actions:
                 timer = Timer()
                 with timer:
                     result = await self._evaluate_and_execute_action(
-                        action, diagnosis, incident, service, dry_run=dry_run
+                        action,
+                        diagnosis,
+                        incident,
+                        service,
+                        dry_run=dry_run,
+                        autonomy=autonomy,
+                        paused=paused,
                     )
                     result.execution_time_ms = timer.elapsed_ms
                     results.append(result)
@@ -160,6 +175,8 @@ class ActionAgent:
         incident: IncidentRecord,
         service: str,
         dry_run: bool,
+        autonomy: str = "autonomous",
+        paused: bool = False,
     ) -> ActionResult:
         """Evaluate action against deterministic policy gate and execute if permitted."""
         tier = classify_action(action.action)
@@ -172,6 +189,20 @@ class ActionAgent:
             dry_run=dry_run,
             severity=incident.anomaly_event.severity.value if incident.anomaly_event else None,
         )
+
+        if policy_eval.decision != ActionPolicyDecision.DENIED:
+            if autonomy == "suggest" and policy_eval.decision != ActionPolicyDecision.RECOMMEND_ONLY:
+                policy_eval.decision = ActionPolicyDecision.RECOMMEND_ONLY
+                policy_eval.requires_approval = False
+                policy_eval.reason = "Service autonomy is set to suggest; remediation is recorded but not executed."
+            elif autonomy == "approve_to_act" and policy_eval.decision == ActionPolicyDecision.PERMITTED_AUTO:
+                policy_eval.decision = ActionPolicyDecision.APPROVAL_REQUIRED
+                policy_eval.requires_approval = True
+                policy_eval.reason = "Service autonomy requires human approval before every remediation."
+            elif paused and policy_eval.decision == ActionPolicyDecision.PERMITTED_AUTO:
+                policy_eval.decision = ActionPolicyDecision.RECOMMEND_ONLY
+                policy_eval.requires_approval = False
+                policy_eval.reason = "Automatic remediation is paused; this action was not executed."
 
         if policy_eval.decision == ActionPolicyDecision.DENIED:
             logger.warning("action_policy_denied", action=action.action, reason=policy_eval.reason)

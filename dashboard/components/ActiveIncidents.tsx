@@ -71,7 +71,7 @@ function IncidentCard({ incident }: { incident: IncidentRecord }) {
             </span>
           </div>
           <h3 className="text-lg font-bold mb-1">{incident.anomaly_event?.anomaly_type || 'Unknown Anomaly'}</h3>
-          <p className="text-sm text-foreground/50 line-clamp-1">{incident.anomaly_event?.affected_services.join(', ')}</p>
+          <p className="text-sm text-foreground/50 line-clamp-1">{incident.anomaly_event?.affected_services?.join(', ')}</p>
         </div>
 
         {/* Railroad Map */}

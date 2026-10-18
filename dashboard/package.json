@@ -6,9 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:auth": "npx tsx scripts/auth-check.ts"
   },
   "dependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
+    "@aws-sdk/client-sts": "^3.1152.0",
+    "@smithy/protocol-http": "^5.6.2",
+    "@smithy/signature-v4": "^5.7.4",
+    "jose": "^6.2.12",
     "next": "16.2.3",
     "react": "19.2.4",
     "react-dom": "19.2.4"
