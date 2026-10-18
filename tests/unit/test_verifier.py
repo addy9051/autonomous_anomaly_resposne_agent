@@ -50,20 +50,22 @@ def _successful_action() -> ActionResult:
 
 @pytest.mark.asyncio
 async def test_live_verification_rejects_simulator_evidence() -> None:
-    adapter = FakeTelemetryAdapter([
-        _record(
-            "error_rate",
-            0.0,
-            connector_source=TelemetryConnectorSource.SIMULATOR,
-            tags={"simulated": True},
-        ),
-        _record(
-            "latency_p99",
-            20.0,
-            connector_source=TelemetryConnectorSource.SIMULATOR,
-            tags={"is_simulated": True},
-        ),
-    ])
+    adapter = FakeTelemetryAdapter(
+        [
+            _record(
+                "error_rate",
+                0.0,
+                connector_source=TelemetryConnectorSource.SIMULATOR,
+                tags={"simulated": True},
+            ),
+            _record(
+                "latency_p99",
+                20.0,
+                connector_source=TelemetryConnectorSource.SIMULATOR,
+                tags={"is_simulated": True},
+            ),
+        ]
+    )
     verifier = RecoveryVerifier(stabilization_window_seconds=0)
 
     result = await verifier.verify(
@@ -95,10 +97,14 @@ async def test_verification_requires_all_required_signals() -> None:
 @pytest.mark.asyncio
 async def test_verification_rejects_stale_evidence() -> None:
     stale_timestamp = datetime.now(UTC) - timedelta(seconds=300)
-    adapter = FakeTelemetryAdapter([
-        _record("error_rate", 0.0, timestamp=stale_timestamp, connector_source=TelemetryConnectorSource.PROMETHEUS),
-        _record("latency_p99", 10.0, timestamp=stale_timestamp, connector_source=TelemetryConnectorSource.PROMETHEUS),
-    ])
+    adapter = FakeTelemetryAdapter(
+        [
+            _record("error_rate", 0.0, timestamp=stale_timestamp, connector_source=TelemetryConnectorSource.PROMETHEUS),
+            _record(
+                "latency_p99", 10.0, timestamp=stale_timestamp, connector_source=TelemetryConnectorSource.PROMETHEUS
+            ),
+        ]
+    )
     verifier = RecoveryVerifier(stabilization_window_seconds=0)
 
     result = await verifier.verify(
@@ -113,10 +119,12 @@ async def test_verification_rejects_stale_evidence() -> None:
 
 @pytest.mark.asyncio
 async def test_verification_applies_policy_thresholds() -> None:
-    adapter = FakeTelemetryAdapter([
-        _record("error_rate", 0.5, connector_source=TelemetryConnectorSource.PROMETHEUS),
-        _record("latency_p99", 200.0, connector_source=TelemetryConnectorSource.PROMETHEUS),
-    ])
+    adapter = FakeTelemetryAdapter(
+        [
+            _record("error_rate", 0.5, connector_source=TelemetryConnectorSource.PROMETHEUS),
+            _record("latency_p99", 200.0, connector_source=TelemetryConnectorSource.PROMETHEUS),
+        ]
+    )
     verifier = RecoveryVerifier(stabilization_window_seconds=0)
 
     result = await verifier.verify(

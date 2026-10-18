@@ -37,7 +37,6 @@ from agents.diagnosis.prompts import (
 from shared.config import get_settings
 from shared.llm import get_chat_model
 from shared.pii import sanitize_for_llm
-from shared.skills import SkillRouter, get_skill_router
 from shared.schemas import (
     ActionTier,
     AnomalyEvent,
@@ -49,6 +48,7 @@ from shared.schemas import (
     Severity,
     SubAgentReport,
 )
+from shared.skills import SkillRouter, get_skill_router
 from shared.utils import LLMCostTracker, Timer, get_langfuse_handler, get_logger, get_tracer
 
 logger = get_logger("diagnosis_agent")
@@ -112,22 +112,21 @@ async def gather_context(state: DiagnosisState) -> dict:
     missing_sources: list[str] = []
 
     try:
-        from data_pipeline.connectors.adapters import get_telemetry_adapter
-
         from agents.diagnosis.evidence import collect_deploy_evidence, collect_evidence
+        from data_pipeline.connectors.adapters import get_telemetry_adapter
 
         adapter = get_telemetry_adapter()
         evidence_records, missing_sources = await collect_evidence(adapter, affected_services)
         deploy_records, deploy_gaps = await collect_deploy_evidence()
-        evidence_records = sorted(
-            [*evidence_records, *deploy_records], key=lambda e: e["observed_at"]
-        )
+        evidence_records = sorted([*evidence_records, *deploy_records], key=lambda e: e["observed_at"])
         missing_sources.extend(deploy_gaps)
     except Exception as exc:
         logger.warning("adapter_telemetry_fetch_failed", error=str(exc))
         missing_sources.append("telemetry_adapter")
 
-    telemetry_evidence_str = json.dumps(evidence_records, indent=2) if evidence_records else "No adapter telemetry available."
+    telemetry_evidence_str = (
+        json.dumps(evidence_records, indent=2) if evidence_records else "No adapter telemetry available."
+    )
     prompt = (
         CONTEXT_GATHER_PROMPT.format(anomaly_event=sanitize_for_llm(json.dumps(anomaly, indent=2, default=str)))
         + f"\n\nLive Telemetry Evidence:\n{telemetry_evidence_str}"
@@ -323,7 +322,11 @@ async def synthesise_rca(state: DiagnosisState) -> dict:
 
     response = await llm.ainvoke(
         [
-            SystemMessage(content=f"{DIAGNOSIS_SYSTEM_PROMPT}\n\n## Procedural skills (follow these)\n{state.get('skills_text', '')}"),
+            SystemMessage(
+                content=(
+                    f"{DIAGNOSIS_SYSTEM_PROMPT}\n\n## Procedural skills (follow these)\n{state.get('skills_text', '')}"
+                )
+            ),
             HumanMessage(content=prompt),
         ]
     )
@@ -551,7 +554,10 @@ def _parse_diagnosis_response(
             "root_cause_category": "unknown",
             "runbook_references": state.get("runbook_matches", []),
             "recommended_actions": [],  # Explicitly empty: no action-shaped fallbacks!
-            "decision_summary": "Diagnosis unavailable: Model output failed validation or parsing. Escalated to human on-call without automated action.",
+            "decision_summary": (
+                "Diagnosis unavailable: Model output failed validation or parsing. "
+                "Escalated to human on-call without automated action."
+            ),
             "reasoning_chain": content[:1000] if content else "Model returned unparseable content.",
             "confidence": 0.0,
             "confidence_band": "uncalibrated",

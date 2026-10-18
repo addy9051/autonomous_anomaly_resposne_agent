@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from typing import TYPE_CHECKING
 
-import pytest
+if TYPE_CHECKING:
+    import pytest
 
 from shared import utils
 from shared.config import get_settings

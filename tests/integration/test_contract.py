@@ -34,7 +34,6 @@ async def test_vertex_llm_contract() -> None:
     Contract test against the in-VPC LLM server; skipped when it is unreachable.
     """
     import httpx
-
     from langchain_core.messages import HumanMessage
 
     from shared.llm import get_chat_model

@@ -97,7 +97,9 @@ def _sort_key(e: dict[str, Any]) -> datetime:
     return datetime.fromisoformat(e["observed_at"])
 
 
-async def collect_deploy_evidence(window_seconds: int = DEPLOY_WINDOW_SECONDS) -> tuple[list[dict[str, Any]], list[str]]:
+async def collect_deploy_evidence(
+    window_seconds: int = DEPLOY_WINDOW_SECONDS,
+) -> tuple[list[dict[str, Any]], list[str]]:
     """Recent deployments as 'what changed' evidence. No-op when not configured."""
     if not deploy_events.is_configured():
         return [], []

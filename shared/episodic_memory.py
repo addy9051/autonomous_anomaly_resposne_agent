@@ -11,14 +11,16 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel, Field
 
 from shared.config import get_settings
-from shared.schemas import AnomalyEvent
 from shared.utils import get_logger
+
+if TYPE_CHECKING:
+    from shared.schemas import AnomalyEvent
 
 logger = get_logger("episodic_memory")
 
@@ -30,7 +32,7 @@ BRANCH_RECOMMEND = "recommend"
 class Episode(BaseModel):
     episode_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     fingerprint: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     severity: str
     anomaly_type: str
     services: list[str]
@@ -73,15 +75,11 @@ class InMemoryEpisodeBackend:
 
     async def append_event(self, episode_id: str, stage: str, actor: str, detail: dict[str, Any]) -> None:
         self.events.append(
-            {"episode_id": episode_id, "ts": datetime.now(timezone.utc), "stage": stage, "actor": actor, "detail": detail}
+            {"episode_id": episode_id, "ts": datetime.now(UTC), "stage": stage, "actor": actor, "detail": detail}
         )
 
     async def latest_for_fingerprint(self, fingerprint: str, since: datetime) -> Episode | None:
-        candidates = [
-            e
-            for e in self.episodes.values()
-            if e.fingerprint == fingerprint and e.created_at >= since
-        ]
+        candidates = [e for e in self.episodes.values() if e.fingerprint == fingerprint and e.created_at >= since]
         return max(candidates, key=lambda e: e.created_at, default=None)
 
     async def get(self, episode_id: str) -> Episode | None:
@@ -218,7 +216,13 @@ class PostgresEpisodeBackend:
                 "SELECT ts, stage, actor, detail FROM episode_events WHERE episode_id=$1 ORDER BY ts", episode_id
             )
             return [
-                {"episode_id": episode_id, "ts": r["ts"], "stage": r["stage"], "actor": r["actor"], "detail": _as_json(r["detail"])}
+                {
+                    "episode_id": episode_id,
+                    "ts": r["ts"],
+                    "stage": r["stage"],
+                    "actor": r["actor"],
+                    "detail": _as_json(r["detail"]),
+                }
                 for r in rows
             ]
         finally:
@@ -245,7 +249,7 @@ class EpisodicMemory:
         return await getattr(self._fallback, name)(*args)
 
     async def find_duplicate(self, anomaly: AnomalyEvent) -> Episode | None:
-        since = datetime.now(timezone.utc) - self.window
+        since = datetime.now(UTC) - self.window
         return await self._call("latest_for_fingerprint", fingerprint_for(anomaly), since)
 
     async def open_episode(

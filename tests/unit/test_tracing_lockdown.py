@@ -1,10 +1,12 @@
 import os
 
+import pytest
+
 from shared.config import get_settings
 from shared.utils import get_langfuse_handler
 
 
-def test_langsmith_forced_off_for_public_endpoint(monkeypatch):
+def test_langsmith_forced_off_for_public_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
     monkeypatch.setenv("LANGCHAIN_API_KEY", "lsv2_test")
     get_settings.cache_clear()
@@ -16,7 +18,7 @@ def test_langsmith_forced_off_for_public_endpoint(monkeypatch):
         get_settings.cache_clear()
 
 
-def test_langfuse_handler_none_without_keys(monkeypatch):
+def test_langfuse_handler_none_without_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
     get_settings.cache_clear()
@@ -26,7 +28,7 @@ def test_langfuse_handler_none_without_keys(monkeypatch):
         get_settings.cache_clear()
 
 
-def test_setup_tracing_without_endpoint_does_not_export(monkeypatch):
+def test_setup_tracing_without_endpoint_does_not_export(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi import FastAPI
 
     from shared.utils import setup_tracing
@@ -39,7 +41,7 @@ def test_setup_tracing_without_endpoint_does_not_export(monkeypatch):
         get_settings.cache_clear()
 
 
-def test_langfuse_handler_none_for_blocked_host(monkeypatch):
+def test_langfuse_handler_none_for_blocked_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
     monkeypatch.setenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")

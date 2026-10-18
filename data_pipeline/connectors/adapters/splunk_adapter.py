@@ -9,10 +9,9 @@ into NormalizedTelemetryRecord instances with signal_type=LOG_SUMMARY.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
-
 import json
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -30,6 +29,8 @@ from shared.utils import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
+
+    from shared.config import Settings
 
 logger = get_logger("splunk_adapter")
 
@@ -56,10 +57,12 @@ class SplunkAdapter(BaseTelemetryAdapter):
         self.password = password or settings.integration.splunk_password
         self.base_url = f"https://{self.host}:{self.port}".rstrip("/")
         self.client = guarded_async_client(verify=self._tls_verify(settings), timeout=15.0)
-        logger.info("splunk_adapter_initialized", host=self.host, port=self.port, configured=bool(self.token or self.password))
+        logger.info(
+            "splunk_adapter_initialized", host=self.host, port=self.port, configured=bool(self.token or self.password)
+        )
 
     @staticmethod
-    def _tls_verify(settings: Any) -> bool | str:
+    def _tls_verify(settings: Settings) -> bool | str:
         cfg = settings.integration
         if cfg.splunk_ca_bundle:
             return cfg.splunk_ca_bundle
@@ -121,13 +124,8 @@ class SplunkAdapter(BaseTelemetryAdapter):
             )
         if templated_any:
             return records
-        search_query = (
-            f"search index=* service={entity} status>=500 "
-            f"| stats count as failure_count by error_code"
-        )
-        return await self.query_signal(
-            query=search_query, entity=entity, time_window_seconds=time_window_seconds
-        )
+        search_query = f"search index=* service={entity} status>=500 | stats count as failure_count by error_code"
+        return await self.query_signal(query=search_query, entity=entity, time_window_seconds=time_window_seconds)
 
     async def query_signal(
         self,
@@ -146,13 +144,13 @@ class SplunkAdapter(BaseTelemetryAdapter):
 
         try:
             search_param = query if query.startswith("search ") else f"search {query}"
-            
+
             # Formulate parameters to ensure time boundary controls (e.g. past 5 mins)
             data_payload = {
-                "search": search_param, 
+                "search": search_param,
                 "output_mode": "json",
                 "earliest_time": f"-{int(time_window_seconds)}s",
-                "latest_time": "now"
+                "latest_time": "now",
             }
 
             # Build request keyword arguments dynamically
@@ -160,7 +158,7 @@ class SplunkAdapter(BaseTelemetryAdapter):
                 "headers": self._headers,
                 "data": data_payload,
             }
-            
+
             # Type-Safe Check: Only bind auth if it is an active tuple
             active_auth = self._auth
             if active_auth is not None:
@@ -170,7 +168,7 @@ class SplunkAdapter(BaseTelemetryAdapter):
                 endpoint,
                 **kwargs,
             )
-            
+
             if resp.status_code == 200:
                 # Splunk export streams valid JSON lines string rows
                 for line in resp.text.splitlines():
@@ -182,14 +180,14 @@ class SplunkAdapter(BaseTelemetryAdapter):
                         result = entry.get("result", {})
                         if not result:
                             continue
-                            
+
                         if metric_name:
                             raw_val = result.get(metric_name)
                             if raw_val in (None, ""):
                                 continue
                             records.append(
                                 NormalizedTelemetryRecord(
-                                    timestamp=datetime.now(timezone.utc),
+                                    timestamp=datetime.now(UTC),
                                     entity=entity or result.get("service", "unknown"),
                                     connector_source=self.source,
                                     signal_type=TelemetrySignalType.METRIC,
@@ -201,7 +199,7 @@ class SplunkAdapter(BaseTelemetryAdapter):
                             )
                             continue
 
-                        # Dynamic value lookup strategy: handles structural changes 
+                        # Dynamic value lookup strategy: handles structural changes
                         # in your `stats count as X` alias automatically.
                         if metric_name:
                             raw_val = result.get(metric_name)
@@ -209,7 +207,7 @@ class SplunkAdapter(BaseTelemetryAdapter):
                                 continue
                             records.append(
                                 NormalizedTelemetryRecord(
-                                    timestamp=datetime.now(timezone.utc),
+                                    timestamp=datetime.now(UTC),
                                     entity=entity or result.get("service", "unknown"),
                                     connector_source=self.source,
                                     signal_type=TelemetrySignalType.METRIC,
@@ -228,7 +226,7 @@ class SplunkAdapter(BaseTelemetryAdapter):
                                 break
                         else:
                             # Fallback selector checking if an arbitrary custom aggregation name exists
-                            remaining_keys = [k for k in result.keys() if k not in ["error_code", "service"]]
+                            remaining_keys = [k for k in result if k not in ["error_code", "service"]]
                             if remaining_keys:
                                 count_val = float(result[remaining_keys[0]])
 
@@ -236,7 +234,7 @@ class SplunkAdapter(BaseTelemetryAdapter):
 
                         records.append(
                             NormalizedTelemetryRecord(
-                                timestamp=datetime.now(timezone.utc),
+                                timestamp=datetime.now(UTC),
                                 entity=entity or result.get("service", "unknown"),
                                 connector_source=self.source,
                                 signal_type=TelemetrySignalType.LOG_SUMMARY,
@@ -248,7 +246,8 @@ class SplunkAdapter(BaseTelemetryAdapter):
                                 raw_query=query,
                             )
                         )
-                    except Exception:
+                    except (TypeError, ValueError) as exc:
+                        logger.debug("splunk_record_skipped", error=str(exc))
                         continue
             else:
                 logger.warning("splunk_query_failed", status=resp.status_code)
@@ -267,7 +266,7 @@ class SplunkAdapter(BaseTelemetryAdapter):
         """Poll Splunk for error log spikes on an interval."""
 
         default_query = "search index=main (status>=500 OR level=ERROR) | stats count by service"
-        
+
         while True:
             try:
                 records = await self.query_signal(query=default_query)

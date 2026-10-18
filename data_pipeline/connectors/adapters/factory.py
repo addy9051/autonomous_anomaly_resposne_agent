@@ -56,8 +56,7 @@ def get_telemetry_adapter(mode: str | None = None) -> BaseTelemetryAdapter:
         return SplunkAdapter()
     else:
         raise ValueError(
-            f"Unknown telemetry connector mode '{active_mode}'. "
-            f"Supported: {', '.join(list_available_adapters())}"
+            f"Unknown telemetry connector mode '{active_mode}'. Supported: {', '.join(list_available_adapters())}"
         )
 
 
@@ -70,7 +69,11 @@ def get_active_modes() -> list[str]:
     """Return the configured vendor list: CONNECTOR_MODES if set, else the single connector mode."""
     cfg = get_settings().integration
     raw = cfg.telemetry_connector_modes.strip()
-    modes = [m.strip().lower() for m in raw.split(",") if m.strip()] if raw else [cfg.telemetry_connector_mode.lower().strip()]
+    modes = (
+        [m.strip().lower() for m in raw.split(",") if m.strip()]
+        if raw
+        else [cfg.telemetry_connector_mode.lower().strip()]
+    )
     return list(dict.fromkeys(modes))
 
 
@@ -86,7 +89,8 @@ def validate_modes(modes: list[str]) -> None:
         elif mode in ("prometheus", "prom") and not cfg.prometheus_url:
             missing.append("prometheus (PROMETHEUS_URL)")
         elif mode not in ("simulator", "sim", "mock", "prometheus", "prom", "datadog", "dd", "splunk"):
-            raise ValueError(f"Unknown telemetry connector mode '{mode}'. Supported: {', '.join(list_available_adapters())}")
+            raise ValueError(
+                f"Unknown telemetry connector mode '{mode}'. Supported: {', '.join(list_available_adapters())}"
+            )
     if missing:
         raise ValueError("Connector modes listed without credentials: " + ", ".join(missing))
-

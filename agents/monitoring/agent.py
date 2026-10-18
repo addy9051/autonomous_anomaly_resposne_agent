@@ -114,7 +114,7 @@ class MonitoringAgent:
         self,
         event: TelemetryEvent,
         cost_tracker: LLMCostTracker | None = None,
-        handler: Any | None = None,
+        handler: Any | None = None,  # noqa: ANN401 - LangChain callback implementations vary by SDK version.
     ) -> AnomalyEvent | None:
         """Run the ReAct reasoning loop with tool calls."""
 

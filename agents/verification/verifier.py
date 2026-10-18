@@ -15,10 +15,9 @@ Security hardening:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
-from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter
 from shared.schemas import (
     ActionResult,
     IncidentRecord,
@@ -30,6 +29,12 @@ from shared.schemas import (
 from shared.utils import get_logger
 
 logger = get_logger("recovery_verifier")
+
+if TYPE_CHECKING:
+    from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter
+
+if TYPE_CHECKING:
+    from data_pipeline.connectors.adapters.base import BaseTelemetryAdapter
 
 # Minimum set of signals required to declare recovery.
 # If any of these are missing, verification is INCONCLUSIVE.
@@ -78,9 +83,7 @@ class RecoveryVerifier:
         results = action_results or incident.action_results
         criteria = verification_criteria or {}
         stabilization_window_seconds = (
-            self.stabilization_window_seconds_dry_run
-            if dry_run
-            else self.stabilization_window_seconds
+            self.stabilization_window_seconds_dry_run if dry_run else self.stabilization_window_seconds
         )
         service = "unknown"
         if incident.anomaly_event and incident.anomaly_event.affected_services:
@@ -94,7 +97,7 @@ class RecoveryVerifier:
                 checked_signals={"action_execution": "failed_or_missing"},
                 details="Action was not executed successfully; recovery verification failed.",
                 stabilization_seconds=0.0,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
 
         # 2. Wait for stabilization window
@@ -104,6 +107,7 @@ class RecoveryVerifier:
         # 3. Acquire telemetry adapter
         if telemetry_adapter is None:
             from data_pipeline.connectors.adapters import get_telemetry_adapter
+
             telemetry_adapter = get_telemetry_adapter()
 
         checked_signals: dict[str, Any] = {}
@@ -137,16 +141,13 @@ class RecoveryVerifier:
                     checked_signals={"source": telemetry_adapter.source.value, "signals_count": len(records)},
                     details="Authoritative telemetry source was degraded or unavailable during verification window.",
                     stabilization_seconds=stabilization_window_seconds,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                 )
 
             # 6. Freshness check — reject stale evidence
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             max_age_seconds = 2.0 * time_window_seconds
-            fresh_records = [
-                r for r in records
-                if (now - r.timestamp).total_seconds() <= max_age_seconds
-            ]
+            fresh_records = [r for r in records if (now - r.timestamp).total_seconds() <= max_age_seconds]
             if not fresh_records:
                 return VerificationResult(
                     outcome=VerificationOutcome.INCONCLUSIVE,
@@ -156,9 +157,11 @@ class RecoveryVerifier:
                         "fresh_records": 0,
                         "max_age_seconds": max_age_seconds,
                     },
-                    details=f"All {len(records)} telemetry records are older than {max_age_seconds}s; evidence is stale.",
+                    details=(
+                        f"All {len(records)} telemetry records are older than {max_age_seconds}s; evidence is stale."
+                    ),
                     stabilization_seconds=stabilization_window_seconds,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                 )
             records = fresh_records
 
@@ -173,9 +176,11 @@ class RecoveryVerifier:
                         "available": sorted(available_signals),
                         "missing_required": sorted(missing_signals),
                     },
-                    details=f"Required verification signals missing: {sorted(missing_signals)}. Cannot confirm recovery.",
+                    details=(
+                        f"Required verification signals missing: {sorted(missing_signals)}. Cannot confirm recovery."
+                    ),
                     stabilization_seconds=stabilization_window_seconds,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                 )
 
             # 8. Evaluate service-level recovery criteria (use policy thresholds or defaults)
@@ -187,7 +192,9 @@ class RecoveryVerifier:
             for r in records:
                 checked_signals[r.metric_name] = r.value
                 if r.metric_name in ("error_rate", "transaction_failure_rate"):
-                    threshold = txn_failure_threshold if r.metric_name == "transaction_failure_rate" else error_rate_threshold
+                    threshold = (
+                        txn_failure_threshold if r.metric_name == "transaction_failure_rate" else error_rate_threshold
+                    )
                     if r.value > threshold:
                         is_recovered = False
                 elif r.metric_name == "latency_p99":
@@ -212,7 +219,7 @@ class RecoveryVerifier:
                 checked_signals=checked_signals,
                 details=details,
                 stabilization_seconds=stabilization_window_seconds,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
 
         except Exception as exc:
@@ -222,7 +229,7 @@ class RecoveryVerifier:
                 checked_signals={"error": str(exc)},
                 details=f"Verification encountered connector exception: {exc}",
                 stabilization_seconds=stabilization_window_seconds,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
 
     @staticmethod

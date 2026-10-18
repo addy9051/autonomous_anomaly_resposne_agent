@@ -12,7 +12,7 @@ Uses N8n webhooks for action execution and Slack for notifications/approvals.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -160,7 +160,7 @@ class ActionAgent:
                 if verification.outcome == VerificationOutcome.VERIFIED_RECOVERY:
                     incident.status = IncidentStatus.VERIFIED_RECOVERED
                     incident.auto_resolved = True
-                    incident.resolved_at = datetime.now(timezone.utc)
+                    incident.resolved_at = datetime.now(UTC)
                 else:
                     incident.status = IncidentStatus.ESCALATED
             else:
@@ -388,7 +388,7 @@ class ActionAgent:
         if verification.outcome == VerificationOutcome.VERIFIED_RECOVERY:
             incident.status = IncidentStatus.VERIFIED_RECOVERED
             incident.auto_resolved = True
-            incident.resolved_at = datetime.now(timezone.utc)
+            incident.resolved_at = datetime.now(UTC)
         else:
             incident.status = IncidentStatus.ESCALATED
 
@@ -399,7 +399,7 @@ class ActionAgent:
         diagnosis: DiagnosisResult,
         results: list[ActionResult],
         cost_tracker: LLMCostTracker | None = None,
-        handler: Any | None = None,
+        handler: Any | None = None,  # noqa: ANN401 - LangChain callback implementations vary by SDK version.
     ) -> str:
         """Generate a plain-language incident summary (≤200 words)."""
         prompt = f"""Generate a concise incident summary (max 200 words) for Slack notification.

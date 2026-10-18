@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 from fastapi.testclient import TestClient
-from pytest import MonkeyPatch
 
 import api
 from shared.incident_store import IncidentStore
 from shared.schemas import IncidentRecord, IncidentStatus
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-def _client(monkeypatch: MonkeyPatch, tmp_path: Path) -> tuple[TestClient, IncidentStore]:
+    import pytest
+
+
+def _client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient, IncidentStore]:
     store = IncidentStore(tmp_path / "incidents.db")
     monkeypatch.setattr(api, "orchestrator", SimpleNamespace(store=store))
     client = TestClient(api.app)
@@ -25,7 +29,7 @@ def _identity_headers() -> dict[str, str]:
 
 
 def test_performance_metrics_are_derived_from_windowed_incidents(
-    monkeypatch: MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     client, store = _client(monkeypatch, tmp_path)
     store.save(
@@ -68,7 +72,7 @@ def test_performance_metrics_are_derived_from_windowed_incidents(
     assert body["cost"]["tokens_per_incident"] == 300
 
 
-def test_audit_endpoint_supports_incident_filter_and_cursor(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+def test_audit_endpoint_supports_incident_filter_and_cursor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     client, store = _client(monkeypatch, tmp_path)
     store.record_audit("incident-a", "sre", "approved", {"note": "first"})
     store.record_audit("incident-b", "agent", "detected", {"note": "second"})
@@ -85,7 +89,7 @@ def test_audit_endpoint_supports_incident_filter_and_cursor(monkeypatch: MonkeyP
     assert response.json()["entries"][0]["details"] == {"note": "first"}
 
 
-def test_agent_controls_are_persisted_audited_and_validated(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+def test_agent_controls_are_persisted_audited_and_validated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     client, store = _client(monkeypatch, tmp_path)
     headers = _identity_headers()
 
@@ -102,33 +106,32 @@ def test_agent_controls_are_persisted_audited_and_validated(monkeypatch: MonkeyP
         "service_autonomy": {"checkout-api": "approve_to_act"},
     }
     assert store.list_audit(limit=10)[0]["action"] == "agent_controls_updated"
-    assert client.put(
-        "/api/v1/agent/controls",
-        json={"service": "checkout-api"},
-        headers=headers,
-    ).status_code == 422
+    assert (
+        client.put(
+            "/api/v1/agent/controls",
+            json={"service": "checkout-api"},
+            headers=headers,
+        ).status_code
+        == 422
+    )
 
     restarted_store = IncidentStore(tmp_path / "incidents.db")
     assert restarted_store.get_agent_controls()["paused"] is True
 
 
-def test_incident_feedback_is_stored_and_audited(monkeypatch, tmp_path) -> None:
+def test_incident_feedback_is_stored_and_audited(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     client, store = _client(monkeypatch, tmp_path)
     api.orchestrator.active_incidents = {}
     store.save(IncidentRecord(incident_id="inc-1", status=IncidentStatus.VERIFIED_RECOVERED))
     headers = _identity_headers()
 
-    missing_category = client.post(
-        "/api/v1/incidents/inc-1/feedback", json={"verdict": "unhelpful"}, headers=headers
-    )
+    missing_category = client.post("/api/v1/incidents/inc-1/feedback", json={"verdict": "unhelpful"}, headers=headers)
     ok = client.post(
         "/api/v1/incidents/inc-1/feedback",
         json={"verdict": "unhelpful", "category": "wrong_root_cause", "comment": "It was DNS"},
         headers=headers,
     )
-    unknown = client.post(
-        "/api/v1/incidents/nope/feedback", json={"verdict": "helpful"}, headers=headers
-    )
+    unknown = client.post("/api/v1/incidents/nope/feedback", json={"verdict": "helpful"}, headers=headers)
 
     assert missing_category.status_code == 422
     assert ok.status_code == 200

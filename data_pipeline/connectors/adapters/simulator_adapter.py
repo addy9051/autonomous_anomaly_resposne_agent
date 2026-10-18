@@ -8,7 +8,7 @@ Used for local development, demos, and testing without requiring live external p
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -67,7 +67,6 @@ class SimulatorAdapter(BaseTelemetryAdapter):
         """List metadata of available story scenarios."""
         return self.story_engine.list_scenarios()
 
-
     async def health_check(self) -> bool:
         """Simulator is always available in local and demo environments."""
         return True
@@ -80,7 +79,7 @@ class SimulatorAdapter(BaseTelemetryAdapter):
     ) -> list[NormalizedTelemetryRecord]:
         """Fetch simulated metrics for an entity with calculated baselines."""
         records: list[NormalizedTelemetryRecord] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for metric in metric_names:
             baseline = 100.0 if "latency" in metric else 1.0
@@ -118,7 +117,7 @@ class SimulatorAdapter(BaseTelemetryAdapter):
 
         return [
             NormalizedTelemetryRecord(
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 entity=target_entity,
                 connector_source=self.source,
                 signal_type=TelemetrySignalType.METRIC,
@@ -162,7 +161,7 @@ class SimulatorAdapter(BaseTelemetryAdapter):
                 unit = "ms"
 
             yield NormalizedTelemetryRecord(
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 entity=entity,
                 connector_source=self.source,
                 signal_type=signal_type,

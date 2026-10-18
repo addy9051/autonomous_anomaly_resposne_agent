@@ -1,4 +1,4 @@
-"""Tests for the sandboxed intelligence layer: skills, egress, auto-action policy, episodic memory, severity branches."""
+"""Tests for sandboxing, action policy, episodic memory and severity branches."""
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ from shared.schemas import (
 from shared.skills import SkillRouter
 from shared.utils import LLMCostTracker
 
-
 # ─── Skills (procedural memory) ─────────────────────────────────
 
 
@@ -54,7 +53,7 @@ def test_skills_non_critical_gets_domain_skill() -> None:
 def test_egress_blocks_public_and_allows_private(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(get_settings().app, "egress_enforce", True)
     monkeypatch.setattr(get_settings().app, "egress_allowed_hosts", "")
-    with pytest.raises(egress.EgressViolation):
+    with pytest.raises(egress.EgressViolationError):
         egress.check_host("93.184.216.34")
     egress.check_host("10.1.2.3")
     egress.check_host("127.0.0.1")
@@ -81,7 +80,9 @@ def test_policy_denies_everything_for_critical() -> None:
 
 def test_policy_non_allowlisted_action_is_never_auto(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(get_settings().agent, "auto_action_allowlist", "clear_cache")
-    result = Policy.evaluate("scale_replicas", "checkout", "production", {"replicas": 3}, dry_run=False, severity="high")
+    result = Policy.evaluate(
+        "scale_replicas", "checkout", "production", {"replicas": 3}, dry_run=False, severity="high"
+    )
     assert result.decision != ActionPolicyDecision.PERMITTED_AUTO
 
 
@@ -135,9 +136,7 @@ def _make_orchestrator(recover: bool) -> AgentOrchestrator:
             event_id=anomaly.event_id,
             root_cause="connection pool exhausted",
             root_cause_category=RootCauseCategory.DATABASE,
-            recommended_actions=[
-                RecommendedAction(action="clear_cache", tier=ActionTier.TIER_1_AUTO, params={})
-            ],
+            recommended_actions=[RecommendedAction(action="clear_cache", tier=ActionTier.TIER_1_AUTO, params={})],
             confidence=0.8,
         )
 

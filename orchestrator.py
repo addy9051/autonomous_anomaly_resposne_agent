@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -21,7 +21,8 @@ import structlog
 from agents.action.agent import ActionAgent
 from agents.action.pagerduty import resolve_pagerduty_incident
 from agents.diagnosis.graph import DiagnosisAgent
-from agents.feedback.regression import RegressionDetector, alert_key as make_alert_key
+from agents.feedback.regression import RegressionDetector
+from agents.feedback.regression import alert_key as make_alert_key
 from agents.monitoring.agent import MonitoringAgent
 from data_pipeline.connectors.adapters import get_telemetry_adapter
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
@@ -73,9 +74,7 @@ class AgentOrchestrator:
         self.regression_detector = RegressionDetector(self.store)
 
         # Track active incidents in memory (repopulated from durable store)
-        self.active_incidents: dict[str, IncidentRecord] = {
-            inc.incident_id: inc for inc in self.store.list_active()
-        }
+        self.active_incidents: dict[str, IncidentRecord] = {inc.incident_id: inc for inc in self.store.list_active()}
         self.resolved_incidents: list[IncidentRecord] = self.store.list_resolved(limit=50)
 
         # Real-time telemetry pulse buffer (last 100 events)
@@ -135,8 +134,9 @@ class AgentOrchestrator:
         dry_run: bool = False,
     ) -> IncidentRecord | None:
         """Bind the event id to every log line so logs join to the Langfuse session of the same id."""
-        with structlog.contextvars.bound_contextvars(event_id=anomaly.event_id), langfuse_session_context(
-            anomaly.event_id
+        with (
+            structlog.contextvars.bound_contextvars(event_id=anomaly.event_id),
+            langfuse_session_context(anomaly.event_id),
         ):
             return await self._process_anomaly(anomaly, cost_tracker, dry_run=dry_run)
 
@@ -165,9 +165,14 @@ class AgentOrchestrator:
             replay: DiagnosisResult | None = None
             if prior is not None:
                 if prior.status in ("open", "escalated") and prior.outcome in (None, "none"):
-                    await self.memory.log(prior.episode_id, "duplicate_suppressed", "orchestrator", {
-                        "event_id": anomaly.event_id,
-                    })
+                    await self.memory.log(
+                        prior.episode_id,
+                        "duplicate_suppressed",
+                        "orchestrator",
+                        {
+                            "event_id": anomaly.event_id,
+                        },
+                    )
                     logger.info("duplicate_suppressed", episode_id=prior.episode_id)
                     return None
                 if prior.status == "resolved" and prior.outcome == "recovered" and prior.decision:
@@ -190,11 +195,16 @@ class AgentOrchestrator:
             self.active_incidents[incident.incident_id] = incident
             self.store.save(incident)
             self._update_regressions(incident)
-            self.store.record_audit(incident.incident_id, "monitoring", "anomaly_detected", {
-                "services": anomaly.affected_services,
-                "severity": anomaly.severity.value,
-                "type": anomaly.anomaly_type.value,
-            })
+            self.store.record_audit(
+                incident.incident_id,
+                "monitoring",
+                "anomaly_detected",
+                {
+                    "services": anomaly.affected_services,
+                    "severity": anomaly.severity.value,
+                    "type": anomaly.anomaly_type.value,
+                },
+            )
 
             logger.info(
                 "incident_created",
@@ -211,24 +221,36 @@ class AgentOrchestrator:
             incident.duplicate_of = prior.episode_id if prior else None
             incident.handling_branch = episode.branch
             if replay is not None:
-                diagnosis = replay.model_copy(update={"incident_id": incident.incident_id, "event_id": anomaly.event_id})
-                await self.memory.log(episode.episode_id, "diagnosis_replayed", "orchestrator", {
-                    "from_episode": prior.episode_id if prior else None,
-                })
+                diagnosis = replay.model_copy(
+                    update={"incident_id": incident.incident_id, "event_id": anomaly.event_id}
+                )
+                await self.memory.log(
+                    episode.episode_id,
+                    "diagnosis_replayed",
+                    "orchestrator",
+                    {
+                        "from_episode": prior.episode_id if prior else None,
+                    },
+                )
             else:
                 diagnosis = await self.diagnosis_agent.diagnose(anomaly, cost_tracker)
                 incident.skills_used = list(getattr(self.diagnosis_agent, "last_skills", []) or [])
             if is_critical:
                 diagnosis.recommended_actions = []
             incident.diagnosis_result = diagnosis
-            incident.time_to_detect_seconds = (datetime.now(timezone.utc) - incident.created_at).total_seconds()
+            incident.time_to_detect_seconds = (datetime.now(UTC) - incident.created_at).total_seconds()
             self.store.save(incident)
-            self.store.record_audit(incident.incident_id, "diagnosis", "diagnosis_complete", {
-                "root_cause": diagnosis.root_cause,
-                "category": diagnosis.root_cause_category.value,
-                "confidence": diagnosis.confidence,
-                "recommended_actions": [a.action for a in diagnosis.recommended_actions],
-            })
+            self.store.record_audit(
+                incident.incident_id,
+                "diagnosis",
+                "diagnosis_complete",
+                {
+                    "root_cause": diagnosis.root_cause,
+                    "category": diagnosis.root_cause_category.value,
+                    "confidence": diagnosis.confidence,
+                    "recommended_actions": [a.action for a in diagnosis.recommended_actions],
+                },
+            )
 
             logger.info(
                 "diagnosis_complete",
@@ -249,7 +271,7 @@ class AgentOrchestrator:
                 dry_run=dry_run,
                 controls=self.store.get_agent_controls(),
             )
-            incident.time_to_mitigate_seconds = (datetime.now(timezone.utc) - incident.created_at).total_seconds()
+            incident.time_to_mitigate_seconds = (datetime.now(UTC) - incident.created_at).total_seconds()
 
             # Sync cost tracker
             incident.total_llm_tokens_used = cost_tracker.total_tokens
@@ -263,17 +285,27 @@ class AgentOrchestrator:
                 if incident.incident_id in self.active_incidents:
                     del self.active_incidents[incident.incident_id]
                 self.resolved_incidents.append(incident)
-                self.store.record_audit(incident.incident_id, "orchestrator", "verified_recovered", {
-                    "auto_resolved": incident.auto_resolved,
-                })
+                self.store.record_audit(
+                    incident.incident_id,
+                    "orchestrator",
+                    "verified_recovered",
+                    {
+                        "auto_resolved": incident.auto_resolved,
+                    },
+                )
                 # Sync with PagerDuty (Close the ticket)
                 await resolve_pagerduty_incident(incident.incident_id)
             else:
                 # If awaiting approval, executing, or escalated: KEEP ACTIVE in store and active_incidents!
                 self.active_incidents[incident.incident_id] = incident
-                self.store.record_audit(incident.incident_id, "orchestrator", incident.status.value, {
-                    "pending_actions": [a.model_dump(mode="json") for a in incident.action_results],
-                })
+                self.store.record_audit(
+                    incident.incident_id,
+                    "orchestrator",
+                    incident.status.value,
+                    {
+                        "pending_actions": [a.model_dump(mode="json") for a in incident.action_results],
+                    },
+                )
                 logger.info(
                     "incident_in_progress",
                     incident_id=incident.incident_id,
@@ -472,7 +504,10 @@ async def main() -> None:
             print(f"     Severity: {severity} | Type: {anomaly_type}")
             if inc.diagnosis_result:
                 print(f"     Diagnosed Root Cause: {inc.diagnosis_result.root_cause}")
-                print(f"     Category: {inc.diagnosis_result.root_cause_category.value} | Confidence: {inc.diagnosis_result.confidence}")
+                print(
+                    f"     Category: {inc.diagnosis_result.root_cause_category.value} "
+                    f"| Confidence: {inc.diagnosis_result.confidence}"
+                )
                 for action in inc.diagnosis_result.recommended_actions:
                     print(f"     Recommended Remediation: {action.action} (Tier {action.tier.value})")
         return
@@ -481,7 +516,6 @@ async def main() -> None:
         # Quick demo: generate 5 events with 2 anomalies
         producer = SyntheticTelemetryProducer(seed=42)
         events = [
-
             producer.generate_normal_metrics(),
             producer.generate_anomalous_event("latency_spike"),
             producer.generate_normal_transaction(),

@@ -47,9 +47,7 @@ class _Client:
     [(200, "ready"), (303, "unavailable"), (401, "unavailable"), (503, "starting")],
 )
 @pytest.mark.asyncio
-async def test_inference_endpoint_readiness(
-    monkeypatch: MonkeyPatch, status_code: int, expected: str
-) -> None:
+async def test_inference_endpoint_readiness(monkeypatch: MonkeyPatch, status_code: int, expected: str) -> None:
     monkeypatch.setattr(api, "guarded_async_client", lambda **_: _Client(status_code=status_code))
 
     result = await api._probe_inference_endpoint("http://127.0.0.1:8000/v1", "test-key")

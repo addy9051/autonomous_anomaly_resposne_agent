@@ -16,7 +16,7 @@ from shared.schemas import NormalizedTelemetryRecord, TelemetryConnectorSource
 from shared.utils import get_logger
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Sequence
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 
 logger = get_logger("composite_adapter")
 
@@ -39,7 +39,10 @@ class CompositeTelemetryAdapter(BaseTelemetryAdapter):
         results = await asyncio.gather(*(a.health_check() for a in self.adapters), return_exceptions=True)
         return any(r is True for r in results)
 
-    async def _fan_out(self, call: Any) -> list[NormalizedTelemetryRecord]:
+    async def _fan_out(
+        self,
+        call: Callable[[BaseTelemetryAdapter], Awaitable[list[NormalizedTelemetryRecord]]],
+    ) -> list[NormalizedTelemetryRecord]:
         results = await asyncio.gather(*(call(a) for a in self.adapters), return_exceptions=True)
         merged: list[NormalizedTelemetryRecord] = []
         failures: dict[str, str] = {}

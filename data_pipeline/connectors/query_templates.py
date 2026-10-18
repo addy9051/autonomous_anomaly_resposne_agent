@@ -22,7 +22,7 @@ CANONICAL_METRICS: tuple[str, ...] = ("latency_p99", "error_rate", "transaction_
 DEFAULT_TEMPLATES: dict[str, dict[str, str]] = {
     "prometheus": {
         "latency_p99": (
-            '1000*histogram_quantile(0.99, sum by (le) '
+            "1000*histogram_quantile(0.99, sum by (le) "
             '(rate(http_request_duration_seconds_bucket{service="{entity}"}[5m])))'
         ),
         "error_rate": (

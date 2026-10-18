@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,7 @@ def _apply_approval(
         incident.status = IncidentStatus.ESCALATED
         incident.human_overrode = True
         incident.human_feedback = f"Action rejected by {actor}. Reason: {reason or 'None provided'}"
-    incident.updated_at = datetime.now(timezone.utc)
+    incident.updated_at = datetime.now(UTC)
     return True
 
 
@@ -123,8 +123,8 @@ class IncidentStore:
 
     def save(self, incident: IncidentRecord) -> None:
         """Upsert an incident record."""
-        now_iso = datetime.now(timezone.utc).isoformat()
-        incident.updated_at = datetime.now(timezone.utc)
+        now_iso = datetime.now(UTC).isoformat()
+        incident.updated_at = datetime.now(UTC)
         data_json = incident.model_dump_json()
 
         with self._get_connection() as conn:
@@ -210,7 +210,9 @@ class IncidentStore:
                 rows = conn.execute(query, (status, limit)).fetchall()
             else:
                 placeholders = ",".join(["?"] * len(ACTIVE_STATUSES))
-                query = f"SELECT data FROM incidents WHERE status NOT IN ({placeholders}) ORDER BY updated_at DESC LIMIT ?"
+                query = (
+                    f"SELECT data FROM incidents WHERE status NOT IN ({placeholders}) ORDER BY updated_at DESC LIMIT ?"  # noqa: S608 - placeholders are generated from internal status count.
+                )
                 rows = conn.execute(query, (*list(ACTIVE_STATUSES), limit)).fetchall()
 
             resolved = []
@@ -324,7 +326,7 @@ class IncidentStore:
 
     def record_audit(self, incident_id: str, actor: str, action: str, details: dict[str, Any]) -> None:
         """Append an audit log entry for compliance and review."""
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         with self._get_connection() as conn:
             conn.execute(
                 """
@@ -399,7 +401,7 @@ class PostgresIncidentStore:
             conn.close()
 
     def save(self, incident: IncidentRecord) -> None:
-        incident.updated_at = datetime.now(timezone.utc)
+        incident.updated_at = datetime.now(UTC)
         conn = self._connect()
         try:
             with conn, conn.cursor() as cur:
@@ -570,7 +572,7 @@ class PostgresIncidentStore:
                     INSERT INTO incident_audit_trail (incident_id, timestamp, actor, action, details)
                     VALUES (%s, %s, %s, %s, %s::jsonb)
                     """,
-                    (incident_id, datetime.now(timezone.utc), actor, action, json.dumps(details, default=str)),
+                    (incident_id, datetime.now(UTC), actor, action, json.dumps(details, default=str)),
                 )
         finally:
             conn.close()

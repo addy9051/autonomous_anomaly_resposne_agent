@@ -11,10 +11,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from shared.schemas import NormalizedTelemetryRecord, TelemetryConnectorSource
-
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
+
+    from shared.schemas import NormalizedTelemetryRecord, TelemetryConnectorSource
 
 
 class TelemetrySourceError(RuntimeError):

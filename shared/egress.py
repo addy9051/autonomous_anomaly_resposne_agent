@@ -29,8 +29,11 @@ PRIVATE_DEFAULT_CIDRS = (
 )
 
 
-class EgressViolation(PermissionError):
+class EgressViolationError(PermissionError):
     """Raised when an outbound call targets a destination outside the allowlist."""
+
+
+EgressViolation = EgressViolationError
 
 
 def _split(value: str) -> list[str]:
@@ -55,7 +58,7 @@ def _ip_allowed(ip: ipaddress._BaseAddress, app: Any = None) -> bool:  # noqa: A
 
 
 def check_host(host: str, app: Any = None) -> None:  # noqa: ANN401
-    """Raise EgressViolation unless ``host`` is a permitted destination.
+    """Raise EgressViolationError unless ``host`` is a permitted destination.
 
     ``app`` lets config code pass its own settings while ``get_settings()`` is still being built.
     """
@@ -63,7 +66,7 @@ def check_host(host: str, app: Any = None) -> None:  # noqa: ANN401
         return
     host = (host or "").strip().lower().strip("[]")
     if not host:
-        raise EgressViolation("empty egress host")
+        raise EgressViolationError("empty egress host")
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
@@ -71,23 +74,23 @@ def check_host(host: str, app: Any = None) -> None:  # noqa: ANN401
     if ip is not None:
         if _ip_allowed(ip, app) or _host_allowed(host, app):
             return
-        raise EgressViolation(f"egress to {host} is not allowed")
+        raise EgressViolationError(f"egress to {host} is not allowed")
     if _host_allowed(host, app):
         return
     try:
         resolved = {ipaddress.ip_address(info[4][0]) for info in socket.getaddrinfo(host, None)}
     except (OSError, ValueError) as exc:
-        raise EgressViolation(f"cannot resolve {host}; failing closed") from exc
+        raise EgressViolationError(f"cannot resolve {host}; failing closed") from exc
     if resolved and all(_ip_allowed(addr, app) for addr in resolved):
         return
-    raise EgressViolation(f"egress to {host} is not allowed")
+    raise EgressViolationError(f"egress to {host} is not allowed")
 
 
 def check_url(url: str, app: Any = None) -> str:  # noqa: ANN401
     """Validate a URL against the egress policy and return it unchanged."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise EgressViolation(f"unsupported scheme for egress: {parsed.scheme!r}")
+        raise EgressViolationError(f"unsupported scheme for egress: {parsed.scheme!r}")
     check_host(parsed.hostname or "", app)
     return url
 
@@ -109,6 +112,6 @@ def egress_self_test() -> dict[str, bool]:
         return {"enforced": False, "public_blocked": False}
     try:
         check_host("93.184.216.34")  # public IP literal; no DNS needed
-    except EgressViolation:
+    except EgressViolationError:
         return {"enforced": True, "public_blocked": True}
     return {"enforced": True, "public_blocked": False}

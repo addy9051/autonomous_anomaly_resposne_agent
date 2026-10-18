@@ -12,7 +12,7 @@ Validates the full incident lifecycle against SRE Agent Product Strategy Bluepri
 """
 
 import copy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,7 +41,7 @@ from shared.schemas import (
 def sample_anomaly_event() -> AnomalyEvent:
     return AnomalyEvent(
         event_id="test-event-uuid-1234",
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         severity=Severity.HIGH,
         affected_services=["payment-gateway"],
         anomaly_type="latency_spike",
@@ -70,11 +70,13 @@ async def test_end_to_end_mocked_incident_flow(sample_anomaly_event: AnomalyEven
                     "root_cause_category": "database",
                     "decision_summary": "Identified connection pool exhaustion on payment-db",
                     "runbook_references": [],
-                    "recommended_actions": [{
-                        "action": "scale_replicas",
-                        "tier": 1,
-                        "params": {"deployment": "payment-gateway", "namespace": "payments", "replicas": 3},
-                    }],
+                    "recommended_actions": [
+                        {
+                            "action": "scale_replicas",
+                            "tier": 1,
+                            "params": {"deployment": "payment-gateway", "namespace": "payments", "replicas": 3},
+                        }
+                    ],
                     "reasoning_chain": "Observed high connection wait times",
                     "confidence": 0.95,
                 }
@@ -412,11 +414,13 @@ def test_approval_request_rejects_action_substitution() -> None:
         ApproveActionRequest.model_validate({})
 
     with pytest.raises(ValidationError):
-        ApproveActionRequest.model_validate({
-            "approved": True,
-            "action_name": "failover_db",
-            "params": {"cluster_name": "production"},
-        })
+        ApproveActionRequest.model_validate(
+            {
+                "approved": True,
+                "action_name": "failover_db",
+                "params": {"cluster_name": "production"},
+            }
+        )
 
 
 def test_approval_claim_is_single_use(tmp_path: Path) -> None:
@@ -424,20 +428,22 @@ def test_approval_claim_is_single_use(tmp_path: Path) -> None:
     store = IncidentStore(db_path=tmp_path / "single_use.db")
     params = {"deployment": "checkout", "namespace": "payments", "replicas": 3}
     proposal_hash = compute_proposal_hash("scale_replicas", params)
-    store.save(IncidentRecord(
-        incident_id="inc-single-use",
-        status=IncidentStatus.AWAITING_APPROVAL,
-        action_results=[
-            ActionResult(
-                incident_id="inc-single-use",
-                action_taken="scale_replicas",
-                tier=ActionTier.TIER_1_AUTO,
-                execution_status="pending_approval",
-                output={"recommended_params": params},
-                proposal_hash=proposal_hash,
-            )
-        ],
-    ))
+    store.save(
+        IncidentRecord(
+            incident_id="inc-single-use",
+            status=IncidentStatus.AWAITING_APPROVAL,
+            action_results=[
+                ActionResult(
+                    incident_id="inc-single-use",
+                    action_taken="scale_replicas",
+                    tier=ActionTier.TIER_1_AUTO,
+                    execution_status="pending_approval",
+                    output={"recommended_params": params},
+                    proposal_hash=proposal_hash,
+                )
+            ],
+        )
+    )
 
     claimed = store.claim_pending_approval(
         "inc-single-use",
@@ -511,12 +517,14 @@ async def test_authentication_uses_gateway_identity() -> None:
 
     import api
 
-    request = Request({
-        "type": "http",
-        "headers": [(b"x-authenticated-user", b"arn:aws:iam::123456789012:role/sre")],
-        "method": "POST",
-        "path": "/",
-    })
+    request = Request(
+        {
+            "type": "http",
+            "headers": [(b"x-authenticated-user", b"arn:aws:iam::123456789012:role/sre")],
+            "method": "POST",
+            "path": "/",
+        }
+    )
     settings = SimpleNamespace(
         app=SimpleNamespace(
             app_env="production",

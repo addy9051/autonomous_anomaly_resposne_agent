@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -110,7 +110,7 @@ class DatadogAdapter(BaseTelemetryAdapter):
         # Upgrading to the recommended V2 API path for production parity
         endpoint = f"{self.base_url}/api/v2/query/timeseries"
         records: list[NormalizedTelemetryRecord] = []
-        
+
         now_ms = int(time.time() * 1000)
         from_ms = now_ms - (int(time_window_seconds) * 1000)
 
@@ -121,16 +121,7 @@ class DatadogAdapter(BaseTelemetryAdapter):
         payload = {
             "data": {
                 "type": "timeseries_request",
-                "attributes": {
-                    "from": from_ms,
-                    "to": now_ms,
-                    "queries": [
-                        {
-                            "data_source": "metrics",
-                            "query": query
-                        }
-                    ]
-                }
+                "attributes": {"from": from_ms, "to": now_ms, "queries": [{"data_source": "metrics", "query": query}]},
             }
         }
 
@@ -168,7 +159,7 @@ class DatadogAdapter(BaseTelemetryAdapter):
                 baseline = sum(all_vals) / len(all_vals) if all_vals else latest_val
 
                 raw_ts_ms = times[-1] if times else now_ms
-                record_dt = datetime.fromtimestamp(raw_ts_ms / 1000.0, tz=timezone.utc)
+                record_dt = datetime.fromtimestamp(raw_ts_ms / 1000.0, tz=UTC)
 
                 # Handle both flag tags and key:value tags
                 parsed_tags = {}
@@ -199,7 +190,6 @@ class DatadogAdapter(BaseTelemetryAdapter):
             raise TelemetrySourceError(f"Datadog response could not be parsed: {exc}") from exc
 
         return records
-
 
     async def stream_signals(
         self,

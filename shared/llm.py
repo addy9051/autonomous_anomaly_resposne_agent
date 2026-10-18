@@ -31,7 +31,9 @@ def get_chat_model(
     try:
         from langchain_openai import ChatOpenAI
     except ImportError:
-        raise ImportError("langchain-openai (OpenAI-compatible client) is required: pip install langchain-openai") from None
+        raise ImportError(
+            "langchain-openai (OpenAI-compatible client) is required: pip install langchain-openai"
+        ) from None
     return ChatOpenAI(
         model=model_name or settings.default_model,
         base_url=check_url(base_url or settings.base_url),

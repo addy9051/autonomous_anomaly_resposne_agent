@@ -8,7 +8,7 @@ and normalizes vector/matrix results into NormalizedTelemetryRecord instances.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -28,6 +28,8 @@ from shared.utils import get_logger
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from shared.config import Settings
+
 logger = get_logger("prometheus_adapter")
 
 
@@ -44,7 +46,7 @@ class PrometheusAdapter(BaseTelemetryAdapter):
         logger.info("prometheus_adapter_initialized", base_url=self.base_url)
 
     @staticmethod
-    def _auth_headers(settings: Any) -> dict[str, str]:
+    def _auth_headers(settings: Settings) -> dict[str, str]:
         token = settings.integration.prometheus_bearer_token
         return {"Authorization": f"Bearer {token}"} if token else {}
 
@@ -69,7 +71,7 @@ class PrometheusAdapter(BaseTelemetryAdapter):
     ) -> list[NormalizedTelemetryRecord]:
         """Fetch multiple metrics for an entity over the lookback window (range query)."""
         records: list[NormalizedTelemetryRecord] = []
-        end = datetime.now(timezone.utc)
+        end = datetime.now(UTC)
         start = end - timedelta(seconds=time_window_seconds)
         step = f"{max(15, time_window_seconds // 30)}s"
         for metric in metric_names:
@@ -86,7 +88,6 @@ class PrometheusAdapter(BaseTelemetryAdapter):
             records.extend(results)
         return records
 
-
     async def query_signal(
         self,
         query: str,
@@ -100,12 +101,8 @@ class PrometheusAdapter(BaseTelemetryAdapter):
         """Execute a PromQL query (instant or range) and normalize the results."""
         # Dynamically determine the endpoint based on parameters
         is_range_query = all([start_time is not None, end_time is not None, step is not None])
-        endpoint = (
-            f"{self.base_url}/api/v1/query_range"
-            if is_range_query
-            else f"{self.base_url}/api/v1/query"
-        )
-        
+        endpoint = f"{self.base_url}/api/v1/query_range" if is_range_query else f"{self.base_url}/api/v1/query"
+
         params: dict[str, Any] = {"query": query}
 
         # Core Fix: Explicitly check for non-None values before adding to params
@@ -122,13 +119,13 @@ class PrometheusAdapter(BaseTelemetryAdapter):
                 data = resp.json()
                 result_type = data.get("data", {}).get("resultType")
                 results = data.get("data", {}).get("result", [])
-                
+
                 for item in results:
                     metric_meta = item.get("metric", {})
                     target_entity = entity or metric_meta.get("service") or metric_meta.get("job") or "unknown"
                     record_metric = metric_name or metric_meta.get("__name__", query.split("{")[0])
                     combined_tags = {**metric_meta, **(tags or {})}
-                    
+
                     # Core Fix: Separate extraction flows for matrix vs vector types
                     samples: list[list[Any]] = []
                     if result_type == "matrix":
@@ -144,9 +141,9 @@ class PrometheusAdapter(BaseTelemetryAdapter):
                         # sample structure -> [unix_timestamp, "value_string"]
                         raw_ts = float(sample[0])
                         val = float(sample[1])
-                        
+
                         # Convert Prometheus unix timestamp directly to timezone-aware datetime
-                        record_dt = datetime.fromtimestamp(raw_ts, tz=timezone.utc)
+                        record_dt = datetime.fromtimestamp(raw_ts, tz=UTC)
 
                         records.append(
                             NormalizedTelemetryRecord(
@@ -174,7 +171,6 @@ class PrometheusAdapter(BaseTelemetryAdapter):
 
         return records
 
-
     async def stream_signals(
         self,
         poll_interval_seconds: float = 5.0,
@@ -185,7 +181,7 @@ class PrometheusAdapter(BaseTelemetryAdapter):
             'rate(http_requests_total{status=~"5.."}[1m])',
             "container_cpu_usage_seconds_total",
         ]
-        
+
         while True:
             for q in queries:
                 try:

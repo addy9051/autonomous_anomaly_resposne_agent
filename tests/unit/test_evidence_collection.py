@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,10 +17,13 @@ from shared.schemas import (
     TelemetrySignalType,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 def _rec(metric: str, ts: int, tags: dict | None = None) -> NormalizedTelemetryRecord:
     return NormalizedTelemetryRecord(
-        timestamp=datetime.fromtimestamp(ts, tz=timezone.utc),
+        timestamp=datetime.fromtimestamp(ts, tz=UTC),
         entity="svc",
         connector_source=TelemetryConnectorSource.PROMETHEUS,
         signal_type=TelemetrySignalType.METRIC,
@@ -28,11 +32,13 @@ def _rec(metric: str, ts: int, tags: dict | None = None) -> NormalizedTelemetryR
         unit="value",
         severity=Severity.LOW,
         tags=tags or {},
-        raw_query=f"{metric}{{service=\"svc\"}}",
+        raw_query=f'{metric}{{service="svc"}}',
     )
 
 
-def _adapter(side_effect) -> MagicMock:
+def _adapter(
+    side_effect: Callable[..., list[NormalizedTelemetryRecord]] | TelemetrySourceError,
+) -> MagicMock:
     adapter = MagicMock()
     adapter.source = TelemetryConnectorSource.PROMETHEUS
     adapter.fetch_signals = AsyncMock(side_effect=side_effect)

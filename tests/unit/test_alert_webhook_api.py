@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
 
 import api
 
+if TYPE_CHECKING:
+    import pytest
 
-def test_webhook_starts_investigation_per_firing_alert(monkeypatch) -> None:
+
+def test_webhook_starts_investigation_per_firing_alert(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = MagicMock()
     incident = MagicMock(incident_id="INC-1")
     fake.process_anomaly = AsyncMock(return_value=incident)

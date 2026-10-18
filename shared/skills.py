@@ -1,9 +1,9 @@
 """
 Procedural memory: a versioned "book of reference" of skills.
 
-A skill is a ``skills/<name>/SKILL.md`` file (legacy flat ``skills/*.md`` also loads) with YAML front matter describing when it applies and a
-body telling the agents how to behave for that trigger (what to gather, which actions are allowed,
-when to escalate, how to report). The router picks skills deterministically from the alert; the
+A skill is a ``skills/<name>/SKILL.md`` file (legacy flat ``skills/*.md`` also loads) with YAML front matter
+describing when it applies and a body telling the agents how to behave for that trigger: what to gather, which actions
+are allowed, when to escalate, and how to report. The router picks skills deterministically from the alert; the
 rendered text is injected into agent prompts. Skills are plain files reviewed in git.
 """
 
@@ -39,9 +39,7 @@ class Skill:
             return False
         if self.severities and severity not in self.severities:
             return False
-        if self.services and not self.services.intersection(services):
-            return False
-        return True
+        return not (self.services and not self.services.intersection(services))
 
 
 def parse_skill(text: str, path: Path | None = None) -> Skill:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,6 +11,9 @@ from agents.action.policy import compute_proposal_hash
 from shared.config import get_settings
 from shared.incident_store import PostgresIncidentStore
 from shared.schemas import ActionResult, ActionTier, IncidentRecord, IncidentStatus
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @pytest.fixture

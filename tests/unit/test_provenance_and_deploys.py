@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -14,6 +15,11 @@ from data_pipeline.connectors.adapters.base import TelemetrySourceError
 from shared.config import get_settings
 from shared.schemas import NormalizedTelemetryRecord, TelemetryConnectorSource
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from shared.config import IntegrationConfig
+
 
 def test_simulator_source_marks_simulated() -> None:
     r = NormalizedTelemetryRecord(entity="s", metric_name="m", value=1.0)
@@ -22,16 +28,22 @@ def test_simulator_source_marks_simulated() -> None:
 
 def test_legacy_tag_marks_simulated() -> None:
     r = NormalizedTelemetryRecord(
-        entity="s", metric_name="m", value=1.0, connector_source=TelemetryConnectorSource.PROMETHEUS,
+        entity="s",
+        metric_name="m",
+        value=1.0,
+        connector_source=TelemetryConnectorSource.PROMETHEUS,
         tags={"is_mock": True},
     )
     assert r.is_simulated is True
 
 
 def test_real_record_not_simulated_and_has_freshness() -> None:
-    old = datetime.now(timezone.utc) - timedelta(seconds=90)
+    old = datetime.now(UTC) - timedelta(seconds=90)
     r = NormalizedTelemetryRecord(
-        entity="s", metric_name="m", value=1.0, timestamp=old,
+        entity="s",
+        metric_name="m",
+        value=1.0,
+        timestamp=old,
         connector_source=TelemetryConnectorSource.PROMETHEUS,
     )
     assert r.is_simulated is False
@@ -49,7 +61,7 @@ def _resp(status: int, body: object) -> MagicMock:
 
 
 @pytest.fixture
-def configured(monkeypatch: pytest.MonkeyPatch):
+def configured(monkeypatch: pytest.MonkeyPatch) -> Iterator[IntegrationConfig]:
     cfg = get_settings().integrations
     monkeypatch.setattr(cfg, "github_deploy_repo", "acme/payments")
     monkeypatch.setattr(cfg, "github_token", "t")
@@ -57,11 +69,17 @@ def configured(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_deployments_filtered_to_window(configured) -> None:
-    now = datetime.now(timezone.utc)
+async def test_deployments_filtered_to_window(configured: IntegrationConfig) -> None:
+    now = datetime.now(UTC)
     items = [
-        {"created_at": (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"), "sha": "abcdef123456",
-         "ref": "main", "environment": "production", "creator": {"login": "dev"}, "url": "http://x/1"},
+        {
+            "created_at": (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "sha": "abcdef123456",
+            "ref": "main",
+            "environment": "production",
+            "creator": {"login": "dev"},
+            "url": "http://x/1",
+        },
         {"created_at": (now - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ"), "sha": "old", "ref": "main"},
     ]
     client = MagicMock()
@@ -74,7 +92,7 @@ async def test_deployments_filtered_to_window(configured) -> None:
 
 
 @pytest.mark.asyncio
-async def test_deployments_http_error_raises(configured) -> None:
+async def test_deployments_http_error_raises(configured: IntegrationConfig) -> None:
     client = MagicMock()
     client.get = AsyncMock(return_value=_resp(403, {}))
     with pytest.raises(TelemetrySourceError):

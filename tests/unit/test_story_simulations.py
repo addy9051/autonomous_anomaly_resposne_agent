@@ -11,7 +11,7 @@ Tests:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -28,7 +28,7 @@ class TestStorySimulationEngine:
 
     def test_generate_bad_deploy_scenario(self) -> None:
         engine = StorySimulationEngine()
-        base_time = datetime(2026, 10, 10, 12, 0, 0, tzinfo=timezone.utc)
+        base_time = datetime(2026, 10, 10, 12, 0, 0, tzinfo=UTC)
         events = engine.generate_bad_deploy_scenario(base_time=base_time)
 
         assert len(events) == 3
@@ -60,7 +60,7 @@ class TestStorySimulationEngine:
 
     def test_generate_database_lock_scenario(self) -> None:
         engine = StorySimulationEngine()
-        base_time = datetime(2026, 10, 10, 12, 0, 0, tzinfo=timezone.utc)
+        base_time = datetime(2026, 10, 10, 12, 0, 0, tzinfo=UTC)
         events = engine.generate_database_lock_scenario(base_time=base_time)
 
         assert len(events) == 3

@@ -9,7 +9,7 @@ If LLM output fails validation, the agent retries up to 3 times with a
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from typing import Any
 
@@ -128,7 +128,7 @@ class AnomalyEvent(BaseModel):
     """
 
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     severity: Severity
     affected_services: list[str]
     anomaly_type: AnomalyType
@@ -157,7 +157,7 @@ class EvidenceRecord(BaseModel):
 
     source: str = Field(..., description="Source system (e.g. prometheus, datadog, k8s, logs)")
     query_or_ref: str = Field(..., description="Query, metric name, or reference identifier")
-    observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    observed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     event_time: datetime | None = None
     freshness_seconds: float | None = None
     metric_name: str | None = None
@@ -187,7 +187,7 @@ class VerificationResult(BaseModel):
     checked_signals: dict[str, Any] = Field(default_factory=dict)
     details: str = ""
     stabilization_seconds: float = 0.0
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─── Diagnosis Agent → Action Agent ─────────────────────────────
@@ -230,12 +230,14 @@ class DiagnosisResult(BaseModel):
 
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     event_id: str = Field(description="Link back to the triggering AnomalyEvent")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     root_cause: str
     root_cause_category: RootCauseCategory
     decision_summary: str = Field(
         default="",
-        description="Responder-facing decision summary: conclusion, evidence references, assumptions, alternatives, next step",
+        description=(
+            "Responder-facing decision summary: conclusion, evidence references, assumptions, alternatives, next step"
+        ),
     )
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     evidence_timeline: list[EvidenceRecord] = Field(default_factory=list)
@@ -267,7 +269,9 @@ class ActionResult(BaseModel):
     incident_id: str
     action_taken: str
     tier: ActionTier
-    execution_status: str  # "success", "failed", "skipped", "pending_approval", "rejected", "policy_denied", "recommend_only"
+    execution_status: (
+        str  # "success", "failed", "skipped", "pending_approval", "rejected", "policy_denied", "recommend_only"
+    )
     execution_time_ms: float = 0.0
     output: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
@@ -280,7 +284,7 @@ class ActionResult(BaseModel):
     proposed_service: str | None = None
     proposed_environment: str | None = None
     slack_thread_ts: str | None = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─── Full Incident Record ───────────────────────────────────────
@@ -294,8 +298,8 @@ class IncidentRecord(BaseModel):
 
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     status: IncidentStatus = IncidentStatus.DETECTED
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     # Phase outputs
     anomaly_event: AnomalyEvent | None = None
@@ -327,6 +331,8 @@ class IncidentRecord(BaseModel):
     handling_branch: str | None = None  # critical_rca | auto_fix | recommend
     skills_used: list[str] = Field(default_factory=list)
     brief: dict[str, Any] | None = None
+
+
 # ─── Normalized Telemetry Schema (Universal Observability API Contract) ─
 
 
@@ -339,7 +345,7 @@ class NormalizedTelemetryRecord(BaseModel):
     """
 
     record_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     entity: str = Field(..., description="Service or infrastructure entity identifier (e.g. payment-service-prod)")
     environment: str = Field(default="production", description="Environment: production, staging, etc.")
     connector_source: TelemetryConnectorSource = Field(
@@ -382,7 +388,7 @@ class NormalizedTelemetryRecord(BaseModel):
         description="Original event_type identifier if migrating from legacy telemetry",
     )
     ingested_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="When this system fetched the record; `timestamp` is when the source observed it",
     )
     is_simulated: bool = Field(
@@ -396,7 +402,7 @@ class NormalizedTelemetryRecord(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _migrate_legacy_telemetry(cls, data: Any) -> Any:
+    def _migrate_legacy_telemetry(cls, data: Any) -> Any:  # noqa: ANN401 - Pydantic before validators accept arbitrary input.
         """Handle legacy constructor arguments for backwards-compatible migration."""
         if isinstance(data, dict):
             if "entity" not in data and "service_name" in data:
@@ -422,7 +428,7 @@ class NormalizedTelemetryRecord(BaseModel):
                 tags = data.setdefault("tags", {})
                 tags.update(payload)
                 if "metric_name" not in data:
-                    numeric_keys = [k for k, v in payload.items() if isinstance(v, (int, float))]
+                    numeric_keys = [k for k, v in payload.items() if isinstance(v, int | float)]
                     if numeric_keys:
                         data["metric_name"] = numeric_keys[0]
                         data["value"] = float(payload[numeric_keys[0]])

@@ -39,7 +39,10 @@ class ExpertAgent:
             from knowledge_base.retrieval.search import HybridSearchService
 
             services = anomaly_context.get("affected_services") or []
-            query = f"{anomaly_context.get('anomaly_type', '')} {' '.join(services)} {str(anomaly_context.get('reasoning', ''))[:200]}"
+            query = (
+                f"{anomaly_context.get('anomaly_type', '')} {' '.join(services)} "
+                f"{str(anomaly_context.get('reasoning', ''))[:200]}"
+            )
             return await HybridSearchService().search(
                 query=query, service_tags=services or None, collections=[self.expert_type, "policy"]
             )

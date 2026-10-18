@@ -10,6 +10,7 @@ Secrets are never returned to the client, only an `is_set` flag.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 from dataclasses import dataclass
@@ -63,9 +64,17 @@ CATALOG: dict[str, ConnectorSpec] = {
         label="Prometheus",
         description="Pull metrics via the HTTP query API (PromQL).",
         fields=(
-            FieldSpec("url", "Server URL", "prometheus_url", required=True, placeholder="https://prometheus.example.com"),
-            FieldSpec("bearer_token", "Bearer token", "prometheus_bearer_token", "password", secret=True,
-                      help="Optional. Only needed if your Prometheus sits behind an auth proxy."),
+            FieldSpec(
+                "url", "Server URL", "prometheus_url", required=True, placeholder="https://prometheus.example.com"
+            ),
+            FieldSpec(
+                "bearer_token",
+                "Bearer token",
+                "prometheus_bearer_token",
+                "password",
+                secret=True,
+                help="Optional. Only needed if your Prometheus sits behind an auth proxy.",
+            ),
         ),
     ),
     "datadog": ConnectorSpec(
@@ -75,7 +84,9 @@ CATALOG: dict[str, ConnectorSpec] = {
         fields=(
             FieldSpec("api_key", "API key", "datadog_api_key", "password", secret=True, required=True),
             FieldSpec("app_key", "Application key", "datadog_app_key", "password", secret=True, required=True),
-            FieldSpec("site", "Site", "datadog_site", placeholder="datadoghq.com", help="e.g. datadoghq.com, datadoghq.eu"),
+            FieldSpec(
+                "site", "Site", "datadog_site", placeholder="datadoghq.com", help="e.g. datadoghq.com, datadoghq.eu"
+            ),
         ),
     ),
     "splunk": ConnectorSpec(
@@ -85,8 +96,14 @@ CATALOG: dict[str, ConnectorSpec] = {
         fields=(
             FieldSpec("host", "Host", "splunk_host", required=True, placeholder="splunk.example.com"),
             FieldSpec("port", "Management port", "splunk_port", "number", placeholder="8089"),
-            FieldSpec("token", "Auth token", "splunk_token", "password", secret=True,
-                      help="Provide a token, or a username and password."),
+            FieldSpec(
+                "token",
+                "Auth token",
+                "splunk_token",
+                "password",
+                secret=True,
+                help="Provide a token, or a username and password.",
+            ),
             FieldSpec("username", "Username", "splunk_username"),
             FieldSpec("password", "Password", "splunk_password", "password", secret=True),
             FieldSpec("verify_ssl", "Verify TLS certificate", "splunk_verify_ssl", "boolean"),
@@ -97,7 +114,7 @@ CATALOG: dict[str, ConnectorSpec] = {
 }
 
 
-def _coerce(spec: FieldSpec, value: Any) -> Any:
+def _coerce(spec: FieldSpec, value: Any) -> Any:  # noqa: ANN401 - connector form data is untrusted JSON.
     if spec.kind == "number":
         return int(value)
     if spec.kind == "boolean":
@@ -129,10 +146,8 @@ class ConnectorConfigStore:
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.state, indent=2), encoding="utf-8")
-        try:
+        with contextlib.suppress(OSError):
             os.chmod(tmp, 0o600)
-        except OSError:
-            pass
         os.replace(tmp, self.path)
 
     # ── apply to live settings ─────────────────────────────────
@@ -157,7 +172,7 @@ class ConnectorConfigStore:
             cfg.enable_live_ingestion = bool(ing["enabled"])
 
     # ── reads ──────────────────────────────────────────────────
-    def _value(self, vendor: str, f: FieldSpec) -> Any:
+    def _value(self, vendor: str, f: FieldSpec) -> Any:  # noqa: ANN401 - values originate in connector JSON/config.
         stored = self.state["values"].get(vendor, {})
         return stored[f.key] if f.key in stored else getattr(get_settings().integration, f.attr)
 

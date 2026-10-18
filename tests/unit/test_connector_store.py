@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from data_pipeline.connectors.connector_store import ConnectorConfigStore
 from shared.config import get_settings
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
+
 
 @pytest.fixture
-def store(tmp_path):
+def store(tmp_path: Path) -> Iterator[ConnectorConfigStore]:
     cfg = get_settings().integration
     snapshot = {k: getattr(cfg, k) for k in type(cfg).model_fields}
     yield ConnectorConfigStore(tmp_path / "state.json")
@@ -17,14 +23,14 @@ def store(tmp_path):
         setattr(cfg, k, v)
 
 
-def test_selection_builds_connector_modes(store) -> None:
+def test_selection_builds_connector_modes(store: ConnectorConfigStore) -> None:
     store.set_selection(["prometheus", "datadog", "prometheus"])
     assert get_settings().integration.telemetry_connector_modes == "prometheus,datadog"
     with pytest.raises(ValueError):
         store.set_selection(["nope"])
 
 
-def test_missing_and_one_of_rules(store) -> None:
+def test_missing_and_one_of_rules(store: ConnectorConfigStore) -> None:
     store.set_credentials("datadog", {"api_key": "a"})
     assert store.missing("datadog") == ["Application key"]
     cfg = get_settings().integration
@@ -36,7 +42,7 @@ def test_missing_and_one_of_rules(store) -> None:
     assert cfg.splunk_port == 8090 and cfg.splunk_verify_ssl is False
 
 
-def test_view_masks_secrets_and_blank_keeps_existing(store) -> None:
+def test_view_masks_secrets_and_blank_keeps_existing(store: ConnectorConfigStore) -> None:
     store.set_credentials("datadog", {"api_key": "secret-1", "app_key": "secret-2"})
     store.set_credentials("datadog", {"api_key": ""})
     assert get_settings().integration.datadog_api_key == "secret-1"
@@ -47,7 +53,7 @@ def test_view_masks_secrets_and_blank_keeps_existing(store) -> None:
     assert next(f for f in dd["fields"] if f["key"] == "api_key")["is_set"] is True
 
 
-def test_persist_and_reload(tmp_path) -> None:
+def test_persist_and_reload(tmp_path: Path) -> None:
     cfg = get_settings().integration
     before = (cfg.telemetry_connector_modes, cfg.datadog_api_key, cfg.enable_live_ingestion, cfg.ingestion_services)
     try:
@@ -66,7 +72,7 @@ def test_persist_and_reload(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_connection_uses_overrides_without_persisting(store) -> None:
+async def test_connection_uses_overrides_without_persisting(store: ConnectorConfigStore) -> None:
     cfg = get_settings().integration
     cfg.datadog_api_key = ""
     cfg.datadog_app_key = ""

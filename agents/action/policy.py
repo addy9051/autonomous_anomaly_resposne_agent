@@ -254,8 +254,7 @@ class DeterministicActionPolicy:
 
     # The workflow registry is the source of truth for execution parameters.
     REQUIRED_PARAMS: dict[str, list[str]] = {
-        name: list(definition["params"])
-        for name, definition in N8N_WORKFLOWS.items()
+        name: list(definition["params"]) for name, definition in N8N_WORKFLOWS.items()
     }
 
     @classmethod
@@ -271,48 +270,44 @@ class DeterministicActionPolicy:
         # 2. Per-action boundary validation
         if action_name == "scale_replicas":
             replicas = params.get("replicas")
-            if replicas is not None:
-                if not isinstance(replicas, int) or replicas < 1 or replicas > 10:
-                    return f"replicas must be an integer between 1 and 10 (received {replicas})"
+            if replicas is not None and (not isinstance(replicas, int) or replicas < 1 or replicas > 10):
+                return f"replicas must be an integer between 1 and 10 (received {replicas})"
 
         elif action_name == "increase_timeout":
             timeout_ms = params.get("new_timeout_ms")
-            if timeout_ms is not None:
-                if not isinstance(timeout_ms, (int, float)) or timeout_ms <= 0 or timeout_ms > 30000:
-                    return f"new_timeout_ms must be positive and <= 30000ms (received {timeout_ms})"
+            if timeout_ms is not None and (
+                not isinstance(timeout_ms, int | float) or timeout_ms <= 0 or timeout_ms > 30000
+            ):
+                return f"new_timeout_ms must be positive and <= 30000ms (received {timeout_ms})"
 
         elif action_name == "update_circuit_breaker":
             thresh = params.get("threshold")
-            if thresh is not None:
-                if not isinstance(thresh, (int, float)) or thresh < 0.01 or thresh > 0.90:
-                    return f"threshold must be between 0.01 and 0.90 (received {thresh})"
+            if thresh is not None and (not isinstance(thresh, int | float) or thresh < 0.01 or thresh > 0.90):
+                return f"threshold must be between 0.01 and 0.90 (received {thresh})"
             timeout_ms = params.get("timeout_ms")
-            if timeout_ms is not None:
-                if not isinstance(timeout_ms, (int, float)) or timeout_ms <= 0 or timeout_ms > 30000:
-                    return f"timeout_ms must be positive and <= 30000ms (received {timeout_ms})"
+            if timeout_ms is not None and (
+                not isinstance(timeout_ms, int | float) or timeout_ms <= 0 or timeout_ms > 30000
+            ):
+                return f"timeout_ms must be positive and <= 30000ms (received {timeout_ms})"
 
         elif action_name == "kill_long_running_queries":
             thresh_sec = params.get("threshold_seconds")
-            if thresh_sec is not None:
-                if not isinstance(thresh_sec, (int, float)) or thresh_sec < 5:
-                    return f"threshold_seconds must be at least 5s (received {thresh_sec})"
+            if thresh_sec is not None and (not isinstance(thresh_sec, int | float) or thresh_sec < 5):
+                return f"threshold_seconds must be at least 5s (received {thresh_sec})"
 
         elif action_name == "throttle_merchant":
             rps = params.get("rate_limit_rps")
-            if rps is not None:
-                if not isinstance(rps, (int, float)) or rps <= 0 or rps > 10000:
-                    return f"rate_limit_rps must be between 1 and 10000 (received {rps})"
+            if rps is not None and (not isinstance(rps, int | float) or rps <= 0 or rps > 10000):
+                return f"rate_limit_rps must be between 1 and 10000 (received {rps})"
 
         elif action_name == "increase_connection_pool":
             max_conn = params.get("new_max_connections")
-            if max_conn is not None:
-                if not isinstance(max_conn, int) or max_conn < 1 or max_conn > 500:
-                    return f"new_max_connections must be an integer between 1 and 500 (received {max_conn})"
+            if max_conn is not None and (not isinstance(max_conn, int) or max_conn < 1 or max_conn > 500):
+                return f"new_max_connections must be an integer between 1 and 500 (received {max_conn})"
 
         elif action_name == "add_rate_limit":
             rps = params.get("rate_limit_rps")
-            if rps is not None:
-                if not isinstance(rps, (int, float)) or rps <= 0 or rps > 100000:
-                    return f"rate_limit_rps must be between 1 and 100000 (received {rps})"
+            if rps is not None and (not isinstance(rps, int | float) or rps <= 0 or rps > 100000):
+                return f"rate_limit_rps must be between 1 and 100000 (received {rps})"
 
         return None

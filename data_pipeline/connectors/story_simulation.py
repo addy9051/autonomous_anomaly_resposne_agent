@@ -12,7 +12,7 @@ Scenarios:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -58,7 +58,7 @@ class StorySimulationEngine:
         T+1 min:  p99 latency spikes from 180ms to 2400ms.
         T+2 mins: HTTP 504 Gateway Timeout error rate spikes to 6.2%.
         """
-        start = base_time or datetime.now(timezone.utc)
+        start = base_time or datetime.now(UTC)
         records: list[NormalizedTelemetryRecord] = []
 
         # Step 1: T=0 - Deployment Event
@@ -145,7 +145,7 @@ class StorySimulationEngine:
         T+1 min:  Database CPU spikes to 99% and connection pool reaches max capacity (100/100).
         T+2 mins: Transaction latency climbs to 3200ms while application server CPU stays low (<20%).
         """
-        start = base_time or datetime.now(timezone.utc)
+        start = base_time or datetime.now(UTC)
         records: list[NormalizedTelemetryRecord] = []
 
         # Step 1: T=0 - Normal steady traffic baseline

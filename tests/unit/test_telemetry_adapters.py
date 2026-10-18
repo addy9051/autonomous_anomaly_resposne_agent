@@ -151,7 +151,7 @@ class TestSplunkAdapter:
 
     @pytest.mark.asyncio
     async def test_bearer_header_carries_token(self) -> None:
-        adapter = SplunkAdapter(token="abc123", password="")
+        adapter = SplunkAdapter(token="abc123", password="")  # noqa: S106 - fixture credential.
         try:
             assert adapter._headers["Authorization"] == "Bearer abc123"
         finally:
@@ -159,7 +159,7 @@ class TestSplunkAdapter:
 
     @pytest.mark.asyncio
     async def test_tls_verification_enabled_by_default(self) -> None:
-        adapter = SplunkAdapter(token="abc123")
+        adapter = SplunkAdapter(token="abc123")  # noqa: S106 - fixture credential.
         try:
             assert SplunkAdapter._tls_verify(get_settings()) is True
         finally:

@@ -225,6 +225,7 @@ class IntegrationConfig(BaseSettings):
     github_deploy_repo: str = ""  # "owner/repo"
     github_deploy_environment: str = "production"
 
+
 class ObservabilityConfig(BaseSettings):
     """Observability and telemetry configuration."""
 
@@ -330,12 +331,12 @@ def get_settings() -> Settings:
 
     # Hosted LangSmith would ship every prompt and response outside the sandbox. LangChain reads these
     # from the process environment (which a dotenv loader may have filled), so enforce the policy there.
-    from shared.egress import EgressViolation, check_url
+    from shared.egress import EgressViolationError, check_url
 
     try:
         check_url(settings.integrations.langchain_endpoint, settings.app)
         langsmith_allowed = True
-    except EgressViolation:
+    except EgressViolationError:
         langsmith_allowed = False
     if not (langsmith_allowed and settings.integrations.langchain_tracing_v2):
         for var in ("LANGCHAIN_TRACING_V2", "LANGCHAIN_TRACING", "LANGSMITH_TRACING"):

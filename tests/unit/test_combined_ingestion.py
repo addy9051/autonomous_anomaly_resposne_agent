@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,9 +14,14 @@ from data_pipeline.connectors.query_templates import resolve_query
 from shared.schemas import NormalizedTelemetryRecord, TelemetryConnectorSource
 
 
-def _rec(value: float, src=TelemetryConnectorSource.PROMETHEUS, offset: int = 0, metric: str = "error_rate"):
+def _rec(
+    value: float,
+    src: TelemetryConnectorSource = TelemetryConnectorSource.PROMETHEUS,
+    offset: int = 0,
+    metric: str = "error_rate",
+) -> NormalizedTelemetryRecord:
     return NormalizedTelemetryRecord(
-        timestamp=datetime.now(timezone.utc) + timedelta(seconds=offset),
+        timestamp=datetime.now(UTC) + timedelta(seconds=offset),
         entity="svc",
         connector_source=src,
         metric_name=metric,
@@ -24,7 +29,11 @@ def _rec(value: float, src=TelemetryConnectorSource.PROMETHEUS, offset: int = 0,
     )
 
 
-def _adapter(src, records=None, error=None):
+def _adapter(
+    src: TelemetryConnectorSource,
+    records: list[NormalizedTelemetryRecord] | None = None,
+    error: str | None = None,
+) -> MagicMock:
     a = MagicMock()
     a.source = src
     if error:

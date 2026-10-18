@@ -11,7 +11,7 @@ Tests all inter-agent API contracts for:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -23,14 +23,12 @@ from shared.schemas import (
     IncidentRecord,
     IncidentStatus,
     MetricsSnapshot,
+    NormalizedTelemetryRecord,
     RecommendedAction,
     RootCauseCategory,
     Severity,
     TelemetryConnectorSource,
-    TelemetryEvent,
-    TelemetryRecord,
     TelemetrySignalType,
-    NormalizedTelemetryRecord,
 )
 
 
@@ -161,11 +159,10 @@ class TestIncidentRecord:
         # Resolve
         incident.status = IncidentStatus.RESOLVED
         incident.auto_resolved = True
-        incident.resolved_at = datetime.now(timezone.utc)
+        incident.resolved_at = datetime.now(UTC)
         incident.time_to_mitigate_seconds = 120.0
         assert incident.auto_resolved
         assert incident.time_to_mitigate_seconds == 120.0
-
 
 
 class TestActionTier:
@@ -216,4 +213,3 @@ class TestNormalizedTelemetryRecord:
         assert record.environment == "production"
         assert record.severity == Severity.MEDIUM
         assert record.tags == {}
-

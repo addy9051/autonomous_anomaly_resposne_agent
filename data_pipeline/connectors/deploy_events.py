@@ -8,7 +8,7 @@ list only when the source is not configured or no deployment falls in the window
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -45,7 +45,7 @@ async def fetch_recent_deployments(
     if cfg.github_token:
         headers["Authorization"] = f"Bearer {cfg.github_token}"
 
-    since = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+    since = datetime.now(UTC) - timedelta(seconds=window_seconds)
     url = f"{GITHUB_API}/repos/{cfg.github_deploy_repo}/deployments"
     params = {"environment": cfg.github_deploy_environment, "per_page": 30}
 

@@ -42,7 +42,13 @@ async def run(limit: int | None, model: str, out: Path) -> int:
             flawed = bool(expect.get("violations") or expect.get("findings"))
             try:
                 v = await judge.score(case)
-                return {"id": case["id"], "flawed": flawed, "overall": v.overall, "scores": v.scores, "why": v.justification}
+                return {
+                    "id": case["id"],
+                    "flawed": flawed,
+                    "overall": v.overall,
+                    "scores": v.scores,
+                    "why": v.justification,
+                }
             except Exception as exc:  # noqa: BLE001 - a bad judge response is a result, not a crash
                 return {"id": case["id"], "flawed": flawed, "error": str(exc)[:200]}
 

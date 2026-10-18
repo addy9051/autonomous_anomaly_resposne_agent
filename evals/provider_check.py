@@ -13,8 +13,10 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from shared.config import LLMConfig
+if TYPE_CHECKING:
+    from shared.config import LLMConfig
 
 _PATTERNS: list[tuple[str, str]] = [
     (r"llama|codellama", "meta"),
@@ -37,7 +39,9 @@ SUGGESTED_JUDGES = ["qwen2.5-72b-instruct", "mistral-large-instruct", "gemma-2-2
 
 
 class JudgeIndependenceError(RuntimeError):
-    def __init__(self, message: str, judge_model: str, provider: str | None, agent_providers: dict[str, str | None]):
+    def __init__(
+        self, message: str, judge_model: str, provider: str | None, agent_providers: dict[str, str | None]
+    ) -> None:
         super().__init__(message)
         self.judge_model = judge_model
         self.provider = provider
@@ -84,14 +88,24 @@ def check_judge_independence(judge_model: str, models: dict[str, str]) -> Indepe
     judge_provider = resolve_provider(judge_model)
     agent_providers = {role: resolve_provider(m) for role, m in models.items()}
     if judge_provider is None:
-        return IndependenceResult(False, None, agent_providers, f"cannot determine the provider of judge model '{judge_model}'")
+        return IndependenceResult(
+            False, None, agent_providers, f"cannot determine the provider of judge model '{judge_model}'"
+        )
     unknown = sorted(r for r, p in agent_providers.items() if p is None)
     if unknown:
-        return IndependenceResult(False, judge_provider, agent_providers, f"cannot determine the provider of agent model(s): {', '.join(unknown)}")
+        return IndependenceResult(
+            False,
+            judge_provider,
+            agent_providers,
+            f"cannot determine the provider of agent model(s): {', '.join(unknown)}",
+        )
     clashes = sorted(r for r, p in agent_providers.items() if p == judge_provider)
     if clashes:
         return IndependenceResult(
-            False, judge_provider, agent_providers, f"judge '{judge_model}' is from provider '{judge_provider}', same as agent(s): {', '.join(clashes)}"
+            False,
+            judge_provider,
+            agent_providers,
+            f"judge '{judge_model}' is from provider '{judge_provider}', same as agent(s): {', '.join(clashes)}",
         )
     return IndependenceResult(True, judge_provider, agent_providers)
 

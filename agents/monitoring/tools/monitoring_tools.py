@@ -13,7 +13,6 @@ Kafka-lag and fraud-signal tools were removed: no real data source backs them.
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import httpx
 import numpy as np

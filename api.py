@@ -19,7 +19,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any, AsyncIterator, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Security
@@ -38,9 +38,15 @@ from data_pipeline.connectors.ingestion import TelemetryIngestionService
 from data_pipeline.connectors.synthetic_producer import SyntheticTelemetryProducer
 from orchestrator import AgentOrchestrator
 from shared.config import get_settings
-from shared.egress import EgressViolation, check_url, guarded_async_client
+from shared.egress import EgressViolationError, check_url, guarded_async_client
 from shared.schemas import ActionPolicyDecision, IncidentStatus, TelemetryEvent
 from shared.utils import LLMCostTracker, get_logger, setup_logging, setup_tracing
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from starlette.middleware.base import RequestResponseEndpoint
+    from starlette.responses import Response
 
 # ─── Global State ────────────────────────────────────────────────
 
@@ -65,10 +71,7 @@ async def lifespan(app: FastAPI) -> Any:  # noqa: ANN401
     from shared.egress import egress_self_test
 
     egress_self_test()
-    heartbeat_enabled = (
-        settings.app.enable_synthetic_heartbeat
-        or settings.app.app_env.lower() == "development"
-    )
+    heartbeat_enabled = settings.app.enable_synthetic_heartbeat or settings.app.app_env.lower() == "development"
 
     async def pulse_heartbeat() -> None:
         while orchestrator is not None:
@@ -160,7 +163,7 @@ def _strip_api_gateway_stage_prefix(path: str, prefix: str) -> str:
 
 
 @app.middleware("http")
-async def strip_api_gateway_stage_prefix(request: Request, call_next: Any) -> Any:
+async def strip_api_gateway_stage_prefix(request: Request, call_next: RequestResponseEndpoint) -> Response:
     prefix = get_settings().app.api_gateway_stage_prefix
     path = request.scope["path"]
     stripped_path = _strip_api_gateway_stage_prefix(path, prefix)
@@ -326,7 +329,7 @@ async def _probe_inference_endpoint(base_url: str, api_key: str) -> str:
             response = await client.get(models_url, headers={"Authorization": f"Bearer {api_key}"})
     except httpx.TimeoutException:
         return "starting"
-    except (EgressViolation, httpx.RequestError, ValueError) as exc:
+    except (EgressViolationError, httpx.RequestError, ValueError) as exc:
         logger.warning("inference_readiness_probe_failed", error=str(exc))
         return "unavailable"
 
@@ -371,12 +374,14 @@ async def process_event(request: ProcessEventRequest, _auth: str = Depends(verif
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
-    event = TelemetryEvent.model_validate({
-        "source": request.source,
-        "service_name": request.service_name,
-        "event_type": request.event_type,
-        "payload": request.payload,
-    })
+    event = TelemetryEvent.model_validate(
+        {
+            "source": request.source,
+            "service_name": request.service_name,
+            "event_type": request.event_type,
+            "payload": request.payload,
+        }
+    )
 
     incident = await orchestrator.process_event(event, dry_run=True)
 
@@ -462,7 +467,7 @@ async def run_scenario(
     try:
         events = engine.get_scenario_events(scenario_name)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     incidents = await orchestrator.run_batch(events, dry_run=dry_run)
 
@@ -472,7 +477,6 @@ async def run_scenario(
         "incidents_detected": len(incidents),
         "incidents": [inc.model_dump(mode="json") for inc in incidents],
     }
-
 
 
 @app.post("/api/v1/stream/start", tags=["Streaming"])
@@ -586,9 +590,7 @@ async def test_connector(
 
 
 @app.post("/api/v1/connectors/activate", tags=["Connectors"])
-async def activate_ingestion(
-    request: IngestionActivationRequest, _auth: str = Depends(verify_auth)
-) -> dict[str, Any]:
+async def activate_ingestion(request: IngestionActivationRequest, _auth: str = Depends(verify_auth)) -> dict[str, Any]:
     """Build CONNECTOR_MODES from the selection and (re)start combined live ingestion."""
     try:
         connector_store.set_ingestion(
@@ -684,8 +686,7 @@ async def get_performance_metrics(
     incidents = orchestrator.store.list_since(datetime.now(UTC) - duration, limit=5000)
     total = len(incidents)
     recovered = sum(
-        incident.status in {IncidentStatus.VERIFIED_RECOVERED, IncidentStatus.RESOLVED}
-        for incident in incidents
+        incident.status in {IncidentStatus.VERIFIED_RECOVERED, IncidentStatus.RESOLVED} for incident in incidents
     )
     auto_resolved = sum(incident.auto_resolved for incident in incidents)
     overridden = sum(incident.human_overrode for incident in incidents)
@@ -848,12 +849,12 @@ async def stream_incident_updates(
             }
             signature_payload = [
                 (item.incident_id, item.status.value, item.updated_at.isoformat())
-                for item in sorted({item.incident_id: item for item in [*active, *recent]}.values(),
-                                   key=lambda incident: incident.incident_id)
+                for item in sorted(
+                    {item.incident_id: item for item in [*active, *recent]}.values(),
+                    key=lambda incident: incident.incident_id,
+                )
             ]
-            signature = hashlib.sha256(
-                json.dumps(signature_payload, separators=(",", ":")).encode("utf-8")
-            ).hexdigest()
+            signature = hashlib.sha256(json.dumps(signature_payload, separators=(",", ":")).encode("utf-8")).hexdigest()
             if signature != last_signature:
                 yield f"event: snapshot\ndata: {json.dumps(snapshot, default=str)}\n\n"
                 last_signature = signature
@@ -946,11 +947,7 @@ async def approve_tier2_action(
         detail = f"Incident is in status '{incident.status.value}', expected one of {expected}"
         raise HTTPException(status_code=400, detail=detail)
 
-    pending_actions = [
-        action
-        for action in incident.action_results
-        if action.execution_status == "pending_approval"
-    ]
+    pending_actions = [action for action in incident.action_results if action.execution_status == "pending_approval"]
     if len(pending_actions) != 1:
         raise HTTPException(status_code=409, detail="Incident must have exactly one pending action proposal.")
     proposal = pending_actions[0]
@@ -1052,9 +1049,7 @@ async def approve_tier2_action(
             "execution_status": action_result.execution_status,
             "incident_status": incident.status.value,
             "verification": (
-                incident.verification_result.model_dump(mode="json")
-                if incident.verification_result
-                else None
+                incident.verification_result.model_dump(mode="json") if incident.verification_result else None
             ),
         },
     )

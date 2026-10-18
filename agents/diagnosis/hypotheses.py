@@ -50,7 +50,7 @@ def _to_record(e: dict[str, Any]) -> EvidenceRecord:
     )
 
 
-def _resolve(ids: Any, evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _resolve(ids: object, evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not isinstance(ids, list):
         return []
     valid: dict[str, dict[str, Any]] = {}
