@@ -97,6 +97,30 @@ npm install
 npm run dev
 ```
 
+### Screenshots
+
+Full-page captures of the light-theme dashboard (1440px wide, local dev data).
+
+**Command center (SRE triage, incident detail with feedback control)**
+
+![Command center](docs/screenshots/command-center.png)
+
+**Agent performance (AI product view with governance audit log)**
+
+![Agent performance](docs/screenshots/agent-performance.png)
+
+**Audit trail**
+
+![Audit trail](docs/screenshots/audit-trail.png)
+
+**Autonomy policy**
+
+![Autonomy policy](docs/screenshots/policies.png)
+
+**Data connectors**
+
+![Data connectors](docs/screenshots/connectors.png)
+
 ## Quick start
 
 Prerequisites: Python 3.11+, Docker Desktop, Node.js 18+, and an OpenAI-compatible inference server (vLLM) reachable from the app. Without a local GPU, use the Modal dev servers below.
