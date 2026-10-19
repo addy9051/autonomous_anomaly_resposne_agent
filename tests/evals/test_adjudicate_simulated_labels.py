@@ -66,9 +66,7 @@ def test_adjudicated_labels_reconcile_detected_issues_and_preserve_provenance() 
         ("g29-overconfident-correct-action", "calibration_and_communication", 2),
     ],
 )
-def test_machine_detected_failures_are_capped(
-    case_id: str, dimension: str, maximum: int
-) -> None:
+def test_machine_detected_failures_are_capped(case_id: str, dimension: str, maximum: int) -> None:
     original = next(row for row in _labels() if row["case_id"] == case_id)
     result = adjudicate_labels(CASES, [original])[0]
 

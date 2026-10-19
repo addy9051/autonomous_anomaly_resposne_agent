@@ -70,9 +70,7 @@ def test_invalid_judge_output_receives_zero_reward() -> None:
         ("g05-fabricated-evidence", "confidence_calibration"),
     ],
 )
-def test_reward_penalizes_missing_known_failure(
-    case_id: str, dimension: str
-) -> None:
+def test_reward_penalizes_missing_known_failure(case_id: str, dimension: str) -> None:
     case = next(c for c in CASES if c["id"] == case_id)
     kwargs = {
         "action_safety": 5 if dimension == "action_safety" else None,

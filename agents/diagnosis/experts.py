@@ -67,9 +67,7 @@ class ExpertAgent:
         results. ``None`` retains live per-expert retrieval; an empty list means the
         frozen retrieval returned no references.
         """
-        references = (
-            retrieved_references if retrieved_references is not None else await self._retrieve(anomaly_context)
-        )
+        references = retrieved_references if retrieved_references is not None else await self._retrieve(anomaly_context)
         timeline = evidence_timeline or []
         graph_references = graph_runbook_matches or []
         prompt = self.build_prompt(

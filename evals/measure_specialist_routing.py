@@ -110,9 +110,7 @@ def evaluate_routing(labels: dict[str, Any], predictions: dict[str, Any]) -> dic
     micro_precision = micro_tp / total_dispatched if total_dispatched else 0.0
     micro_recall = micro_tp / total_required if total_required else 0.0
     micro_f1 = (
-        2 * micro_precision * micro_recall / (micro_precision + micro_recall)
-        if micro_precision + micro_recall
-        else 0.0
+        2 * micro_precision * micro_recall / (micro_precision + micro_recall) if micro_precision + micro_recall else 0.0
     )
     return {
         "label_set": labels.get("label_set", "unspecified"),
@@ -138,9 +136,7 @@ def evaluate_routing(labels: dict[str, Any], predictions: dict[str, Any]) -> dic
             "missed_case_rate": missed_cases / len(label_rows) if label_rows else 0.0,
             "unnecessary_dispatches": total_unnecessary,
             "total_dispatches": total_dispatched,
-            "unnecessary_dispatch_rate_per_dispatch": total_unnecessary / total_dispatched
-            if total_dispatched
-            else 0.0,
+            "unnecessary_dispatch_rate_per_dispatch": total_unnecessary / total_dispatched if total_dispatched else 0.0,
             "cases_with_unnecessary_dispatch": false_dispatch_cases,
             "unnecessary_dispatch_case_rate": false_dispatch_cases / len(label_rows) if label_rows else 0.0,
             "none_required_cases": none_cases,

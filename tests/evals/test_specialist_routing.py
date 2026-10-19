@@ -89,7 +89,7 @@ def test_event_adapter_uses_issue_and_evidence_but_not_agent_output() -> None:
 def test_supervisor_response_parser_matches_application_fallback() -> None:
     assert _parse_dispatched_experts('```json\n["database_expert"]\n```') == (["database_expert"], None)
     assert _parse_dispatched_experts("not JSON") == (["application_expert"], "invalid_json")
-    assert _parse_dispatched_experts('```json\n[]\n```') == (
+    assert _parse_dispatched_experts("```json\n[]\n```") == (
         ["application_expert"],
         "no_dispatchable_expert",
     )
@@ -105,8 +105,4 @@ def test_researched_labels_cover_golden_cases_without_label_leakage() -> None:
     assert labels["label_set"] == "web_researched_provisional"
     assert labels["label_policy"]["input_boundary"].find("do not use agent_output") >= 0
     assert {row["case_id"] for row in labels["cases"]} == case_ids
-    assert all(
-        source in labels["sources"]
-        for row in labels["cases"]
-        for source in row.get("sources", [])
-    )
+    assert all(source in labels["sources"] for row in labels["cases"] for source in row.get("sources", []))

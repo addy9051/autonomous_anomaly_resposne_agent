@@ -70,9 +70,7 @@ async def test_expert_uses_frozen_shared_and_domain_references() -> None:
 async def test_supervisor_forwards_identical_graph_context_to_selected_expert(monkeypatch: pytest.MonkeyPatch) -> None:
     from agents.diagnosis import experts, graph
 
-    fake_llm = SimpleNamespace(
-        ainvoke=AsyncMock(return_value=SimpleNamespace(content='["database_expert"]'))
-    )
+    fake_llm = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(content='["database_expert"]')))
     monkeypatch.setattr(graph, "get_chat_model", lambda **_: fake_llm)
     investigator = AsyncMock(
         return_value={"agent_type": "database", "findings": "report", "confidence": 0.75, "evidence": {}}

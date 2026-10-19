@@ -134,9 +134,7 @@ async def _retrieve_snapshot(search: HybridSearchService, case: dict[str, Any]) 
         domain_refs[expert_type] = [ref.model_dump(mode="json") for ref in refs]
 
     timeline, gathered_context = _render_case_context(case)
-    selected_skills = get_skill_router().select(
-        event.anomaly_type.value, event.severity.value, event.affected_services
-    )
+    selected_skills = get_skill_router().select(event.anomaly_type.value, event.severity.value, event.affected_services)
     return {
         "case_id": case["id"],
         "anomaly_event": anomaly,
@@ -339,9 +337,7 @@ async def run_reports(cases: list[dict[str, Any]], concurrency: int, limit: int 
 
     snapshot_by_id = {item["case_id"]: item for item in snapshots}
     graded = []
-    for completed in asyncio.as_completed(
-        [grade(record, snapshot_by_id[record["case_id"]]) for record in generated]
-    ):
+    for completed in asyncio.as_completed([grade(record, snapshot_by_id[record["case_id"]]) for record in generated]):
         graded.append(await completed)
         if len(graded) % 8 == 0:
             payload["reports"] = graded
@@ -361,9 +357,7 @@ async def run_reports(cases: list[dict[str, Any]], concurrency: int, limit: int 
     )
     payload["assessment_summary"] = {
         "overall": {
-            key: _mean(
-                [record["assessment"][key] for record in graded if record.get("assessment") is not None]
-            )
+            key: _mean([record["assessment"][key] for record in graded if record.get("assessment") is not None])
             for key in score_keys
         },
         "per_expert": {
@@ -407,9 +401,7 @@ async def run_reports(cases: list[dict[str, Any]], concurrency: int, limit: int 
                 },
             }
             for relevant in (True, False)
-            for rows in [
-                [record for record in graded if record["expected_relevant_by_provisional_label"] is relevant]
-            ]
+            for rows in [[record for record in graded if record["expected_relevant_by_provisional_label"] is relevant]]
         },
         "assessment_error_count": sum(
             record.get("assessment") is None or bool(record.get("assessment_field_errors")) for record in graded
@@ -503,9 +495,7 @@ async def run_synthesis(report_payload: dict[str, Any], concurrency: int, limit:
     case_by_id = {case["id"]: case for case in cases_payload}
     snapshots = [s for s in report_payload["snapshots"] if s["case_id"] in case_by_id]
     if len(snapshots) < 2:
-        raise ValueError(
-            "Synthesis comparisons require at least two cases to construct a cross-incident stale report."
-        )
+        raise ValueError("Synthesis comparisons require at least two cases to construct a cross-incident stale report.")
     report_index = {(r["case_id"], r["expert"]): r for r in report_payload["reports"]}
     labels_payload = json.loads(LABELS_PATH.read_text(encoding="utf-8"))
     required_by_id = {item["case_id"]: set(item["required_experts"]) for item in labels_payload["cases"]}
@@ -527,9 +517,7 @@ async def run_synthesis(report_payload: dict[str, Any], concurrency: int, limit:
         relevant = {EXPERTS[key][1]: report_for(case_id, key) for key in EXPERTS if key in required}
         irrelevant_keys = [key for key in EXPERTS if key not in required]
         irrelevant_key = irrelevant_keys[index % len(irrelevant_keys)] if irrelevant_keys else None
-        irrelevant = (
-            {EXPERTS[irrelevant_key][1]: report_for(case_id, irrelevant_key)} if irrelevant_key else {}
-        )
+        irrelevant = {EXPERTS[irrelevant_key][1]: report_for(case_id, irrelevant_key)} if irrelevant_key else {}
         source_case_id = ordered_ids[(index + 1) % len(ordered_ids)]
         stale_key = next((key for key in EXPERTS if key in required), next(iter(EXPERTS)))
         stale = report_for(source_case_id, stale_key)
@@ -562,9 +550,7 @@ async def run_synthesis(report_payload: dict[str, Any], concurrency: int, limit:
             f"{DIAGNOSIS_SYSTEM_PROMPT}\n\n## Procedural skills (follow these)\n{state.get('skills_text', '')}"
         )
         async with semaphore:
-            response = await llm.ainvoke(
-                [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
-            )
+            response = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=prompt)])
         raw = str(response.content)
         result = _parse_diagnosis_response(raw, snapshot["anomaly_event"], state)  # type: ignore[arg-type]
         return {
@@ -602,11 +588,7 @@ async def run_synthesis(report_payload: dict[str, Any], concurrency: int, limit:
                 existing_results[key] = record
 
     synthesis_results = list(existing_results.values())
-    pending = [
-        item
-        for item in planned
-        if (item[0]["case_id"], item[1]) not in existing_results
-    ]
+    pending = [item for item in planned if (item[0]["case_id"], item[1]) not in existing_results]
     print(f"Reusing {len(existing_results)} matching synthesis results; generating {len(pending)}.")
     for completed in asyncio.as_completed([synthesize(*item) for item in pending]):
         synthesis_results.append(await completed)
@@ -733,23 +715,17 @@ async def run_synthesis(report_payload: dict[str, Any], concurrency: int, limit:
         if isinstance(record.get("assessment"), dict) and not record.get("assessment_field_errors")
     }
     pending_assessments = [
-        record
-        for record in synthesis_results
-        if (record["case_id"], record["variant"]) not in assessment_by_key
+        record for record in synthesis_results if (record["case_id"], record["variant"]) not in assessment_by_key
     ]
     print(f"Reusing {len(assessment_by_key)} valid assessments; grading {len(pending_assessments)}.")
     for completed in asyncio.as_completed(
-        [
-            grade_synthesis(record, snapshot_by_id[record["case_id"]])
-            for record in pending_assessments
-        ]
+        [grade_synthesis(record, snapshot_by_id[record["case_id"]]) for record in pending_assessments]
     ):
         assessed_record = await completed
         assessment_by_key[(assessed_record["case_id"], assessed_record["variant"])] = assessed_record
         if len(assessment_by_key) % 8 == 0:
             progress_results = [
-                assessment_by_key.get((record["case_id"], record["variant"]), record)
-                for record in synthesis_results
+                assessment_by_key.get((record["case_id"], record["variant"]), record) for record in synthesis_results
             ]
             _write_json(
                 SYNTHESIS_PATH,
@@ -766,10 +742,7 @@ async def run_synthesis(report_payload: dict[str, Any], concurrency: int, limit:
                     "results": progress_results,
                 },
             )
-    assessed = [
-        assessment_by_key[(record["case_id"], record["variant"])]
-        for record in synthesis_results
-    ]
+    assessed = [assessment_by_key[(record["case_id"], record["variant"])] for record in synthesis_results]
     assessed.sort(key=lambda record: (record["case_id"], variant_order[record["variant"]]))
     score_keys = (
         "root_cause_supported",
@@ -782,9 +755,7 @@ async def run_synthesis(report_payload: dict[str, Any], concurrency: int, limit:
         "schema_version": 1,
         "evaluation": "controlled_specialist_synthesis_comparison",
         "status": "complete_with_assessment_warnings"
-        if any(
-            record.get("assessment") is None or record.get("assessment_field_errors") for record in assessed
-        )
+        if any(record.get("assessment") is None or record.get("assessment_field_errors") for record in assessed)
         else "complete",
         "models": {
             "synthesis": settings.diagnosis_agent_model,
@@ -824,9 +795,7 @@ async def run_synthesis(report_payload: dict[str, Any], concurrency: int, limit:
                     )
                     for key in score_keys
                 },
-                "action_violation_count": sum(
-                    bool(row["deterministic_checks"]["action_violations"]) for row in rows
-                ),
+                "action_violation_count": sum(bool(row["deterministic_checks"]["action_violations"]) for row in rows),
                 "production_policy_denied_count": sum(
                     any(
                         check["decision"] == "denied"
@@ -852,9 +821,7 @@ async def run_synthesis(report_payload: dict[str, Any], concurrency: int, limit:
                     for row in rows
                     if row.get("assessment") is not None
                 ),
-                "unsupported_claims_unscored_count": sum(
-                    bool(row.get("assessment_field_errors")) for row in rows
-                ),
+                "unsupported_claims_unscored_count": sum(bool(row.get("assessment_field_errors")) for row in rows),
             }
             for variant in sorted({record["variant"] for record in assessed})
             for rows in [[record for record in assessed if record["variant"] == variant]]
