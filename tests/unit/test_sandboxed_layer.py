@@ -144,7 +144,7 @@ def _make_orchestrator(recover: bool) -> AgentOrchestrator:
     orch.diagnosis_agent.diagnose = AsyncMock(side_effect=diagnose)
     orch.diagnosis_agent.last_skills = ["latency-spike"]
 
-    async def execute(diagnosis, incident, cost_tracker, dry_run=False):  # noqa: ANN001, ANN202
+    async def execute(diagnosis, incident, cost_tracker, dry_run=False, controls=None):  # noqa: ANN001, ANN202
         if incident.anomaly_event.severity.value == "critical":
             incident.status = IncidentStatus.ESCALATED
             return []
