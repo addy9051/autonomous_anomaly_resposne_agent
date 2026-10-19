@@ -65,3 +65,5 @@ tfplan*
 
 # ─── Agent Skills ───────────────────────────────────────────────
 *.agents
+
+models/flashrank/

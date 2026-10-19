@@ -3,9 +3,9 @@ Hybrid Search API for RAG Retrieval.
 
 Implements:
 1. Dense vector search (cosine similarity via pgvector)
-2. Sparse BM25 keyword search (via PostgreSQL full-text)
-3. Reciprocal Rank Fusion (RRF) to merge results
-4. Cross-encoder reranking for contextual compression
+2. Sparse Okapi BM25 keyword search (knowledge_base/retrieval/bm25.py)
+3. Local FlashRank cross-encoder rerank of the vector + BM25 candidate union (knowledge_base/retrieval/rerank.py)
+4. Weighted Reciprocal Rank Fusion (RRF) over vector, BM25 and reranker rankings
 5. Metadata pre-filtering by service_tags
 """
 
@@ -16,6 +16,8 @@ from typing import Any
 import asyncpg
 from opentelemetry import trace
 
+from knowledge_base.retrieval.bm25 import BM25Corpus
+from knowledge_base.retrieval.rerank import get_reranker
 from shared.config import get_settings
 from shared.llm import get_embeddings
 from shared.schemas import RunbookReference
@@ -69,32 +71,42 @@ class HybridSearchService:
 
         conn = await asyncpg.connect(self.settings.data.rag_dsn, statement_cache_size=0)
         try:
+            rerank_on = self.settings.agent.rag_rerank_enabled
+            per_leg = max(self.settings.agent.rag_candidates_per_leg, k) if rerank_on else k * 2
+
             # 1. Dense vector search
-            vector_results = await self._vector_search(conn, query_embedding, service_tags, k * 2, collections)
+            vector_results = await self._vector_search(conn, query_embedding, service_tags, per_leg, collections)
 
             # 2. Sparse keyword search
-            keyword_results = await self._keyword_search(conn, query, service_tags, k * 2, collections)
+            keyword_results = await self._keyword_search(conn, query, service_tags, per_leg, collections)
 
-            # 3. Reciprocal Rank Fusion
-            fused = self._reciprocal_rank_fusion(vector_results, keyword_results, k=60)
+            candidate_ids = list(dict.fromkeys(d for d, _ in [*vector_results, *keyword_results]))
+            docs_map = await self._get_documents(conn, candidate_ids)
 
-            # 4. Take a larger pool of RRF results, fetch documents, and (optionally) rerank
-            pool_size = k * 3
-            top_fused = fused[:pool_size]
+            # 3. Local cross-encoder rerank of the union of candidates (falls back to 2-way RRF on failure)
+            rerank_results: list[tuple[str, float]] = []
+            if rerank_on and docs_map:
+                rerank_results = self._rerank(query, docs_map)
 
-            docs_map = {}
-            for doc_id, rrf_score in top_fused:
-                doc = await self._get_document(conn, doc_id)
-                if doc:
-                    docs_map[doc_id] = {"doc": doc, "initial_score": rrf_score}
+            # 4. Reciprocal Rank Fusion over vector + BM25 (+ reranker)
+            if rerank_results:
+                fused = self._reciprocal_rank_fusion(
+                    vector_results,
+                    keyword_results,
+                    rerank_results,
+                    k=60,
+                    weights=[1.0, 1.0, self.settings.agent.rag_rerank_weight],
+                )
+            else:
+                fused = self._reciprocal_rank_fusion(vector_results, keyword_results, k=60)
+            top_fused = fused[:k]
 
             references = []
 
             if docs_map:
-                # Pure RRF scoring (no external reranker: the sandbox has no internet egress)
-                for doc_id, rrf_score in top_fused[:k]:
+                for doc_id, rrf_score in top_fused:
                     if doc_id in docs_map:
-                        doc = docs_map[doc_id]["doc"]
+                        doc = docs_map[doc_id]
                         references.append(
                             RunbookReference(
                                 runbook_id=f"runbook://{doc['source']}/{doc['doc_id']}",
@@ -163,45 +175,68 @@ class HybridSearchService:
         limit: int,
         collections: list[str] | None = None,
     ) -> list[tuple[str, float]]:
-        """Sparse keyword search using PostgreSQL trigram similarity."""
+        """Sparse keyword search using Okapi BM25.
+
+        Term statistics (IDF, average length) come from the whole table so scores do not shift with the
+        filters; only eligible documents are ranked. The corpus is a small runbook set, so it is scored
+        in-process rather than in SQL.
+        """
         rows = await conn.fetch(
             """
-            SELECT doc_id, similarity(content, $1) AS sim
+            SELECT doc_id, title, content,
+                   (($1::text[] IS NULL OR service_tags && $1)
+                    AND ($2::text[] IS NULL OR collection = ANY($2))) AS eligible
             FROM documents
-            WHERE ($2::text[] IS NULL OR service_tags && $2)
-              AND ($3::text[] IS NULL OR collection = ANY($3))
-              AND similarity(content, $1) > 0.1
-            ORDER BY sim DESC
-            LIMIT $4
             """,
-            query,
             service_tags or None,
             collections or None,
-            limit,
         )
-
-        return [(row["doc_id"], float(row["sim"])) for row in rows]
+        corpus = BM25Corpus.build({row["doc_id"]: f"{row['title']} {row['content']}" for row in rows})
+        eligible_ids = [row["doc_id"] for row in rows if row["eligible"]]
+        return corpus.rank(query, eligible_ids, limit)
 
     def _reciprocal_rank_fusion(
         self,
         *result_lists: list[tuple[str, float]],
         k: int = 60,
+        weights: list[float] | None = None,
     ) -> list[tuple[str, float]]:
         """
         Merge multiple ranked lists using Reciprocal Rank Fusion.
-        RRF score = sum(1 / (k + rank)) across all lists.
+        RRF score = sum(weight / (k + rank)) across all lists (weights default to 1.0).
         """
         scores: dict[str, float] = {}
 
-        for result_list in result_lists:
+        for i, result_list in enumerate(result_lists):
+            weight = weights[i] if weights else 1.0
             for rank, (doc_id, _) in enumerate(result_list):
                 if doc_id not in scores:
                     scores[doc_id] = 0.0
-                scores[doc_id] += 1.0 / (k + rank + 1)
+                scores[doc_id] += weight / (k + rank + 1)
 
         # Sort by RRF score descending
         sorted_results = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         return sorted_results
+
+    def _rerank(self, query: str, docs: dict[str, dict[str, Any]]) -> list[tuple[str, float]]:
+        """Rerank candidate documents; returns [] (so callers fall back to RRF) if the reranker fails."""
+        try:
+            reranker = get_reranker(self.settings.agent.rag_rerank_model, self.settings.agent.rag_rerank_cache_dir)
+            passages = {doc_id: f"{d['title']}\n{d['content']}" for doc_id, d in docs.items()}
+            return reranker.rerank(query, passages)
+        except Exception as e:
+            logger.warning("rerank_failed_falling_back_to_rrf", error=str(e))
+            return []
+
+    async def _get_documents(self, conn: asyncpg.Connection, doc_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Fetch several documents at once, keyed by doc_id."""
+        if not doc_ids:
+            return {}
+        rows = await conn.fetch(
+            "SELECT doc_id, title, source, content, metadata, service_tags FROM documents WHERE doc_id = ANY($1)",
+            doc_ids,
+        )
+        return {row["doc_id"]: dict(row) for row in rows}
 
     async def _get_document(self, conn: asyncpg.Connection, doc_id: str) -> dict[str, Any] | None:
         """Fetch document details by doc_id."""

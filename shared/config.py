@@ -115,6 +115,11 @@ class AgentConfig(BaseSettings):
     max_llm_retries: int = 3
     rag_top_k: int = 5
     rag_similarity_threshold: float = 0.75
+    rag_candidates_per_leg: int = 50
+    rag_rerank_enabled: bool = True
+    rag_rerank_model: str = "ms-marco-TinyBERT-L-2-v2"
+    rag_rerank_cache_dir: str = "models/flashrank"
+    rag_rerank_weight: float = 1.0
     embedding_chunk_size: int = 512
     embedding_chunk_overlap: int = 64
     stabilization_window_seconds: float = Field(
