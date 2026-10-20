@@ -26,6 +26,17 @@ from shared.utils import get_logger, get_tracer
 logger = get_logger("hybrid_search")
 tracer = get_tracer()
 
+# Poisoning controls applied inside every retrieval query, so unsafe rows never reach fusion or the reranker.
+# $a = exclude untrusted (bool), $b = guard_score ceiling (real, NULL disables). Unscored rows (NULL) pass.
+_SAFETY_SQL = (
+    "(NOT ${a}::bool OR COALESCE(metadata->>'trust_tier', '') <> 'untrusted') "
+    "AND (${b}::real IS NULL OR guard_score IS NULL OR guard_score < ${b}::real)"
+)
+
+
+def _safety(a: int, b: int) -> str:
+    return _SAFETY_SQL.replace("{a}", str(a)).replace("{b}", str(b))
+
 
 class HybridSearchService:
     """
@@ -141,6 +152,10 @@ class HybridSearchService:
         finally:
             await conn.close()
 
+    def _safety_args(self) -> tuple[bool, float | None]:
+        agent = self.settings.agent
+        return agent.rag_exclude_untrusted, agent.rag_guard_threshold
+
     async def _vector_search(
         self,
         conn: asyncpg.Connection,
@@ -152,18 +167,20 @@ class HybridSearchService:
         """Dense vector search using pgvector cosine similarity."""
         embedding_str = str(query_embedding)
         rows = await conn.fetch(
-            """
+            f"""
             SELECT doc_id, 1 - (embedding <=> $1::vector) AS similarity
             FROM documents
             WHERE ($2::text[] IS NULL OR service_tags && $2)
               AND ($3::text[] IS NULL OR collection = ANY($3))
+              AND {_safety(5, 6)}
             ORDER BY embedding <=> $1::vector
             LIMIT $4
-            """,
+            """,  # noqa: S608 - interpolated fragments are constants with integer placeholders
             embedding_str,
             service_tags or None,
             collections or None,
             limit,
+            *self._safety_args(),
         )
 
         return [(row["doc_id"], float(row["similarity"])) for row in rows]
@@ -210,19 +227,21 @@ class HybridSearchService:
         """BM25 ranking in the pg_search index (migration 005). The query is tokenized server-side and the
         collection filter runs inside the index scan, so no table is loaded into Python."""
         rows = await conn.fetch(
-            """
+            f"""
             SELECT doc_id, pdb.score(id) AS score
             FROM documents
             WHERE (title ||| $1::text OR content ||| $1::text)
               AND ($2::text[] IS NULL OR service_tags && $2)
               AND ($3::text[] IS NULL OR collection = ANY($3))
+              AND {_safety(5, 6)}
             ORDER BY pdb.score(id) DESC
             LIMIT $4
-            """,
+            """,  # noqa: S608
             query,
             service_tags or None,
             collections or None,
             limit,
+            *self._safety_args(),
         )
         return [(row["doc_id"], float(row["score"])) for row in rows]
 
@@ -240,14 +259,16 @@ class HybridSearchService:
         filters; only eligible documents are ranked.
         """
         rows = await conn.fetch(
-            """
+            f"""
             SELECT doc_id, title, content,
                    (($1::text[] IS NULL OR service_tags && $1)
-                    AND ($2::text[] IS NULL OR collection = ANY($2))) AS eligible
+                    AND ($2::text[] IS NULL OR collection = ANY($2))
+                    AND {_safety(3, 4)}) AS eligible
             FROM documents
-            """,
+            """,  # noqa: S608
             service_tags or None,
             collections or None,
+            *self._safety_args(),
         )
         corpus = BM25Corpus.build({row["doc_id"]: f"{row['title']} {row['content']}" for row in rows})
         eligible_ids = [row["doc_id"] for row in rows if row["eligible"]]

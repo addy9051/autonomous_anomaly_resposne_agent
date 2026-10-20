@@ -31,7 +31,9 @@ class FakeConn:
 
 def _svc(backend: str) -> HybridSearchService:
     svc = HybridSearchService.__new__(HybridSearchService)
-    svc.settings = SimpleNamespace(agent=SimpleNamespace(rag_bm25_backend=backend))  # type: ignore[assignment]
+    svc.settings = SimpleNamespace(  # type: ignore[assignment]
+        agent=SimpleNamespace(rag_bm25_backend=backend, rag_exclude_untrusted=True, rag_guard_threshold=0.5)
+    )
     svc._paradedb_unavailable = False
     return svc
 

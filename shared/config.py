@@ -128,6 +128,17 @@ class AgentConfig(BaseSettings):
             "table in Python, 'auto' tries ParadeDB and falls back to in-process if pg_search is missing."
         ),
     )
+    rag_exclude_untrusted: bool = Field(
+        default=True,
+        description="Never retrieve documents whose metadata trust_tier is 'untrusted' (poisoning control).",
+    )
+    rag_guard_threshold: float | None = Field(
+        default=0.5,
+        description=(
+            "Exclude documents whose stored guard_score (ingest-time classifier) is >= this value. Unscored "
+            "documents (NULL) are kept. Set to null to disable."
+        ),
+    )
     embedding_chunk_size: int = 512
     embedding_chunk_overlap: int = 64
     stabilization_window_seconds: float = Field(

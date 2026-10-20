@@ -78,8 +78,9 @@ class JevGuard:
         self.sem = asyncio.Semaphore(concurrency)
         self.max_chars = max_chars
         self.scores: dict[str, float] = {}
+        self.failed: set[str] = set()
 
-    async def _one(self, chunk_id: str, text: str) -> None:
+    async def score_one(self, chunk_id: str, text: str) -> None:
         async with self.sem:
             resp = await self.classifier.ainvoke(
                 {"state": text[: self.max_chars], "questions": {"unsafe": self.question}}
@@ -87,4 +88,4 @@ class JevGuard:
         self.scores[chunk_id] = float(resp.nouls["unsafe"].noul)
 
     async def score(self, texts: dict[str, str]) -> None:
-        await asyncio.gather(*[self._one(i, t) for i, t in texts.items() if i not in self.scores])
+        await asyncio.gather(*[self.score_one(i, t) for i, t in texts.items() if i not in self.scores])
