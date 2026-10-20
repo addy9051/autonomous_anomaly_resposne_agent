@@ -193,7 +193,91 @@ The threshold's real cost falls on real runbooks. Flagged at 0.5 / 0.9: gitlab-c
 - Retrieval is evaluated on a live 13.8k-chunk KB, but the queries come from the same taxonomy as the synthetic runbooks, and `HybridSearchService` now applies a trust-tier filter and a stored Jev `guard_score` ceiling (section 4.1).
 - Single GPU inference server, no failover.
 
-## 7. Running and testing
+## 7. Production-readiness checklist
+
+**Current status: not production-ready.** This is a tested prototype. Retrieval and poisoning defences are measured on synthetic and small hand-written sets; everything downstream of diagnosis is simulated. Each item names how it is verified; nothing is ticked until that evidence exists. Nothing below is done unless stated in sections 3 to 6.
+
+Order of work: A and B gate any real data; C gates any action; D to F gate scale.
+
+### A. Blockers before any real data or users
+
+| # | Item | Verified by | Status |
+|---|---|---|---|
+| A1 | Apply the AWS stack to a staging account (private VPC, no internet route, VPC endpoints); reconcile Terraform with the Postgres incident store | `terraform apply` in staging; egress self-test passes; no public route to the LLM or DB | not started (designed only) |
+| A2 | Replace public Modal endpoints with private inference inside the VPC | LLM and embedding calls work with no public egress | not started |
+| A3 | Persistent LangGraph checkpointer (Postgres) | Kill the API mid-diagnosis, restart, and the incident resumes or fails closed | not started (in-memory today) |
+| A4 | Data-handling decision for the hosted Jev guard: chunk text leaves the machine; zero retention is enterprise-only | Written approval from the data owner, or a self-hosted/private-gateway alternative | not started |
+| A5 | Secrets management (no keys in `.env`; rotate the API keys used in dev) | Secrets from a manager; `.env` absent in deployed images | not started |
+| A6 | Authn/authz and per-tenant isolation on the API; OS or container isolation for workers | Pen-test or security review; cross-tenant access test fails closed | not started (application-level only) |
+| A7 | Verify corpus licences recorded in the provenance manifest (my recollection, unverified) | Legal sign-off per source; blocked sources absent from the DB | not started |
+
+### B. Evaluation and trust (the "reliable results" gate)
+
+| # | Item | Verified by | Status |
+|---|---|---|---|
+| B1 | Shadow mode: run read-only against one real team's alert stream; no action executes | SREs rate each diagnosis; labels stored | not started |
+| B2 | Human labels for the judge-vs-human gate | Gate passes on real labels (`make judge-gate`) | not passing (no labels) |
+| B3 | Calibrate confidence (today: heuristic caps, 0.4 / 0.7) | Reliability diagram on B1 labels; thresholds set from it | not started |
+| B4 | Deterministic business-impact severity rubric on the telemetry path | Rubric tests; LLM-proposed severity can only raise, never lower, the rubric's level | not started |
+| B5 | Retrieval eval on real incidents and independently written queries (today: synthetic-derived, lexical-friendly) | hit@5 and MRR on a human-written set, with recall@5 added | not started |
+| B6 | Fix the 3 failing tests in `tests/unit/test_judge_independence.py` | Green `make test-unit` | failing (pre-existing) |
+| B7 | Regression gate in CI: unit, eval and poisoning holdout | CI blocks merge on failure | not started |
+
+### C. Action safety (gates any executor)
+
+| # | Item | Verified by | Status |
+|---|---|---|---|
+| C1 | Real executors for Tier 1 reversible actions only (n8n, PagerDuty, Slack are mocked today) | Staging run: action executes, verifier returns recovered, rollback works | not started (mocked) |
+| C2 | Critical incidents stay analysis-only; Tier 3 stays human-only | Existing orchestrator and policy tests, plus an audit review in shadow mode | built, unchanged |
+| C3 | Start auto-remediation disabled; enable per service after B1 results; keep the hourly limit | `AUTO_REMEDIATION_ENABLED` off by default; allowlist reviewed | built; default off |
+| C4 | Approval and audit trail reviewed with the on-call team | Tabletop exercise: approve, reject, replay | not started |
+| C5 | Kill switch to disable all execution without a deploy | Toggle tested under load | partial (`PUT /api/v1/agent/controls`; behaviour under failure untested) |
+
+### D. Knowledge-base poisoning controls
+
+| # | Item | Verified by | Status |
+|---|---|---|---|
+| D1 | Trust-tier exclusion and stored `guard_score` ceiling at retrieval | `tests/unit/test_search_safety.py`; attack queries return 0 payload chunks | built (section 4.1) |
+| D2 | Scoring during ingest, failing open to NULL | `tests/unit/test_ingest_guard.py` | built, opt-in (`RAG_GUARD_ON_INGEST`) |
+| D3 | Turn on ingest scoring and backfill NULL rows; alert on any NULL rows older than N hours | Query: no unscored rows; alert fires on a seeded NULL | 2 chunks unscored; alerting not built |
+| D4 | Pick the guard threshold from a sweep (0.7, 0.8, 0.85); default 0.5 drops about 1% of real runbooks (124 of 12,953), mostly false positives in a 14-chunk sample | Holdout recall and real-chunk loss at each threshold | not done |
+| D5 | Independently written attacks beyond the 33-item holdout, including attackers who know the guard question | Larger red-team set; subtle poisoning (contradiction, wrong-scope) has no content control | not done |
+| D6 | Write access to the KB is access-controlled and audited; provenance labels (`trust_tier`) cannot be set by uploaders | Access review; test that uploads default to `untrusted` | not started |
+| D7 | Re-score policy when the Jev question or model changes (`score_guard --rescore`) | Version recorded in `guard_model`; rescore runbook | partial |
+| D8 | Explain the unexplained one-query hit-rate drop from the filter (hit 0.919 to 0.911) | Reproduce, then confirm the cause | open |
+
+### E. Scale and cost (decide the target before building)
+
+An incident-response agent serves a small number of SRE teams per customer, so the scaling risk is the blast radius of what it can touch and the cost per incident, not user count. Define the target load first.
+
+| # | Item | Verified by | Status |
+|---|---|---|---|
+| E1 | Load test the single vLLM server: throughput, latency, cost per incident | Measured p50/p95 and cost at the target load | not measured |
+| E2 | Inference failover (single GPU, no failover today) | Failure drill: kill the server, incidents degrade safely | not started |
+| E3 | ParadeDB BM25 and pgvector HNSW at realistic size (today 13.8k chunks; ~1M unmeasured): build time, recall, p95 latency | Benchmark at 100k and 1M chunks | not measured |
+| E4 | Replace O(n^2) dedup with MinHash-LSH past about 50k documents | Dedup at 100k documents within budget | not started |
+| E5 | Guard latency and hosted-API cost on bulk ingest (per-chunk call, not benchmarked) | Timed ingest of 10k chunks | not measured |
+| E6 | Taxonomy variety caps synthetic generation at 264 seeds | Bigger taxonomy, or stop relying on synthetic data | not started |
+| E7 | Grounding picker is sometimes loose; add a relevance threshold | Spot-check precision on a sample | not started |
+
+### F. Operations
+
+| # | Item | Verified by | Status |
+|---|---|---|---|
+| F1 | Observability: traces, retrieval metrics, guard flag rate, action outcomes | Dashboards and alerts live (Langfuse and Prometheus exist in dev only) | partial |
+| F2 | Backups and restore drill for Postgres (a dump exists locally only) | Timed restore into a clean instance | not started |
+| F3 | Migrations run in a controlled way (existing volumes need `shared_preload_libraries` and manual 005 and 006) | Documented runbook; migration test on a copy of production | partial |
+| F4 | Incident process for the agent itself (it can be wrong; who is paged) | On-call rota and rollback plan | not started |
+| F5 | Housekeeping: stop dev GPU spend (`make modal-stop`), retire or label the stale `claude_walkthrough.md`, push the local commits, add `langchain-typesafe` and the classifier download step to `pyproject.toml` if the guards stay | Clean tree, documented setup | open |
+
+### Suggested sequence
+
+1. B1 in shadow mode on one team, with A1 to A5 done first so real data is safe to touch. This produces the labels B2 to B5 need.
+2. D3 to D6 before the KB accepts content from anyone but you.
+3. C1 to C5 only after shadow results are acceptable, starting with a single Tier 1 action on one service.
+4. E and F as the measured target load requires.
+
+## 8. Running and testing
 
 All commands are Makefile targets (`make help`):
 
