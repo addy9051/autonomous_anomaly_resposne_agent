@@ -77,7 +77,7 @@ async def main_async(a: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--model", default="jev-1.13.0", help="pin a version; jev-latest moves")
+    p.add_argument("--model", default=get_settings().agent.rag_guard_model, help="pin a version; jev-latest moves")
     p.add_argument("--limit", type=int, default=100_000)
     p.add_argument("--batch", type=int, default=200)
     p.add_argument("--kinds", default=None, help="comma list of metadata.kind values (real,clean,adversarial)")

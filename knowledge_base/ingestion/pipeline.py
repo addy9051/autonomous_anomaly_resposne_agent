@@ -11,9 +11,10 @@ Processes runbook documents through:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-from typing import Any
+from typing import Any, Protocol
 
 import asyncpg
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -23,6 +24,14 @@ from shared.llm import get_embeddings
 from shared.utils import get_logger
 
 logger = get_logger("ingestion_pipeline")
+
+
+class ChunkGuard(Protocol):
+    """Scores one chunk into `scores[chunk_id]` (P(unsafe)); raises on failure. evals.guards.JevGuard fits."""
+
+    scores: dict[str, float]
+
+    async def score_one(self, chunk_id: str, text: str) -> None: ...
 
 
 class RunbookIngestionPipeline:
@@ -35,7 +44,7 @@ class RunbookIngestionPipeline:
     - (Production) Confluence API polling
     """
 
-    def __init__(self) -> None:
+    def __init__(self, guard: ChunkGuard | None = None) -> None:
         self.settings = get_settings()
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.settings.agent.embedding_chunk_size,
@@ -44,7 +53,26 @@ class RunbookIngestionPipeline:
             separators=["\n\n", "\n", ". ", " ", ""],
         )
         self.embeddings = get_embeddings()
-        logger.info("ingestion_pipeline_initialized")
+        self.guard = guard
+        if self.guard is None and self.settings.agent.rag_guard_on_ingest:
+            from evals.guards import JevGuard
+
+            self.guard = JevGuard(model=self.settings.agent.rag_guard_model)
+        logger.info("ingestion_pipeline_initialized", guard_on_ingest=self.guard is not None)
+
+    async def _guard_scores(self, title: str, chunks: list[str]) -> list[float | None]:
+        """P(unsafe) per chunk, scored as `title\\ncontent` (the same text retrieval returns). A chunk that fails to
+        score gets None, which retrieval keeps; knowledge_base.score_guard backfills it."""
+        if self.guard is None:
+            return [None] * len(chunks)
+        self.guard.scores = {}
+        results = await asyncio.gather(
+            *[self.guard.score_one(str(i), f"{title}\n{c}") for i, c in enumerate(chunks)], return_exceptions=True
+        )
+        failed = sum(isinstance(r, BaseException) for r in results)
+        if failed:
+            logger.warning("guard_scoring_failed", title=title, failed=failed, chunks=len(chunks))
+        return [None if isinstance(r, BaseException) else self.guard.scores.get(str(i)) for i, r in enumerate(results)]
 
     async def ingest_document(
         self,
@@ -78,6 +106,8 @@ class RunbookIngestionPipeline:
         # Generate embeddings for all chunks
         embeddings = await self.embeddings.aembed_documents(chunks)
         logger.info("embeddings_generated", count=len(embeddings))
+        guard_scores = await self._guard_scores(title, chunks)
+        guard_model = self.settings.agent.rag_guard_model
 
         # Upsert to database
         chunk_ids = []
@@ -86,18 +116,26 @@ class RunbookIngestionPipeline:
             for i, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=False)):
                 doc_id = self._generate_doc_id(title, i)
                 chunk_ids.append(doc_id)
+                score = guard_scores[i]
 
+                # On re-ingest the guard columns are overwritten (NULL when unscored) so a changed chunk never
+                # keeps the score of its previous content.
                 await conn.execute(
                     """
                     INSERT INTO documents (doc_id, title, source, content, chunk_index,
                                            total_chunks, embedding, metadata,
-                                           service_tags, severity_relevance, collection)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                                           service_tags, severity_relevance, collection,
+                                           guard_score, guard_model, guard_scored_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                            $12::real, $13::text, CASE WHEN $12::real IS NULL THEN NULL ELSE NOW() END)
                     ON CONFLICT (doc_id) DO UPDATE SET
                         content = EXCLUDED.content,
                         embedding = EXCLUDED.embedding,
                         metadata = EXCLUDED.metadata,
                         collection = EXCLUDED.collection,
+                        guard_score = EXCLUDED.guard_score,
+                        guard_model = EXCLUDED.guard_model,
+                        guard_scored_at = EXCLUDED.guard_scored_at,
                         updated_at = NOW()
                     """,
                     doc_id,
@@ -111,6 +149,8 @@ class RunbookIngestionPipeline:
                     service_tags or [],
                     severity_relevance or [],
                     collection,
+                    score,
+                    guard_model if score is not None else None,
                 )
 
             logger.info("document_ingested", title=title, chunks=len(chunk_ids))

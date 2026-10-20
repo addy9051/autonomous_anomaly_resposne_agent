@@ -139,6 +139,16 @@ class AgentConfig(BaseSettings):
             "documents (NULL) are kept. Set to null to disable."
         ),
     )
+    rag_guard_model: str = Field(
+        default="jev-1.13.0", description="Jev model pinned for guard_score (jev-latest moves)."
+    )
+    rag_guard_on_ingest: bool = Field(
+        default=False,
+        description=(
+            "Score each chunk with the hosted Jev guard during ingestion (needs TYPESAFE_API_KEY; chunk text leaves "
+            "the machine). Scoring failures leave guard_score NULL; knowledge_base.score_guard backfills them."
+        ),
+    )
     embedding_chunk_size: int = 512
     embedding_chunk_overlap: int = 64
     stabilization_window_seconds: float = Field(
