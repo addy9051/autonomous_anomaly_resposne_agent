@@ -68,4 +68,5 @@ tfplan*
 *.agents
 
 models/flashrank/
+models/prompt-injection-v2/
 data/raw/

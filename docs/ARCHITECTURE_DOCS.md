@@ -100,8 +100,46 @@ Incident store + audit log + regression detector
   3. FlashRank cross-encoder (`retrieval/rerank.py`, `ms-marco-TinyBERT-L-2-v2`, local ONNX) scores the union of both candidate sets.
   4. Weighted Reciprocal Rank Fusion (k=60) over the vector, BM25 and reranker rankings; the top `rag_top_k` (5) are returned as `RunbookReference`s.
   - If reranking is disabled or fails, it falls back to two-way RRF. The FlashRank model must be pre-provisioned in `rag_rerank_cache_dir` because the egress allowlist blocks downloads.
-- **Limits:** the in-process fallback loads the whole table per query (small sets only), and ParadeDB behaviour at ~1M chunks is unmeasured; ParadeDB uses no stemming, so scores differ from the fallback (harmless for rank-based RRF); the unused `pg_trgm` indexes from migrations 001 and 002 remain; retrieval quality is only measured on a small engineer-written query set (`evals/retrieval_ab.py`).
+- **Limits:** the in-process fallback loads the whole table per query (small sets only), and ParadeDB behaviour at ~1M chunks is unmeasured; ParadeDB uses no stemming, so scores differ from the fallback (harmless for rank-based RRF); the unused `pg_trgm` indexes from migrations 001 and 002 remain; retrieval quality is measured on a small engineer-written set (`evals/retrieval_ab.py`) and on a synthetic-derived live set (`evals/retrieval_live.py`, section 4.1).
 - Runbooks are reference material, not permission to act; only the action policy authorises actions.
+
+### 4.1 Knowledge-base corpus and poisoning guards (evaluation, not wired into serving)
+
+**Corpus** (ingested into ParadeDB, 13,784 chunks): 12,953 real (OpenShift alerts, prometheus-operator, GitLab runbooks, Kubernetes and PostgreSQL docs; licence and origin in `metadata`, manifest in `knowledge_base/synthetic/provenance.py`), 649 synthetic runbooks grounded on the real ones (`knowledge_base/synthetic/build.py`, deterministic quality gate), and 182 labelled adversarial chunks (8 attack types, `trust_tier=untrusted`). Sources whose licence forbids generation (SRE book, postmortems, Redis, nginx/envoy docs) are ingestible but blocked from grounding; licences in the manifest are my recollection and must be verified.
+
+**Retrieval eval on the live KB** (`evals/retrieval_live.py`, 123 queries, k=5; queries and ground truth come from the same taxonomy that generated the synthetic runbooks, which favours lexical matching, so treat as a regression and poisoning gate, not a general quality claim):
+
+| Strategy | target hit@5 | MRR |
+|---|---|---|
+| vector only | 0.902 | 0.772 |
+| BM25 only | 0.756 | 0.600 |
+| RRF only | 0.862 | 0.774 |
+| reranker only | 0.943 | 0.814 |
+| three-way fusion (production) | 0.919 | 0.837 |
+
+Poisoned *documents* appeared in the top 5 for 37% of queries on the production path, but poisoned *chunks carrying a payload* (matching the gate's injection, secret or destructive-command regexes; 23 of 182) appeared for none of the strategies. Filtering on `trust_tier` removed all poisoned results for about one point of hit rate. **The serving path does not filter untrusted rows yet.**
+
+**Guard comparison** (`evals/guard_benchmark.py`, `evals/guards.py`; chunk level, threshold 0.5; 649 clean synthetic, 100 to 400 sampled real chunks):
+
+| Chunk type | Local DeBERTa (ProtectAI `deberta-v3-base-prompt-injection-v2`) | TypeSafe Jev 1.13 (`Noul` question via `langchain-typesafe`) |
+|---|---|---|
+| Injection payload (8) | 75% flagged | 100% |
+| Secrets/PII-bait payload (7) | 57% | 100% |
+| Dangerous-procedure payload (8) | 0% | 100% |
+| Contradiction, wrong-scope, near-duplicate, decoy, keyword-stuffing | 0-18% | 0-32% (mostly chunks that carry a payload) |
+| False positives, clean synthetic | 0% | 0% |
+| False positives, real | 0.3% (400 chunks) | 0% (100 chunks) |
+
+| Trade-off | Local DeBERTa | TypeSafe Jev |
+|---|---|---|
+| Runs inside the sandbox (no egress) | Yes, weights in `models/prompt-injection-v2` (Apache-2.0, upstream archived) | No, hosted API; chunk text leaves the boundary; `TYPESAFE_API_KEY` required |
+| Cost and latency | Free; CPU inference (latency not benchmarked separately) | $0.042 per million input tokens; network round trip (latency not measured) |
+| Flexible, custom question | No, injection vs benign only | Yes, but my question wording is untuned |
+| Weakness | Misses dangerous commands and some secrets bait | Version drift (`jev-latest` moves; pin `jev-1.13.0`); external dependency |
+
+Neither guard reliably detects contradiction, wrong-scope or near-duplicate poisoning; that relies on provenance and trust tier and on the action tiers. In the retrieval eval, the guard strategies matched or barely differed from the baseline (hit 0.919, MRR 0.833 to 0.837) because payload chunks never reached the top 5, so that eval shows the guards cost nothing in ranking quality, not that they help.
+
+**Caveats:** only 23 payload chunks; payload labels use the same regexes that generated and gated the data and Jev's question reuses the same threat categories, so results are optimistic against independently written attacks. **Recommended design (not implemented):** score chunks with Jev at ingest and store the score (keeps the hosted call off the incident path), use the local classifier as a query-time secondary signal, and keep a default-on trust-tier filter plus the regex gate and action tiers as the base. Scores are cached in `data/raw/guard_scores_*.json`; run `python -m evals.guard_benchmark --guard local|jev`.
 
 ## 5. Isolation and safety - built (application level)
 
@@ -117,7 +155,7 @@ Incident store + audit log + regression detector
 - The AWS stack has never been applied; the Terraform assumptions need reconciling with the Postgres incident store.
 - No human-labelled judge gate and no calibrated confidence.
 - The LangGraph checkpointer is in-memory, so diagnosis state is lost on restart.
-- Retrieval has only a small directional evaluation and has not been run against live Postgres with real runbooks.
+- Retrieval is evaluated on a live 13.8k-chunk KB, but the queries come from the same taxonomy as the synthetic runbooks, and neither guard nor a trust filter is applied in `HybridSearchService` yet (section 4.1).
 - Single GPU inference server, no failover.
 
 ## 7. Running and testing

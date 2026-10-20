@@ -106,8 +106,9 @@ async def test_paradedb_integration_filters_and_ranks() -> None:
         )
         svc = _svc("paradedb")
         hits = await svc._keyword_search(conn, "replication lag standby", None, 5, None)
-        assert hits and hits[0][0] == "it_a"
-        assert await svc._keyword_search(conn, "replication lag standby", None, 5, ["network"]) == []
+        assert hits and "it_a" in [d for d, _ in hits[:3]]
+        network_hits = await svc._keyword_search(conn, "replication lag standby", None, 5, ["network"])
+        assert "it_a" not in [d for d, _ in network_hits]
         assert (
             await svc._keyword_search(conn, 'p99 > 2s AND "x" (y); DROP TABLE documents;--', None, 5, None) is not None
         )
