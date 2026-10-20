@@ -103,7 +103,7 @@ Incident store + audit log + regression detector
 - **Limits:** the in-process fallback loads the whole table per query (small sets only), and ParadeDB behaviour at ~1M chunks is unmeasured; ParadeDB uses no stemming, so scores differ from the fallback (harmless for rank-based RRF); the unused `pg_trgm` indexes from migrations 001 and 002 remain; retrieval quality is measured on a small engineer-written set (`evals/retrieval_ab.py`) and on a synthetic-derived live set (`evals/retrieval_live.py`, section 4.1).
 - Runbooks are reference material, not permission to act; only the action policy authorises actions.
 
-### 4.1 Knowledge-base corpus and poisoning guards (evaluation, not wired into serving)
+### 4.1 Knowledge-base corpus and poisoning guards (trust filter and stored Jev score wired into serving)
 
 **Corpus** (ingested into ParadeDB, 13,784 chunks): 12,953 real (OpenShift alerts, prometheus-operator, GitLab runbooks, Kubernetes and PostgreSQL docs; licence and origin in `metadata`, manifest in `knowledge_base/synthetic/provenance.py`), 649 synthetic runbooks grounded on the real ones (`knowledge_base/synthetic/build.py`, deterministic quality gate), and 182 labelled adversarial chunks (8 attack types, `trust_tier=untrusted`). Sources whose licence forbids generation (SRE book, postmortems, Redis, nginx/envoy docs) are ingestible but blocked from grounding; licences in the manifest are my recollection and must be verified.
 
@@ -117,7 +117,7 @@ Incident store + audit log + regression detector
 | reranker only | 0.943 | 0.814 |
 | three-way fusion (production) | 0.919 | 0.837 |
 
-Poisoned *documents* appeared in the top 5 for 37% of queries on the production path, but poisoned *chunks carrying a payload* (matching the gate's injection, secret or destructive-command regexes; 23 of 182) appeared for none of the strategies. Filtering on `trust_tier` removed all poisoned results for about one point of hit rate. **The serving path does not filter untrusted rows yet.**
+Poisoned *documents* appeared in the top 5 for 37% of queries on the production path, but poisoned *chunks carrying a payload* (matching the gate's injection, secret or destructive-command regexes; 23 of 182) appeared for none of the strategies. Filtering on `trust_tier` removed all poisoned results for about one point of hit rate. **The serving path now applies the trust-tier filter and the stored guard score (see Implemented design below); the eval strategies above were measured before that change.**
 
 **Guard comparison** (`evals/guard_benchmark.py`, `evals/guards.py`; chunk level, threshold 0.5; 649 clean synthetic, 100 to 400 sampled real chunks):
 
@@ -139,7 +139,42 @@ Poisoned *documents* appeared in the top 5 for 37% of queries on the production 
 
 Neither guard reliably detects contradiction, wrong-scope or near-duplicate poisoning; that relies on provenance and trust tier and on the action tiers. In the retrieval eval, the guard strategies matched or barely differed from the baseline (hit 0.919, MRR 0.833 to 0.837) because payload chunks never reached the top 5, so that eval shows the guards cost nothing in ranking quality, not that they help.
 
-**Caveats:** only 23 payload chunks; payload labels use the same regexes that generated and gated the data and Jev's question reuses the same threat categories, so results are optimistic against independently written attacks. **Recommended design (not implemented):** score chunks with Jev at ingest and store the score (keeps the hosted call off the incident path), use the local classifier as a query-time secondary signal, and keep a default-on trust-tier filter plus the regex gate and action tiers as the base. Scores are cached in `data/raw/guard_scores_*.json`; run `python -m evals.guard_benchmark --guard local|jev`.
+**Hardened evaluation** (`python -m evals.poison_holdout`, data in `evals/poison_holdout_data.py`). Two checks address the weaknesses above.
+
+*Independent holdout:* 21 hand-written attacks and 12 benign items. The run asserts that no attack matches the gate regexes. Benign items include trigger words used legitimately (`rm -rf /tmp/build-cache`, `password: <redacted>`, an on-call email address).
+
+| Detector (threshold 0.5) | Attack recall | Benign false positives | Notes |
+|---|---|---|---|
+| Regex gate | 0% | 33% | By construction on the attack side; fires on legitimate trigger words |
+| Local DeBERTa | 19% | 17% | Misses all destructive-command and all subtle items; flags benign `b-2` and `b-7` |
+| Jev | 100% | 8% (1 of 12) | Flags `b-2` (credential rotation). At 0.9 recall falls to 71%; at 0.1 false positives rise to 50% |
+
+The 100% Jev result includes my contradiction and wrong-scope items, which are blatantly absurd (pool size 5000, edit nginx for Redis). Subtle versions would probably score lower, and the Jev question mentions "guidance that is clearly wrong", so the recall is not evidence that Jev catches real subtle poisoning. The set is small (33 items) and written by the same author as the question, so the figures are directional.
+
+*Attacker-aware retrieval:* 46 queries built from the 23 payload chunks (title, and opening sentence), against the live KB, k=5.
+
+| Strategy | Payload chunk in top 5 | Target chunk itself in top 5 |
+|---|---|---|
+| fusion_3way (production) | 93.5% | 45.7% |
+| fusion_3way_trusted | 0% | 0% |
+| fusion_3way_classified (DeBERTa) | 65.2% | 28.3% |
+| fusion_3way_jev | 0% | 0% |
+
+This reverses the earlier reassurance: payload chunks never surfaced for incident-symptom queries, but anyone who can steer a query (or write a document that resembles real incident text) gets them into the top 5 almost every time. The local classifier removes 29 points of that exposure and still leaks dangerous-procedure and secrets chunks. Jev and the trust filter remove all of it, on this set.
+
+Conclusions: (1) the trust-tier filter is the cheapest control that works here and must be on by default, but it only holds while provenance labels are correct; (2) Jev is the only content guard that generalised to the independent attacks, at the cost of one false positive and a hosted dependency; (3) the local classifier is not sufficient alone for this threat model; (4) none of this tests an attacker who is aware of the Jev question wording. **Remaining caveats:** 23 payload chunks and 33 holdout items; payload labels in the targeted run still use the gate regexes. **Implemented design:** (1) every retrieval query (vector, ParadeDB BM25 and the in-process fallback) excludes `trust_tier=untrusted` rows (`rag_exclude_untrusted`, default on) and rows whose stored `guard_score` is at or above `rag_guard_threshold` (default 0.5; null disables); unscored rows (NULL) pass, so the trust tier is the base control. (2) Migration `006_guard_score.sql` adds `guard_score`, `guard_model` and `guard_scored_at`; `python -m knowledge_base.score_guard` fills them with Jev (pinned `jev-1.13.0`) after each ingest, so the hosted call is never on the incident path. Not implemented: the local classifier as a query-time secondary signal, automatic scoring inside the ingest pipeline (it is a separate step, so new documents are unscored until it runs), and a re-score policy when the Jev question changes (use `--rescore`). At the time of writing all but 2 of the 13.6k chunks are scored (124 real chunks flagged at 0.5); the hosted API saw that text. Tests: `tests/unit/test_search_safety.py` (SQL and argument checks, plus a live integration test gated on `PARADEDB_TEST_DSN`). Earlier eval scores are cached in `data/raw/guard_scores_*.json`; run `python -m evals.guard_benchmark --guard local|jev`.
+
+**Filtered-serving measurements** (live KB, all 13,600 of 13,602 non-failed chunks scored; 2 failed and pass unscored). Retrieval eval, `fusion_3way`, k=5, 123 queries:
+
+| Filter | hit@5 | MRR | Poisoned doc in top 5 | Payload chunk in top 5 (attack queries) |
+|---|---|---|---|---|
+| Off | 0.919 | 0.838 | 37.4% | 93.5% |
+| Trust tier + guard < 0.5 | 0.911 | 0.827 | 0% | 0% |
+| Trust tier + guard < 0.9 | 0.911 | 0.827 | 0% | not run |
+
+The hit-rate cost is one query of 123 and the cause is unconfirmed. With the trust filter off, a guard threshold of either 0.5 or 0.9 alone blocks all 23 payload chunks (their lowest Jev score is 0.93), so the guard is an independent control for mislabelled documents on these blatant payloads. This eval cannot separate 0.5 from 0.9, because no synthetic target is flagged.
+
+The threshold's real cost falls on real runbooks. Flagged at 0.5 / 0.9: gitlab-com 101 / 4 of 6,052, openshift 16 / 0 of 1,910, postgresql.org docs 3 / 1 of 1,284, postmortems 3 / 0 of 1,120, prometheus-operator 1 / 0 of 324, none from the SRE book, Kubernetes, Redis or nginx (124 / 5 of 12,953 in total). A read of a random sample of 14 flagged real chunks found no malicious content: they are legitimate operational procedures that contain delete or destroy steps (deleting a Patroni replica's VM and disks, removing a namespace from the search index, clearing Ceph flags, deferring Sidekiq jobs), postmortem narratives of an operator error (wiping the wrong database directory), and one deprecated alert that says it can be ignored. So at 0.5 the flags on real data are false positives for this use. Their scores are low: of the 124 chunks flagged at 0.5, 55 score 0.5-0.6, 23 score 0.6-0.7, 21 score 0.7-0.8, 19 score 0.8-0.9 and 6 score 0.9 or higher, whereas the lowest score among the 23 payload chunks is 0.93. That suggests a threshold between 0.8 and 0.9 could keep recall on blatant payloads and drop few real runbooks, but I have not re-measured holdout recall at that point (0.9 gave 71%, 0.5 gave 100%), so the default stays 0.5 until that is measured. On the independent holdout, 0.5 gave 100% attack recall with 8% benign false positives and 0.9 gave 71% recall with 0%. Default stays 0.5 (security first); `RAG_GUARD_THRESHOLD=0.9` is the relaxed setting if recall of real runbooks matters more.
 
 ## 5. Isolation and safety - built (application level)
 
@@ -155,7 +190,7 @@ Neither guard reliably detects contradiction, wrong-scope or near-duplicate pois
 - The AWS stack has never been applied; the Terraform assumptions need reconciling with the Postgres incident store.
 - No human-labelled judge gate and no calibrated confidence.
 - The LangGraph checkpointer is in-memory, so diagnosis state is lost on restart.
-- Retrieval is evaluated on a live 13.8k-chunk KB, but the queries come from the same taxonomy as the synthetic runbooks, and neither guard nor a trust filter is applied in `HybridSearchService` yet (section 4.1).
+- Retrieval is evaluated on a live 13.8k-chunk KB, but the queries come from the same taxonomy as the synthetic runbooks, and `HybridSearchService` now applies a trust-tier filter and a stored Jev `guard_score` ceiling (section 4.1).
 - Single GPU inference server, no failover.
 
 ## 7. Running and testing
