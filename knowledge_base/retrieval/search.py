@@ -3,7 +3,7 @@ Hybrid Search API for RAG Retrieval.
 
 Implements:
 1. Dense vector search (cosine similarity via pgvector)
-2. Sparse Okapi BM25 keyword search (knowledge_base/retrieval/bm25.py)
+2. Sparse BM25 keyword search: ParadeDB pg_search inside Postgres (in-process Okapi BM25 in bm25.py as fallback)
 3. Local FlashRank cross-encoder rerank of the vector + BM25 candidate union (knowledge_base/retrieval/rerank.py)
 4. Weighted Reciprocal Rank Fusion (RRF) over vector, BM25 and reranker rankings
 5. Metadata pre-filtering by service_tags
@@ -37,6 +37,7 @@ class HybridSearchService:
         self.embeddings = get_embeddings()
         self.top_k = self.settings.agent.rag_top_k
         self.similarity_threshold = self.settings.agent.rag_similarity_threshold
+        self._paradedb_unavailable = False
         logger.info("hybrid_search_initialized", top_k=self.top_k)
 
     async def search(
@@ -175,11 +176,68 @@ class HybridSearchService:
         limit: int,
         collections: list[str] | None = None,
     ) -> list[tuple[str, float]]:
-        """Sparse keyword search using Okapi BM25.
+        """Sparse BM25 search: ParadeDB pg_search inside Postgres, or the in-process fallback.
+
+        'auto' tries ParadeDB first. On any Postgres error it falls back to the in-process scorer for that
+        call, and stops trying ParadeDB for the rest of the process if the extension or index is missing.
+        """
+        backend = self.settings.agent.rag_bm25_backend
+        if backend != "inprocess" and not self._paradedb_unavailable:
+            try:
+                return await self._keyword_search_paradedb(conn, query, service_tags, limit, collections)
+            except asyncpg.PostgresError as exc:
+                if backend == "paradedb":
+                    raise
+                missing = isinstance(exc, asyncpg.UndefinedFunctionError | asyncpg.UndefinedObjectError) or (
+                    "paradedb" in str(exc).lower()
+                )
+                self._paradedb_unavailable = self._paradedb_unavailable or missing
+                logger.warning(
+                    "paradedb_bm25_failed_falling_back",
+                    error=str(exc)[:200],
+                    disabled_for_process=self._paradedb_unavailable,
+                )
+        return await self._keyword_search_inprocess(conn, query, service_tags, limit, collections)
+
+    async def _keyword_search_paradedb(
+        self,
+        conn: asyncpg.Connection,
+        query: str,
+        service_tags: list[str] | None,
+        limit: int,
+        collections: list[str] | None,
+    ) -> list[tuple[str, float]]:
+        """BM25 ranking in the pg_search index (migration 005). The query is tokenized server-side and the
+        collection filter runs inside the index scan, so no table is loaded into Python."""
+        rows = await conn.fetch(
+            """
+            SELECT doc_id, pdb.score(id) AS score
+            FROM documents
+            WHERE (title ||| $1::text OR content ||| $1::text)
+              AND ($2::text[] IS NULL OR service_tags && $2)
+              AND ($3::text[] IS NULL OR collection = ANY($3))
+            ORDER BY pdb.score(id) DESC
+            LIMIT $4
+            """,
+            query,
+            service_tags or None,
+            collections or None,
+            limit,
+        )
+        return [(row["doc_id"], float(row["score"])) for row in rows]
+
+    async def _keyword_search_inprocess(
+        self,
+        conn: asyncpg.Connection,
+        query: str,
+        service_tags: list[str] | None,
+        limit: int,
+        collections: list[str] | None = None,
+    ) -> list[tuple[str, float]]:
+        """Okapi BM25 scored in Python over the whole table (fallback; O(table) per query).
 
         Term statistics (IDF, average length) come from the whole table so scores do not shift with the
-        filters; only eligible documents are ranked. The corpus is a small runbook set, so it is scored
-        in-process rather than in SQL.
+        filters; only eligible documents are ranked.
         """
         rows = await conn.fetch(
             """

@@ -96,11 +96,11 @@ Incident store + audit log + regression detector
 - **Ingestion** (`ingestion/pipeline.py`): chunks runbooks (512 characters, 64 overlap), embeds them and upserts into the `documents` table with `collection` and `service_tags`. Eight sample runbooks are built in; `ingest_directory` loads `<root>/<collection>/*.md`.
 - **Retrieval** (`retrieval/search.py`, `HybridSearchService`):
   1. Dense vector search (pgvector cosine), up to `rag_candidates_per_leg` (50) results.
-  2. Sparse Okapi BM25 (`retrieval/bm25.py`), scored in-process over the whole table, up to 50 results.
+  2. Sparse BM25, up to 50 results. Primary: ParadeDB `pg_search` (`USING bm25` index from migration 005, `|||` match, `pdb.score`, Top-K pushed into the index, collection and service filters applied in-query). Fallback: in-process Okapi BM25 (`retrieval/bm25.py`) when the extension or index is missing (`RAG_BM25_BACKEND=auto`; `paradedb` forces it and raises on error; `inprocess` forces the fallback). Existing databases need the `paradedb/paradedb` image and migration 005 applied manually.
   3. FlashRank cross-encoder (`retrieval/rerank.py`, `ms-marco-TinyBERT-L-2-v2`, local ONNX) scores the union of both candidate sets.
   4. Weighted Reciprocal Rank Fusion (k=60) over the vector, BM25 and reranker rankings; the top `rag_top_k` (5) are returned as `RunbookReference`s.
   - If reranking is disabled or fails, it falls back to two-way RRF. The FlashRank model must be pre-provisioned in `rag_rerank_cache_dir` because the egress allowlist blocks downloads.
-- **Limits:** BM25 loads the whole table per query (fine for a small runbook set, not at scale); the unused `pg_trgm` indexes from migrations 001 and 002 remain; retrieval quality is only measured on a small engineer-written query set (`evals/retrieval_ab.py`).
+- **Limits:** the in-process fallback loads the whole table per query (small sets only), and ParadeDB behaviour at ~1M chunks is unmeasured; ParadeDB uses no stemming, so scores differ from the fallback (harmless for rank-based RRF); the unused `pg_trgm` indexes from migrations 001 and 002 remain; retrieval quality is only measured on a small engineer-written query set (`evals/retrieval_ab.py`).
 - Runbooks are reference material, not permission to act; only the action policy authorises actions.
 
 ## 5. Isolation and safety - built (application level)

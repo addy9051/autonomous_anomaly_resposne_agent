@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 # Langfuse disabled due to environment import issues
 from pydantic import AliasChoices, BaseModel, Field
@@ -120,6 +121,13 @@ class AgentConfig(BaseSettings):
     rag_rerank_model: str = "ms-marco-TinyBERT-L-2-v2"
     rag_rerank_cache_dir: str = "models/flashrank"
     rag_rerank_weight: float = 1.0
+    rag_bm25_backend: Literal["auto", "paradedb", "inprocess"] = Field(
+        default="auto",
+        description=(
+            "BM25 implementation: 'paradedb' uses the pg_search index in Postgres, 'inprocess' scores the whole "
+            "table in Python, 'auto' tries ParadeDB and falls back to in-process if pg_search is missing."
+        ),
+    )
     embedding_chunk_size: int = 512
     embedding_chunk_overlap: int = 64
     stabilization_window_seconds: float = Field(

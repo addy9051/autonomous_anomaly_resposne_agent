@@ -8,9 +8,9 @@
 
 services:
 
-  # Episodic memory + RAG knowledge base
+  # Episodic memory + RAG knowledge base (ParadeDB = Postgres 16 + pgvector + pg_search BM25)
   postgres:
-    image: pgvector/pgvector:pg16
+    image: paradedb/paradedb:0.26.2-pg16
     container_name: anomaly-postgres
     ports:
       - "5432:5432"

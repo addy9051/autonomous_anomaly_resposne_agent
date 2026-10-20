@@ -13,9 +13,9 @@ services:
       - "6379:6379"
     command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
 
-  # ─── PostgreSQL + pgvector (Knowledge Base) ───
+  # ─── ParadeDB: PostgreSQL 16 + pgvector + pg_search BM25 (Knowledge Base) ───
   postgres:
-    image: pgvector/pgvector:pg16
+    image: paradedb/paradedb:0.26.2-pg16
     container_name: anomaly-postgres-lite
     ports:
       - "5432:5432"
