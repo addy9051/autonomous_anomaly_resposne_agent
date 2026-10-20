@@ -19,7 +19,7 @@ A sandboxed SRE intelligence layer. An alert starts an investigation: the system
 | --- | --- |
 | API | FastAPI (`api.py`, port 8010 in the Makefile) |
 | Orchestration | `AgentOrchestrator` (`orchestrator.py`) |
-| Diagnosis workflow | LangGraph, 4 nodes, in-memory `MemorySaver` checkpointer |
+| Diagnosis workflow | LangGraph, 4 nodes; `MemorySaver` by default, Postgres checkpointer with `AGENT_CHECKPOINTER_BACKEND=postgres` |
 | LLM access | LangChain `ChatOpenAI` / `OpenAIEmbeddings` pointed at a self-hosted vLLM endpoint (`shared/llm.py`) |
 | Egress control | Fail-closed host allowlist (`shared/egress.py`) |
 | Knowledge base | PostgreSQL + pgvector; hybrid retrieval (see section 4) |
@@ -189,7 +189,8 @@ The threshold's real cost falls on real runbooks. Flagged at 0.5 / 0.9: gitlab-c
 - Severity on the telemetry path is LLM-proposed, with no deterministic impact rubric.
 - The AWS stack has never been applied; the Terraform assumptions need reconciling with the Postgres incident store.
 - No human-labelled judge gate and no calibrated confidence.
-- The LangGraph checkpointer is in-memory, so diagnosis state is lost on restart.
+- The LangGraph checkpointer defaults to in-memory. The Postgres option (`agents/diagnosis/checkpointing.py`) is
+  built and tested for crash-resume, but is off by default and nothing re-submits unfinished incidents after a restart.
 - Retrieval is evaluated on a live 13.8k-chunk KB, but the queries come from the same taxonomy as the synthetic runbooks, and `HybridSearchService` now applies a trust-tier filter and a stored Jev `guard_score` ceiling (section 4.1).
 - Single GPU inference server, no failover.
 
@@ -205,7 +206,7 @@ Order of work: A and B gate any real data; C gates any action; D to F gate scale
 |---|---|---|---|
 | A1 | Apply the AWS stack to a staging account (private VPC, no internet route, VPC endpoints); reconcile Terraform with the Postgres incident store | `terraform apply` in staging; egress self-test passes; no public route to the LLM or DB | not started (designed only) |
 | A2 | Replace public Modal endpoints with private inference inside the VPC | LLM and embedding calls work with no public egress | not started |
-| A3 | Persistent LangGraph checkpointer (Postgres) | Kill the API mid-diagnosis, restart, and the incident resumes or fails closed | not started (in-memory today) |
+| A3 | Persistent LangGraph checkpointer (Postgres) | Kill the API mid-diagnosis, restart, and the incident resumes or fails closed | partial: Postgres saver built, resume tested on a toy graph against live Postgres; off by default; no startup re-drive of unfinished incidents; not run on the real diagnosis graph |
 | A4 | Data-handling decision for the hosted Jev guard: chunk text leaves the machine; zero retention is enterprise-only | Written approval from the data owner, or a self-hosted/private-gateway alternative | not started |
 | A5 | Secrets management (no keys in `.env`; rotate the API keys used in dev) | Secrets from a manager; `.env` absent in deployed images | not started |
 | A6 | Authn/authz and per-tenant isolation on the API; OS or container isolation for workers | Pen-test or security review; cross-tenant access test fails closed | not started (application-level only) |

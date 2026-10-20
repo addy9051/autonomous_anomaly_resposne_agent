@@ -16,7 +16,6 @@ import json
 from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
@@ -24,6 +23,7 @@ if TYPE_CHECKING:
     from langgraph.checkpoint.base import BaseCheckpointSaver
     from langgraph.graph.state import CompiledStateGraph
 
+from agents.diagnosis.checkpointing import CheckpointerProvider
 from agents.diagnosis.hypotheses import (
     build_evidence_index,
     cap_overall_confidence,
@@ -453,6 +453,7 @@ class DiagnosisAgent:
 
     def __init__(self) -> None:
         self.graph = build_diagnosis_graph()
+        self.checkpoints = CheckpointerProvider()
         self.last_skills: list[str] = []
         logger.info("diagnosis_agent_initialized")
 
@@ -496,13 +497,16 @@ class DiagnosisAgent:
 
                 callbacks = [handler] if handler else []
 
-                # Resilient LangGraph Execution (In-Memory Checkpointing)
-                # Note: RedisSaver bypassed due to local serialization compatibility issues
-                saver = MemorySaver()
-                app = build_diagnosis_graph(checkpointer=saver)
+                app = build_diagnosis_graph(checkpointer=await self.checkpoints.get())
                 config = {"configurable": {"thread_id": anomaly_event.event_id}, "callbacks": callbacks}
 
-                result = await app.ainvoke(initial_state, config=config)
+                # An unfinished checkpoint for this event (e.g. crash mid-run) resumes instead of restarting.
+                snapshot = await app.aget_state(config)
+                if snapshot.next:
+                    logger.info("diagnosis_resuming", event_id=anomaly_event.event_id, next=list(snapshot.next))
+                    result = await app.ainvoke(None, config=config)
+                else:
+                    result = await app.ainvoke(initial_state, config=config)
 
                 diagnosis_dict = result.get("diagnosis_result") or {}
 

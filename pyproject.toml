@@ -20,6 +20,8 @@ langchain-core = ">=1.0.0,<2.0.0"
 langchain-openai = ">=1.0.0,<2.0.0"
 langchain-community = ">=0.4.0"
 langgraph = ">=1.0.0,<2.0.0"
+langgraph-checkpoint-postgres = ">=3.0.0,<4.0.0"
+psycopg = { version = ">=3.2", extras = ["binary", "pool"] }
 
 # ─── RAG & Embeddings ────────────────────────────────────────
 langchain-postgres = ">=0.0.9"

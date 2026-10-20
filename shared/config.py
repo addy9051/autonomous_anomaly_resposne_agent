@@ -112,6 +112,10 @@ class AgentConfig(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / ".env"), extra="ignore")
 
     anomaly_confidence_threshold: float = 0.75
+    checkpointer_backend: Literal["memory", "postgres"] = Field(
+        default="memory",
+        description="LangGraph checkpointer for diagnosis state. 'postgres' survives restarts and resumes incidents",
+    )
     max_tokens_per_incident: int = 50_000
     max_llm_retries: int = 3
     rag_top_k: int = 5

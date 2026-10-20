@@ -63,6 +63,7 @@ async def test_end_to_end_mocked_incident_flow(sample_anomaly_event: AnomalyEven
         patch("agents.verification.verifier.RecoveryVerifier.verify") as mock_verify,
     ):
         mock_graph = MagicMock()
+        mock_graph.aget_state = AsyncMock(return_value=MagicMock(next=()))
         mock_graph.ainvoke = AsyncMock(
             return_value={
                 "diagnosis_result": {
