@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous SRE Intelligence — Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #121826;
+            --bg-card: #182234;
+            --border: #23304a;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --accent-blue: #38bdf8;
+            --accent-green: #34d399;
+            --accent-yellow: #fbbf24;
+            --accent-red: #f87171;
+            --accent-purple: #a855f7;
+            --font-sans: 'Inter', -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            line-height: 1.5;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        aside {
+            width: 260px;
+            background-color: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 16px;
+        }
+
+        .logo {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 32px;
+        }
+        .logo span { color: var(--accent-blue); }
+
+        nav { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+        nav a {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        nav a:hover, nav a.active {
+            color: var(--text-primary);
+            background-color: var(--bg-card);
+        }
+
+        .tenant-badge {
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+        }
+        .tenant-badge strong { color: var(--accent-blue); display: block; }
+
+        /* Main Content */
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            background-color: var(--bg-primary);
+        }
+
+        header {
+            padding: 20px 32px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: rgba(18, 24, 38, 0.8);
+            backdrop-filter: blur(8px);
+        }
+
+        .header-title h1 { font-size: 1.35rem; font-weight: 600; }
+        .header-title p { font-size: 0.85rem; color: var(--text-secondary); }
+
+        .api-key-input {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 6px 12px;
+            border-radius: 8px;
+        }
+        .api-key-input input {
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            width: 220px;
+            outline: none;
+        }
+
+        .content {
+            padding: 32px;
+            max-width: 1300px;
+            margin: 0 auto;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 28px;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+        }
+        .stat-card h3 { font-size: 0.8rem; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 6px; }
+        .stat-card .val { font-size: 1.8rem; font-weight: 700; }
+
+        /* Incidents List & Detail Layout */
+        .dashboard-split {
+            display: grid;
+            grid-template-columns: 420px 1fr;
+            gap: 24px;
+            min-height: 520px;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .card-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .incident-list {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 600px;
+        }
+
+        .incident-item {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.15s ease;
+        }
+        .incident-item:hover, .incident-item.selected {
+            background-color: var(--bg-card);
+        }
+        .incident-item .meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .badge {
+            font-size: 0.75rem;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .badge.critical { background: rgba(248, 113, 113, 0.2); color: var(--accent-red); }
+        .badge.high { background: rgba(251, 191, 36, 0.2); color: var(--accent-yellow); }
+        .badge.medium { background: rgba(56, 189, 248, 0.2); color: var(--accent-blue); }
+        .badge.resolved { background: rgba(52, 211, 153, 0.2); color: var(--accent-green); }
+        .badge.awaiting_approval { background: rgba(168, 85, 247, 0.2); color: var(--accent-purple); }
+
+        /* Detail Panel */
+        .incident-detail {
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        .detail-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 18px;
+        }
+        .detail-section h4 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .evidence-tag {
+            display: inline-block;
+            background: #23304a;
+            color: var(--accent-blue);
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-right: 6px;
+        }
+
+        .approval-banner {
+            background: linear-gradient(135deg, rgba(168, 85, 247, 0.15), rgba(56, 189, 248, 0.15));
+            border: 1px solid var(--accent-purple);
+            border-radius: 8px;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .btn {
+            background: var(--accent-blue);
+            color: #000;
+            border: none;
+            padding: 8px 18px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            font-size: 0.9rem;
+        }
+        .btn:hover { opacity: 0.9; }
+        .btn.btn-danger { background: var(--accent-red); color: #fff; }
+        .btn.btn-success { background: var(--accent-green); color: #000; }
+
+        /* Trigger Demo Alert Button */
+        .demo-bar {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+    </style>
+</head>
+<body>
+
+    <aside>
+        <div class="logo">
+            <span>⚡</span> SRE Copilot SaaS
+        </div>
+        <nav>
+            <a href="#" class="active">Command Center</a>
+            <a href="#connectors">Connectors</a>
+            <a href="#runbooks">Runbook Store</a>
+            <a href="#docs">API Webhook Docs</a>
+        </nav>
+        <div class="tenant-badge">
+            <span style="font-size: 0.75rem; color: var(--text-secondary);">ORGANIZATION</span>
+            <strong id="tenantNameDisplay">Demo SRE Team</strong>
+            <span style="font-size: 0.7rem; color: var(--accent-green);">● Pro Serverless Plan</span>
+        </div>
+    </aside>
+
+    <main>
+        <header>
+            <div class="header-title">
+                <h1>Incident Triage & Autonomous Response</h1>
+                <p>Governed AI Root-Cause Analysis and Safe Remediation</p>
+            </div>
+            <div class="api-key-input">
+                <span style="font-size: 0.8rem; color: var(--text-secondary);">API Key:</span>
+                <input type="password" id="apiKeyInput" value="sre_live_demo1234567890" placeholder="sre_live_...">
+                <button class="btn" style="padding: 4px 10px; font-size: 0.75rem;" onclick="refreshDashboard()">Connect</button>
+            </div>
+        </header>
+
+        <div class="content">
+
+            <!-- Quick Trigger Bar -->
+            <div class="demo-bar">
+                <div>
+                    <h3 style="font-size: 0.95rem; font-weight: 600;">Simulate Inbound Telemetry Alert</h3>
+                    <p style="font-size: 0.85rem; color: var(--text-secondary);">Test the complete agentic pipeline with an alert payload.</p>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn" onclick="triggerAlert('payment-service', 'OOMKilled & High Memory Spike', 'high')">Trigger Memory Anomaly</button>
+                    <button class="btn" style="background: var(--accent-purple); color: #fff;" onclick="triggerAlert('auth-gateway', 'HTTP 504 Gateway Timeouts > 12%', 'critical')">Trigger Critical 504</button>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Active Incidents</h3>
+                    <div class="val" id="statActive" style="color: var(--accent-yellow);">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Resolved & Recovered</h3>
+                    <div class="val" id="statResolved" style="color: var(--accent-green);">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Automated Actions</h3>
+                    <div class="val" id="statActions" style="color: var(--accent-blue);">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Mean Diagnosis Time</h3>
+                    <div class="val" style="color: var(--accent-purple);">1.4s</div>
+                </div>
+            </div>
+
+            <!-- Incidents Master/Detail View -->
+            <div class="dashboard-split">
+                <div class="card">
+                    <div class="card-header">
+                        <span>Live Incident Stream</span>
+                        <button class="btn" style="padding: 2px 8px; font-size: 0.75rem;" onclick="refreshDashboard()">Refresh</button>
+                    </div>
+                    <div class="incident-list" id="incidentList">
+                        <div style="padding: 20px; text-align: center; color: var(--text-secondary);">Loading incidents...</div>
+                    </div>
+                </div>
+
+                <div class="card" id="detailCard">
+                    <div class="card-header">
+                        <span id="detailHeaderTitle">Incident Detail & Root Cause</span>
+                        <span id="detailHeaderStatus" class="badge medium">SELECT AN INCIDENT</span>
+                    </div>
+                    <div class="incident-detail" id="detailBody">
+                        <p style="color: var(--text-secondary); text-align: center; margin-top: 80px;">
+                            Click an incident from the stream to inspect root-cause analysis, evidence citations, and governance proposals.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <script>
+        const API_BASE = window.location.origin + '/api/v1';
+        let currentIncidents = [];
+        let selectedIncidentId = null;
+
+        function getAuthHeaders() {
+            const key = document.getElementById('apiKeyInput').value.trim();
+            return {
+                'Content-Type': 'application/json',
+                'X-API-Key': key
+            };
+        }
+
+        async function refreshDashboard() {
+            try {
+                const res = await fetch(`${API_BASE}/incidents?limit=25`, { headers: getAuthHeaders() });
+                if (!res.ok) throw new Error('Auth failed');
+                currentIncidents = await res.json();
+                renderIncidentList();
+                updateStats();
+
+                if (selectedIncidentId) {
+                    loadIncidentDetail(selectedIncidentId);
+                } else if (currentIncidents.length > 0) {
+                    loadIncidentDetail(currentIncidents[0].incident_id);
+                }
+            } catch (err) {
+                document.getElementById('incidentList').innerHTML = `<div style="padding:20px; color: var(--accent-red);">Error connecting to API. Verify API key.</div>`;
+            }
+        }
+
+        function updateStats() {
+            let active = 0, resolved = 0;
+            currentIncidents.forEach(inc => {
+                if (inc.status === 'resolved') resolved++;
+                else active++;
+            });
+            document.getElementById('statActive').innerText = active;
+            document.getElementById('statResolved').innerText = resolved;
+            document.getElementById('statActions').innerText = resolved + Math.floor(active / 2);
+        }
+
+        function renderIncidentList() {
+            const listEl = document.getElementById('incidentList');
+            if (currentIncidents.length === 0) {
+                listEl.innerHTML = `<div style="padding: 20px; text-align:center; color: var(--text-secondary);">No incidents recorded. Click 'Trigger' above to run an agent workflow!</div>`;
+                return;
+            }
+
+            listEl.innerHTML = currentIncidents.map(inc => `
+                <div class="incident-item ${inc.incident_id === selectedIncidentId ? 'selected' : ''}" onclick="loadIncidentDetail('${inc.incident_id}')">
+                    <div class="meta">
+                        <span class="badge ${inc.severity}">${inc.severity}</span>
+                        <span style="font-size: 0.75rem; color: var(--text-secondary);">${new Date(inc.created_at).toLocaleTimeString()}</span>
+                    </div>
+                    <div style="font-weight: 600; font-size: 0.95rem; margin-bottom: 4px;">${inc.title}</div>
+                    <div style="display:flex; justify-content:space-between; font-size: 0.8rem; color: var(--text-secondary);">
+                        <span>Service: <strong>${inc.service}</strong></span>
+                        <span class="badge ${inc.status}">${inc.status}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function loadIncidentDetail(id) {
+            selectedIncidentId = id;
+            renderIncidentList();
+            const detailBody = document.getElementById('detailBody');
+            detailBody.innerHTML = `<div style="padding:40px; text-align:center;">Loading diagnostic details...</div>`;
+
+            const res = await fetch(`${API_BASE}/incidents/${id}`, { headers: getAuthHeaders() });
+            const data = await res.json();
+
+            document.getElementById('detailHeaderTitle').innerText = `${data.service} — ${data.title}`;
+            const statusBadge = document.getElementById('detailHeaderStatus');
+            statusBadge.className = `badge ${data.status}`;
+            statusBadge.innerText = data.status.toUpperCase();
+
+            let approvalHtml = '';
+            if (data.status === 'awaiting_approval' && data.action_proposal) {
+                approvalHtml = `
+                    <div class="approval-banner">
+                        <div>
+                            <h3 style="font-size: 1.05rem; margin-bottom: 4px;">⚠️ Remediation Approval Required (Tier 2)</h3>
+                            <p style="font-size: 0.85rem; color: var(--text-secondary);">
+                                Proposed Action: <strong>${data.action_proposal.action_type}</strong> (Target: ${data.action_proposal.target_service})<br>
+                                <span style="font-family: var(--font-mono); font-size: 0.75rem;">SHA256 Hash: ${data.action_proposal.proposal_hash.slice(0, 16)}...</span>
+                            </p>
+                        </div>
+                        <div style="display:flex; gap: 8px;">
+                            <button class="btn btn-danger" onclick="approveAction('${id}', 'reject')">Reject</button>
+                            <button class="btn btn-success" onclick="approveAction('${id}', 'approve')">Approve & Execute</button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            const evidenceHtml = (data.evidence || []).map(e => `
+                <div style="margin-bottom: 8px; font-size: 0.85rem;">
+                    <span class="evidence-tag">[${e.id}]</span>
+                    <strong>${e.source}:</strong> ${e.content}
+                </div>
+            `).join('');
+
+            const timelineHtml = (data.timeline || []).map(t => `
+                <div style="font-size: 0.85rem; margin-bottom: 6px;">
+                    <span style="color: var(--accent-blue); font-family: var(--font-mono); font-size: 0.75rem;">${new Date(t.time).toLocaleTimeString()}</span>
+                    <strong>[${t.stage.toUpperCase()}]:</strong> ${t.message}
+                </div>
+            `).join('');
+
+            detailBody.innerHTML = `
+                ${approvalHtml}
+
+                <div class="detail-section">
+                    <h4>🔍 Evidence-Grounded Root Cause</h4>
+                    <p style="font-size: 0.95rem; margin-bottom: 8px;">${data.root_cause || 'Analyzing telemetry...'}</p>
+                    <div style="display:flex; gap: 16px; font-size: 0.85rem; color: var(--text-secondary);">
+                        <span>Confidence: <strong style="color: var(--accent-green);">${Math.round(data.confidence * 100)}%</strong></span>
+                        <span>Severity: <strong>${data.severity.toUpperCase()}</strong></span>
+                        <span>Service: <strong>${data.service}</strong></span>
+                    </div>
+                </div>
+
+                <div class="detail-section">
+                    <h4>📊 Telemetry Evidence Cited</h4>
+                    ${evidenceHtml || '<p style="color: var(--text-secondary);">No evidence records.</p>'}
+                </div>
+
+                <div class="detail-section">
+                    <h4>⏱️ Diagnostic & Action Timeline</h4>
+                    ${timelineHtml}
+                </div>
+            `;
+        }
+
+        async function approveAction(id, decision) {
+            await fetch(`${API_BASE}/incidents/${id}/approve`, {
+                method: 'POST',
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ decision, reason: `Action ${decision}d via Command Center Dashboard` })
+            });
+            refreshDashboard();
+        }
+
+        async function triggerAlert(service, title, severity) {
+            await fetch(`${API_BASE}/alerts/webhook`, {
+                method: 'POST',
+                headers: getAuthHeaders(),
+                body: JSON.stringify({
+                    title: title,
+                    service: service,
+                    severity: severity,
+                    anomaly_type: 'ResourceSaturation'
+                })
+            });
+            setTimeout(refreshDashboard, 800);
+        }
+
+        // Initialize on load
+        window.addEventListener('load', refreshDashboard);
+        setInterval(refreshDashboard, 10000); // 10s auto-refresh
+    </script>
+</body>
+</html>

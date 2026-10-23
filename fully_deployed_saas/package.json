@@ -1,0 +1,12 @@
+{
+  "name": "sre-agent-saas",
+  "version": "1.0.0",
+  "description": "Multi-Tenant Autonomous SRE Intelligence Platform",
+  "scripts": {
+    "build": "npm --prefix ../dashboard run build"
+  },
+  "dependencies": {
+    "@neon/config": "^1.9.3",
+    "@neon/env": "^1.6.4"
+  }
+}

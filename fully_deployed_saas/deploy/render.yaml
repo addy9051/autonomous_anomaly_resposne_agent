@@ -1,0 +1,43 @@
+# ═══════════════════════════════════════════════════════════════
+# Render 1-Click Blueprint for Autonomous SRE SaaS
+# Deploy via Render Dashboard -> Blueprints -> Connect Repo
+# Total Cost: Free to $7/mo
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  - type: web
+    name: sre-saas-api
+    runtime: docker
+    dockerfilePath: fully_deployed_saas/Dockerfile
+    dockerContext: fully_deployed_saas
+    plan: starter # $7/mo or free instance
+    region: oregon
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sre-saas-db
+          property: connectionString
+      - key: ENCRYPTION_MASTER_KEY
+        generateValue: true
+      - key: LLM_PROVIDER
+        value: openai # or openrouter
+      - key: LLM_API_KEY
+        sync: false # Set in Render Dashboard
+      - key: LLM_BASE_URL
+        value: https://api.openai.com/v1 # or https://openrouter.ai/api/v1
+      - key: LLM_MODEL
+        value: gpt-4o-mini # or deepseek/deepseek-chat
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: AUTO_REMEDIATION_ENABLED
+        value: false
+
+databases:
+  - name: sre-saas-db
+    databaseName: agent_kb
+    user: postgres
+    plan: starter # or use free Neon.tech connection string
+    region: oregon
+    postgresMajorVersion: 16

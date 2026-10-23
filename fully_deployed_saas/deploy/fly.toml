@@ -1,0 +1,30 @@
+# ═══════════════════════════════════════════════════════════════
+# Fly.io Deployment Configuration
+# Deploy: fly launch && fly deploy
+# Cost: Scales to 0 when idle ($0/mo)
+# ═══════════════════════════════════════════════════════════════
+
+app = "sre-agent-saas"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  APP_ENV = "production"
+  LLM_PROVIDER = "openai"
+  LLM_MODEL = "gpt-4o-mini"
+  LLM_BASE_URL = "https://api.openai.com/v1"
+  EMBEDDING_MODEL = "text-embedding-3-small"
+  AUTO_REMEDIATION_ENABLED = "false"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1024mb"

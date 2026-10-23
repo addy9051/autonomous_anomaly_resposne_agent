@@ -1,0 +1,48 @@
+# ═══════════════════════════════════════════════════════════════
+# Local Full-Stack SaaS Docker Compose (Test Stack)
+# Run: docker compose up -d
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  postgres:
+    # Timescale image comes with pgvector and pgvectorscale (DiskANN) pre-installed
+    image: timescale/timescaledb-ha:pg16
+    container_name: saas-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: agent_kb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: local_dev_password
+    volumes:
+      - saas-pgdata:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: saas-api
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql://postgres:local_dev_password@postgres:5432/agent_kb
+      ENCRYPTION_MASTER_KEY: e24zOHRzNHRyeHh5cndxOG5qNnVyMGV0cG1iN3Jpd3g=
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      LLM_API_KEY: ${LLM_API_KEY:-sk-dummy-key}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      AUTO_REMEDIATION_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  saas-pgdata:
