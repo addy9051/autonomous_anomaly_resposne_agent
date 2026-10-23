@@ -298,6 +298,19 @@ class AppConfig(BaseSettings):
         default="",
         description="Optional API Gateway stage path prefix to strip from private integration requests",
     )
+    api_gateway_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("API_GATEWAY_SECRET", "GATEWAY_SECRET"),
+        description="Pre-shared secret that API Gateway must provide to authenticate gateway-injected identity headers",
+    )
+    gateway_secret_header: str = Field(
+        default="X-Gateway-Secret",
+        description="Header containing the pre-shared secret from API Gateway",
+    )
+    allow_anonymous_dev: bool = Field(
+        default=False,
+        description="Explicitly allow unauthenticated access in development when no auth token is configured",
+    )
     require_gateway_auth: bool = Field(
         default=True,
         description="Require gateway-provided identity header in non-development environments",

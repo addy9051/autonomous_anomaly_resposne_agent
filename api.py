@@ -200,28 +200,97 @@ async def verify_auth(
 ) -> str:
     """
     Resolve caller identity from the trusted gateway, or a development-only API key.
+
+    Hardened against untrusted identity header spoofing and development auth bypasses:
+    - If API_GATEWAY_SECRET is configured, incoming gateway identity headers MUST be
+      accompanied by a valid gateway verification secret header.
+    - In development mode without a gateway secret, identity headers cannot be spoofed
+      without authenticating with a valid development API key.
+    - If no auth token is configured in development, requests fail closed unless
+      ALLOW_ANONYMOUS_DEV=True is explicitly set.
     """
     settings = get_settings()
     config = settings.app
     environment = config.app_env.lower()
-    identity = request.headers.get(config.trusted_identity_header)
-    if identity and identity.strip():
-        return identity.strip()
+    raw_identity = request.headers.get(config.trusted_identity_header)
+    identity = raw_identity.strip() if raw_identity and raw_identity.strip() else None
 
+    gateway_secret_expected = getattr(config, "api_gateway_secret", "") or os.environ.get("API_GATEWAY_SECRET", "")
+    secret_header_name = getattr(config, "gateway_secret_header", "X-Gateway-Secret")
+
+    # 1. Incoming gateway identity claimed:
+    if identity:
+        # If a gateway secret is configured, strictly enforce pre-shared secret validation
+        if gateway_secret_expected:
+            incoming_secret = request.headers.get(secret_header_name, "")
+            if not incoming_secret or not hmac.compare_digest(incoming_secret, gateway_secret_expected):
+                logger.warning(
+                    "untrusted_identity_header_rejected",
+                    header=config.trusted_identity_header,
+                    reason="missing_or_invalid_gateway_secret",
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Untrusted {config.trusted_identity_header} header: missing or invalid gateway verification secret.",
+                )
+            return identity
+
+        # If gateway secret is not configured:
+        # In non-development or when require_gateway_auth is True, trust gateway-provided identity
+        if environment != "development" or config.require_gateway_auth:
+            return identity
+
+        # In development without gateway secret: do NOT blindly trust the header.
+        # Caller must either authenticate with a valid API key, or have allow_anonymous_dev enabled.
+        auth_token = getattr(config, "api_auth_token", None)
+        if auth_token is None:
+            auth_token = os.environ.get("API_AUTH_TOKEN", "")
+        if auth_token:
+            if not api_key or not hmac.compare_digest(api_key, auth_token):
+                raise HTTPException(
+                    status_code=401,
+                    detail="Unauthorized: In development, using a custom identity header requires a valid X-API-Key header.",
+                )
+            return identity
+
+        if getattr(config, "allow_anonymous_dev", False):
+            return identity
+
+        raise HTTPException(
+            status_code=401,
+            detail=f"Untrusted {config.trusted_identity_header} header in development: API_AUTH_TOKEN is not configured.",
+        )
+
+    # 2. No gateway identity provided:
+    # Non-development or require_gateway_auth: fail closed.
     if environment != "development" or config.require_gateway_auth:
         raise HTTPException(
             status_code=401,
             detail="Missing trusted gateway identity; requests must use authenticated API Gateway ingress.",
         )
 
-    auth_token = config.api_auth_token or os.environ.get("API_AUTH_TOKEN", "")
+    # 3. Development fallback: require valid API key if configured
+    auth_token = getattr(config, "api_auth_token", None)
+    if auth_token is None:
+        auth_token = os.environ.get("API_AUTH_TOKEN", "")
     if auth_token:
         if not api_key or not hmac.compare_digest(api_key, auth_token):
             raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing X-API-Key header")
         return "dev-api-key-user"
 
-    logger.warning("auth_bypassed_development", tip="Configure API_AUTH_TOKEN or require gateway authentication")
-    return "anonymous-dev"
+    # 4. Development with no auth configured:
+    # Fail closed by default; only allow if explicitly opted in via allow_anonymous_dev
+    if getattr(config, "allow_anonymous_dev", False):
+        logger.warning(
+            "auth_bypassed_development",
+            tip="allow_anonymous_dev is enabled. Configure API_AUTH_TOKEN for secure development.",
+        )
+        return "anonymous-dev"
+
+    raise HTTPException(
+        status_code=401,
+        detail="Unauthorized: No authentication configured. Set API_AUTH_TOKEN in development or route through authenticated API Gateway.",
+    )
 
 
 class ApproveActionRequest(BaseModel):
