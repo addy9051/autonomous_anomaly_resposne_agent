@@ -6,6 +6,7 @@ Compatible with: OpenAI (gpt-4o-mini), OpenRouter (DeepSeek-V3, Gemini Flash), a
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 from langchain_core.embeddings import Embeddings
@@ -43,18 +44,42 @@ def get_chat_model(
     )
 
 
+class LocalFastEmbeddings(Embeddings):
+    """Zero-cost local embeddings using FastEmbed (ONNX runtime on CPU, zero API keys)."""
+
+    _cached_instance = None
+
+    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5") -> None:
+        from fastembed import TextEmbedding
+        self._model = TextEmbedding(model_name=model_name)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [vec.tolist() for vec in self._model.embed(texts)]
+
+    def embed_query(self, text: str) -> list[float]:
+        return next(self._model.embed([text])).tolist()
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self.embed_documents(texts)
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return self.embed_query(text)
+
+
+@lru_cache(maxsize=1)
 def get_embeddings() -> Embeddings:
-    """Return configured OpenAI-compatible embeddings client."""
+    """Return embeddings client: zero-cost local FastEmbed by default, or external API if configured."""
     settings = get_settings()
 
-    api_key = settings.effective_embedding_key or "sk-dummy-key"
-    base_url = settings.effective_embedding_url
-    model = settings.embedding_model
+    if settings.embedding_provider == "openai" and settings.embedding_api_key:
+        return OpenAIEmbeddings(
+            model=settings.embedding_model,
+            base_url=settings.effective_embedding_url,
+            api_key=settings.effective_embedding_key,
+            dimensions=settings.embedding_dimensions,
+            check_embedding_ctx_length=False,
+        )
 
-    return OpenAIEmbeddings(
-        model=model,
-        base_url=base_url,
-        api_key=api_key,
-        dimensions=settings.embedding_dimensions,
-        check_embedding_ctx_length=False,
-    )
+    # 100% free local CPU embeddings with FastEmbed (Zero API key / zero quota)
+    return LocalFastEmbeddings(model_name=settings.embedding_model)
+

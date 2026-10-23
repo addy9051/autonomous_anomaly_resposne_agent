@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS episodes (
 CREATE INDEX IF NOT EXISTS idx_episodes_tenant_fp ON episodes(tenant_id, fingerprint, created_at DESC);
 
 -- 6. Knowledge Base Documents / Runbooks (Multi-Tenant Hybrid RAG)
--- Standard OpenAI text-embedding-3-small dimension is 1536 (or 768 for BGE / Gemini)
+-- BAAI/bge-small-en-v1.5 dimension is 384 (FastEmbed zero-cost CPU embeddings)
 CREATE TABLE IF NOT EXISTS documents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS documents (
     title VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
     service_tags TEXT[] DEFAULT '{}',
-    embedding vector(1536), -- pgvector column
+    embedding vector(384), -- pgvector column
     metadata JSONB DEFAULT '{}'::jsonb,
     tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', title || ' ' || content)) STORED,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

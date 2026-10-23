@@ -73,14 +73,15 @@ class SaaSConfig(BaseSettings):
     llm_model: str = Field(default="gpt-4o-mini", validation_alias="LLM_MODEL")
     llm_timeout_seconds: float = 45.0
 
-    # ─── Embeddings (Pay-per-Token) ───
+    # ─── Embeddings (Zero-Cost Local FastEmbed or OpenAI-compatible) ───
+    embedding_provider: Literal["local", "openai", "custom"] = "local"
     embedding_base_url: str = Field(default="", validation_alias="EMBEDDING_BASE_URL")
     embedding_api_key: str = Field(
         default="",
-        validation_alias=AliasChoices("EMBEDDING_API_KEY", "OPENAI_API_KEY", "LLM_API_KEY"),
+        validation_alias=AliasChoices("EMBEDDING_API_KEY", "OPENAI_API_KEY"),
     )
-    embedding_model: str = Field(default="text-embedding-3-small", validation_alias="EMBEDDING_MODEL")
-    embedding_dimensions: int = 1536
+    embedding_model: str = Field(default="BAAI/bge-small-en-v1.5", validation_alias="EMBEDDING_MODEL")
+    embedding_dimensions: int = 384
 
     # ─── RAG & Search ───
     rag_top_k: int = 5
