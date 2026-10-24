@@ -64,9 +64,8 @@ tfplan*
 .connector_state.json
 
 
-# ─── Agent Skills ───────────────────────────────────────────────
-*.agents
-!.agents/rules/
+# ─── Agent Skills & Customizations ──────────────────────────────
+!/.agents/
 
 models/flashrank/
 models/prompt-injection-v2/
