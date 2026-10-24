@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS tenant_api_keys (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     key_hash VARCHAR(64) NOT NULL UNIQUE, -- SHA-256 hash of the API key
-    key_prefix VARCHAR(12) NOT NULL,      -- e.g. "sre_live_..."
+    key_prefix VARCHAR(32) NOT NULL,      -- e.g. "sre_live_..."
     name VARCHAR(128) NOT NULL DEFAULT 'Default Ingestion Key',
     is_revoked BOOLEAN NOT NULL DEFAULT FALSE,
     last_used_at TIMESTAMPTZ,
