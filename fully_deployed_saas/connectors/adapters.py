@@ -22,6 +22,32 @@ class BaseTelemetryAdapter:
         raise NotImplementedError
 
 
+import ipaddress
+import urllib.parse
+
+
+def is_safe_external_url(url: str) -> bool:
+    """Validate URL to block SSRF targeting private IPs, loopback, or metadata services."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        if hostname.lower() in ("localhost", "127.0.0.1", "::1", "metadata.google.internal", "169.254.169.254"):
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return False
+        except ValueError:
+            pass
+        return True
+    except Exception:
+        return False
+
+
 class PrometheusAdapter(BaseTelemetryAdapter):
     def __init__(self, url: str, bearer_token: str | None = None) -> None:
         self.url = url.rstrip("/")
@@ -30,7 +56,11 @@ class PrometheusAdapter(BaseTelemetryAdapter):
     async def fetch_evidence(self, service: str, lookback_minutes: int = 15) -> list[EvidenceRecord]:
         records: list[EvidenceRecord] = []
         now_iso = datetime.now(UTC).isoformat()
-        client = httpx.AsyncClient(timeout=10.0, headers=self.headers)
+
+        # SSRF Protection Gate
+        if not is_safe_external_url(self.url):
+            logger.error("prometheus_adapter_blocked_unsafe_url", url=self.url)
+            return records
 
         queries = {
             "CPU Utilization": f'sum(rate(container_cpu_usage_seconds_total{{container=~".*{service}.*"}}[5m])) * 100',
@@ -38,30 +68,29 @@ class PrometheusAdapter(BaseTelemetryAdapter):
             "HTTP 5xx Error Rate": f'sum(rate(http_requests_total{{status=~"5..", service=~".*{service}.*"}}[5m])) / sum(rate(http_requests_total{{service=~".*{service}.*"}}[5m])) * 100',
         }
 
-        idx = 1
-        for label, promql in queries.items():
-            try:
-                resp = await client.get(f"{self.url}/api/v1/query", params={"query": promql})
-                if resp.status_code == 200:
-                    data = resp.json()
-                    val = "N/A"
-                    res = data.get("data", {}).get("result", [])
-                    if res:
-                        val = f"{float(res[0]['value'][1]):.2f}"
-                    records.append(
-                        EvidenceRecord(
-                            id=f"E{idx}",
-                            source="Prometheus",
-                            timestamp=now_iso,
-                            content=f"Service '{service}' metric {label}: {val}",
-                            is_anomaly=True if ("Error" in label and val != "N/A" and float(val) > 2.0) else False,
+        async with httpx.AsyncClient(timeout=10.0, headers=self.headers) as client:
+            idx = 1
+            for label, promql in queries.items():
+                try:
+                    resp = await client.get(f"{self.url}/api/v1/query", params={"query": promql})
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        val = "N/A"
+                        res = data.get("data", {}).get("result", [])
+                        if res:
+                            val = f"{float(res[0]['value'][1]):.2f}"
+                        records.append(
+                            EvidenceRecord(
+                                id=f"E{idx}",
+                                source="Prometheus",
+                                timestamp=now_iso,
+                                content=f"Service '{service}' metric {label}: {val}",
+                                is_anomaly=True if ("Error" in label and val != "N/A" and float(val) > 2.0) else False,
+                            )
                         )
-                    )
-                    idx += 1
-            except Exception as exc:
-                logger.warning("prometheus_query_failed", query=promql, error=str(exc))
-            finally:
-                await client.aclose()
+                        idx += 1
+                except Exception as exc:
+                    logger.warning("prometheus_query_failed", query=promql, error=str(exc))
 
         return records
 

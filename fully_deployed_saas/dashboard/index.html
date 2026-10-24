@@ -311,7 +311,7 @@
             </div>
             <div class="api-key-input">
                 <span style="font-size: 0.8rem; color: var(--text-secondary);">API Key:</span>
-                <input type="text" id="apiKeyInput" value="sre_live_OPNFTt4UZJ9QArujqEGxgvoLqJBpPaY4rsWYh0UbRb0" placeholder="sre_live_...">
+                <input type="password" id="apiKeyInput" value="" placeholder="Enter your sre_live_... key">
                 <button class="btn" style="padding: 4px 10px; font-size: 0.75rem;" onclick="saveAndConnect()">Connect</button>
             </div>
         </header>
@@ -380,13 +380,12 @@
 
     <script>
         const API_BASE = window.location.origin + '/api/v1';
-        const DEFAULT_API_KEY = 'sre_live_OPNFTt4UZJ9QArujqEGxgvoLqJBpPaY4rsWYh0UbRb0';
         let currentIncidents = [];
         let selectedIncidentId = null;
 
         function getAuthHeaders() {
             const input = document.getElementById('apiKeyInput');
-            const key = (input ? input.value : '') || localStorage.getItem('sre_api_key') || DEFAULT_API_KEY;
+            const key = (input ? input.value : '') || localStorage.getItem('sre_api_key') || '';
             return {
                 'Content-Type': 'application/json',
                 'X-API-Key': key.trim()
@@ -402,6 +401,18 @@
         }
 
         async function refreshDashboard() {
+            const currentKey = ((document.getElementById('apiKeyInput') || {}).value || '').trim() || localStorage.getItem('sre_api_key') || '';
+            if (!currentKey) {
+                document.getElementById('incidentList').innerHTML = `
+                    <div style="padding:24px; text-align:center; color: var(--text-secondary); font-size: 0.9rem;">
+                        <div style="font-size: 1.6rem; margin-bottom: 8px;">🔑</div>
+                        <strong>Authentication Required</strong><br>
+                        <span style="font-size: 0.8rem; color: #8899aa;">Paste your organization API key (<code>sre_live_...</code>) in the header bar above and click <strong>Connect</strong>.</span>
+                    </div>
+                `;
+                return;
+            }
+
             try {
                 const res = await fetch(`${API_BASE}/incidents?limit=25`, { headers: getAuthHeaders() });
                 if (!res.ok) {
@@ -422,7 +433,7 @@
                     <div style="padding:20px; color: var(--accent-red); font-size: 0.85rem; line-height: 1.5;">
                         <strong>⚠️ API Authentication Error:</strong><br>
                         ${err.message || 'Unable to connect'}.<br><br>
-                        Please ensure a valid <code>sre_live_...</code> tenant API key is entered in the header and click <strong>Connect</strong>.
+                        Please verify your <code>sre_live_...</code> tenant API key in the header and click <strong>Connect</strong>.
                     </div>
                 `;
             }
@@ -558,9 +569,9 @@
 
         // Initialize on load
         window.addEventListener('load', () => {
-            const savedKey = localStorage.getItem('sre_api_key') || DEFAULT_API_KEY;
+            const savedKey = localStorage.getItem('sre_api_key') || '';
             const input = document.getElementById('apiKeyInput');
-            if (input) input.value = savedKey;
+            if (input && savedKey) input.value = savedKey;
             refreshDashboard();
         });
         setInterval(refreshDashboard, 10000); // 10s auto-refresh
