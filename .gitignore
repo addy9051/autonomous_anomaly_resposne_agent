@@ -66,6 +66,7 @@ tfplan*
 
 # ─── Agent Skills & Customizations ──────────────────────────────
 !/.agents/
+.agents/skills/modal/
 
 models/flashrank/
 models/prompt-injection-v2/
