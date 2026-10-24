@@ -298,7 +298,7 @@
         </nav>
         <div class="tenant-badge">
             <span style="font-size: 0.75rem; color: var(--text-secondary);">ORGANIZATION</span>
-            <strong id="tenantNameDisplay">Demo SRE Team</strong>
+            <strong id="tenantNameDisplay">Live Production Team</strong>
             <span style="font-size: 0.7rem; color: var(--accent-green);">● Pro Serverless Plan</span>
         </div>
     </aside>
@@ -311,8 +311,8 @@
             </div>
             <div class="api-key-input">
                 <span style="font-size: 0.8rem; color: var(--text-secondary);">API Key:</span>
-                <input type="password" id="apiKeyInput" value="sre_live_demo1234567890" placeholder="sre_live_...">
-                <button class="btn" style="padding: 4px 10px; font-size: 0.75rem;" onclick="refreshDashboard()">Connect</button>
+                <input type="text" id="apiKeyInput" value="sre_live_OPNFTt4UZJ9QArujqEGxgvoLqJBpPaY4rsWYh0UbRb0" placeholder="sre_live_...">
+                <button class="btn" style="padding: 4px 10px; font-size: 0.75rem;" onclick="saveAndConnect()">Connect</button>
             </div>
         </header>
 
@@ -380,21 +380,34 @@
 
     <script>
         const API_BASE = window.location.origin + '/api/v1';
+        const DEFAULT_API_KEY = 'sre_live_OPNFTt4UZJ9QArujqEGxgvoLqJBpPaY4rsWYh0UbRb0';
         let currentIncidents = [];
         let selectedIncidentId = null;
 
         function getAuthHeaders() {
-            const key = document.getElementById('apiKeyInput').value.trim();
+            const input = document.getElementById('apiKeyInput');
+            const key = (input ? input.value : '') || localStorage.getItem('sre_api_key') || DEFAULT_API_KEY;
             return {
                 'Content-Type': 'application/json',
-                'X-API-Key': key
+                'X-API-Key': key.trim()
             };
+        }
+
+        function saveAndConnect() {
+            const input = document.getElementById('apiKeyInput');
+            if (input && input.value.trim()) {
+                localStorage.setItem('sre_api_key', input.value.trim());
+            }
+            refreshDashboard();
         }
 
         async function refreshDashboard() {
             try {
                 const res = await fetch(`${API_BASE}/incidents?limit=25`, { headers: getAuthHeaders() });
-                if (!res.ok) throw new Error('Auth failed');
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.detail || `HTTP ${res.status}`);
+                }
                 currentIncidents = await res.json();
                 renderIncidentList();
                 updateStats();
@@ -405,7 +418,13 @@
                     loadIncidentDetail(currentIncidents[0].incident_id);
                 }
             } catch (err) {
-                document.getElementById('incidentList').innerHTML = `<div style="padding:20px; color: var(--accent-red);">Error connecting to API. Verify API key.</div>`;
+                document.getElementById('incidentList').innerHTML = `
+                    <div style="padding:20px; color: var(--accent-red); font-size: 0.85rem; line-height: 1.5;">
+                        <strong>⚠️ API Authentication Error:</strong><br>
+                        ${err.message || 'Unable to connect'}.<br><br>
+                        Please ensure a valid <code>sre_live_...</code> tenant API key is entered in the header and click <strong>Connect</strong>.
+                    </div>
+                `;
             }
         }
 
@@ -538,7 +557,12 @@
         }
 
         // Initialize on load
-        window.addEventListener('load', refreshDashboard);
+        window.addEventListener('load', () => {
+            const savedKey = localStorage.getItem('sre_api_key') || DEFAULT_API_KEY;
+            const input = document.getElementById('apiKeyInput');
+            if (input) input.value = savedKey;
+            refreshDashboard();
+        });
         setInterval(refreshDashboard, 10000); // 10s auto-refresh
     </script>
 </body>
