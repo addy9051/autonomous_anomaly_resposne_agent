@@ -40,12 +40,13 @@ from agents.diagnosis.attribution import (
     Attribution,
     apply_temporal_rule,
     decide_attribution,
+    has_symptom_evidence,
     index_evidence,
     rule_out_acausal_changes,
-    symptom_onset,
 )
 from agents.diagnosis.candidate_judge import Judgement, aggregate, judge_candidates
 from agents.diagnosis.evidence import record_to_evidence
+from agents.diagnosis.onset import condense_evidence
 from evals.rca_bench.prompt_variants import ATTRIBUTION_MODES, synthesis_prompt_for
 from evals.rca_bench.schema import Prediction, Scenario, Suspect
 from shared.schemas import (
@@ -196,11 +197,15 @@ def prediction_from_diagnosis(
 
 
 def _visible_evidence(replay: _Replay) -> list[dict[str, Any]]:
-    """What the agent could see for this scenario, in the order the evidence collector returns it."""
+    """What the agent could see for this scenario, in the order the evidence collector returns it.
+
+    Long metric series are condensed to their estimated onset, as the attribution steps would see them; the
+    benchmark's own evidence is point observations, which this leaves unchanged.
+    """
     visible = ([] if replay.telemetry_down else list(replay.signals)) + (
         [] if replay.deploys_down else list(replay.changes)
     )
-    return sorted(visible, key=lambda e: e["observed_at"])
+    return condense_evidence(sorted(visible, key=lambda e: e["observed_at"]))
 
 
 def scenario_evidence(scenario: Scenario) -> list[dict[str, Any]]:
@@ -479,7 +484,7 @@ class AgentSolver:
             verdicts = await judge_candidates(scenario.alert.summary, evidence, exclude=frozenset(ruled_out_ids))
             judgement = aggregate(
                 verdicts,
-                has_symptoms=symptom_onset(evidence) is not None,
+                has_symptoms=has_symptom_evidence(evidence),
                 missing_sources=diagnosis.missing_sources,
                 fallback_confidence=base.confidence,
             )

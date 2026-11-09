@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from agents.diagnosis.onset import condense_evidence
 from data_pipeline.connectors import deploy_events
 from data_pipeline.connectors.adapters.base import TelemetrySourceError
 from shared.utils import get_logger
@@ -22,6 +23,9 @@ logger = get_logger("diagnosis_evidence")
 
 DEFAULT_METRICS = ["latency_p99", "error_rate", "transaction_failure_rate"]
 DEFAULT_WINDOW_SECONDS = 900
+# Dating a symptom needs samples from before it started. 900 s is too short for that: in the benchmark only 7% of
+# onsets have a baseline inside it, against 87% for 3600 s and 100% for 5400 s (docs/pivot/08).
+SYMPTOM_WINDOW_SECONDS = 5400
 DEPLOY_WINDOW_SECONDS = 6 * 3600
 MAX_SERVICES = 3
 
@@ -95,6 +99,23 @@ def record_to_evidence(rec: NormalizedTelemetryRecord, entity: str | None = None
 
 def _sort_key(e: dict[str, Any]) -> datetime:
     return datetime.fromisoformat(e["observed_at"])
+
+
+async def collect_symptom_evidence(
+    adapter: BaseTelemetryAdapter,
+    services: list[str],
+    metric_names: list[str] | None = None,
+    window_seconds: int = SYMPTOM_WINDOW_SECONDS,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Symptom evidence dated for the temporal rule: one record per metric, at the time it left its baseline.
+
+    Uses a longer lookback than ``collect_evidence`` so there are baseline samples before the symptom, then
+    condenses each series (see ``agents.diagnosis.onset``). Only adapters that return the whole series help: the
+    Prometheus adapter does; the Datadog adapter returns the latest value and a mean, and the Splunk adapter
+    returns aggregates, so for those the onset stays unknown and the rule rules nothing out.
+    """
+    evidence, gaps = await collect_evidence(adapter, services, metric_names, window_seconds)
+    return condense_evidence(evidence), gaps
 
 
 async def collect_deploy_evidence(

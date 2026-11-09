@@ -11,6 +11,7 @@ Research and analysis behind the decision to move this project from a payment-re
 | [05-POSITIONING_AND_VALIDATION_PLAN.md](./05-POSITIONING_AND_VALIDATION_PLAN.md) | One-page positioning, hypotheses with kill criteria, and a six-week sequence. |
 | [06-RCA_BENCHMARK.md](./06-RCA_BENCHMARK.md) | The benchmark harness in `evals/rca_bench/`: how to run it, metrics, suite, baseline results, limits. |
 | [07-FIRST_AGENT_RUN_FINDINGS.md](./07-FIRST_AGENT_RUN_FINDINGS.md) | Results and analysis of the first full agent run, with caveats and next steps. |
+| [08-ONSET_DETECTION.md](./08-ONSET_DETECTION.md) | Dating a symptom from a metric series so the temporal rule is safe on real telemetry: design, validation, and what is not wired yet. |
 
 Related existing docs: [SRE_AGENT_PRODUCT_STRATEGY_BLUEPRINT.md](../SRE_AGENT_PRODUCT_STRATEGY_BLUEPRINT.md), [SRE_STRATEGIC_BLUEPRINT.md](../SRE_STRATEGIC_BLUEPRINT.md), [AGENT_SKILLS_PLAYBOOKS.md](../AGENT_SKILLS_PLAYBOOKS.md), [ENTERPRISE_RED_TEAMING.md](../ENTERPRISE_RED_TEAMING.md).
 

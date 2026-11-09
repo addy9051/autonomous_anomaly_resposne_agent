@@ -55,6 +55,23 @@ def suite() -> list[Scenario]:
     return load_suite(DEFAULT_SUITE)
 
 
+@pytest.fixture(autouse=True)
+def _close_agent_solvers(monkeypatch: pytest.MonkeyPatch) -> Any:  # noqa: ANN401 - a generator fixture
+    """AgentSolver patches shared modules (evidence collection, runbook search) when it first solves a scenario.
+    Close every solver a test creates, so those patches cannot leak into other test modules."""
+    created: list[AgentSolver] = []
+    original_init = AgentSolver.__init__
+
+    def tracking_init(self: AgentSolver, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        original_init(self, *args, **kwargs)
+        created.append(self)
+
+    monkeypatch.setattr(AgentSolver, "__init__", tracking_init)
+    yield
+    for solver in reversed(created):  # nested patches must be undone last-in, first-out
+        solver.close()
+
+
 def test_frozen_suite_matches_generator(suite: list[Scenario]) -> None:
     regenerated = generate_suite(seed=0, per_class=5)
     assert [s.model_dump() for s in regenerated] == [s.model_dump() for s in suite]

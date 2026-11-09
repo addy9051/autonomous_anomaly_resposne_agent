@@ -11,9 +11,12 @@ Neither step is wired into the production diagnosis graph yet. They are measured
 (``evals/rca_bench``), under the decision rule in docs/pivot/06.
 
 Evidence is the list of evidence dicts the graph already builds (``agents/diagnosis/evidence.py``). The rules rely on
-``signal_type`` ("deploy_event" marks a change) and ``event_time``. The onset rule is only as good as the symptom
-timestamps: it needs the time a metric first went abnormal, not just its latest sample. Adapters that return only a
-latest value would make the rule misfire, so treat real-world use as needing onset detection first.
+``signal_type`` ("deploy_event" marks a change) and ``event_time``. The onset rule needs the time a metric first went
+abnormal. A range query returns every sample in its window, so on raw samples the "earliest symptom" is the start of
+the window, which would rule out a real culprit that landed a few minutes before the alert. Run
+``onset.condense_evidence`` first (``evidence.collect_symptom_evidence`` does): it replaces each series with one
+record at the time the metric left its baseline, or at its latest sample when that cannot be told, which only makes
+the rule rule out fewer changes. See docs/pivot/08.
 """
 
 from __future__ import annotations
@@ -107,13 +110,23 @@ def _event_time(record: dict[str, Any]) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def _is_symptom(record: dict[str, Any]) -> bool:
+    """A non-change record, unless onset detection found that its series never left its baseline."""
+    return record.get("signal_type") != DEPLOY_SIGNAL_TYPE and (record.get("tags") or {}).get("symptom") is not False
+
+
+def has_symptom_evidence(evidence: list[dict[str, Any]]) -> bool:
+    """Whether there is anything to attribute: at least one symptom record, whether or not its onset is known."""
+    return any(_is_symptom(e) for e in evidence[:MAX_EVIDENCE_LINES])
+
+
 def symptom_onset(evidence: list[dict[str, Any]]) -> datetime | None:
-    """Earliest time of any non-change evidence record, or None when there is none."""
-    times = [
-        t
-        for e in evidence[:MAX_EVIDENCE_LINES]
-        if e.get("signal_type") != DEPLOY_SIGNAL_TYPE and (t := _event_time(e)) is not None
-    ]
+    """Earliest time of any symptom record, or None when there is none.
+
+    For long metric series this is only meaningful after ``onset.condense_evidence``, which replaces the samples
+    with the time the metric left its baseline. On raw samples it would be the start of the query window.
+    """
+    times = [t for e in evidence[:MAX_EVIDENCE_LINES] if _is_symptom(e) and (t := _event_time(e)) is not None]
     return min(times) if times else None
 
 
