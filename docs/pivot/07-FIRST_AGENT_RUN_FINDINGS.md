@@ -193,6 +193,44 @@ Chosen after seeing the decompose results, so it was **not** pre-declared; treat
 
 The two questions disagreed on about 11 of 40 (dev) and 14 of 40 (holdout) scenarios per run. Top-1 is unchanged by construction, so this is purely a confidence result. Caveats: run k of the baseline is paired with run k of `decompose`, which are independent generations, so this approximates the live harness; it costs one extra short model call per scenario if run live; abstention is still 0 and the category is still degenerate.
 
+## Confirmation of the confidence cap on a fresh seed (seed 2, live)
+
+Decision rule from [06](./06-RCA_BENCHMARK.md), written before the runs. 3 live runs per configuration, same 7B model; `temporal` is the baseline runs with the temporal rule applied offline.
+
+| Seed 2 (mean, min-max) | baseline | temporal | temporal_cap (live) |
+|---|---|---|---|
+| Top-1 | 0.667 (0.629-0.743) | 0.857 (0.800-0.886) | 0.800 (0.686-0.914) |
+| Confident (0.7 or higher) errors | 0.258 (0.200-0.325) | 0.117 (0.100-0.125) | **0.025 (0.025-0.025)** |
+| Brier | 0.237 | 0.197 (0.183-0.205) | **0.176 (0.168-0.192)** |
+| ECE | 0.146 | 0.158 | 0.124 |
+| Coverage | 1.00 | 1.00 | 1.00 |
+| Correct answers citing real support | 0.888 | 0.890 | 0.952 |
+| Low confidence (0.4 or lower), unanswerable / answerable | 0.27 / 0.27 | 0.27 / 0.42 | 0.80 / 0.54 |
+
+**Verdict against the pre-declared rule: it passes.**
+1. Confident errors fell by 0.092 (0.117 to 0.025); the worst `temporal_cap` run (0.025) is below the best `temporal` run (0.100). Pass.
+2. Top-1 differs by 0.057, inside the 0.06 allowance, but only just. Pass, marginally (explained below).
+3. Brier is better (0.176 vs 0.197), though the run ranges overlap (0.168-0.192 vs 0.183-0.205). Pass, modestly.
+
+**The top-1 gap is sampling noise in the base diagnosis, not the cap.** The cap runs ranged 0.686 to 0.914. In the worst run (run 1), 7 scenarios were wrong only in that run. All 7 had no named suspect: the diagnosis in that run blamed only changes that landed after the symptoms (so the temporal rule removed them), or only the late decoy. Three independent runs of a stochastic pipeline are a thin basis for a top-1 comparison; compare the cap on confidence, which is what it is meant to change.
+
+**What the cap does, in numbers (answerable scenarios, 3 runs pooled):**
+- High-confidence answers (above 0.4): 48 of 48 correct with the cap, against 58 of 61 (0.95) for `temporal` alone. No answerable scenario had a confident error with the cap.
+- Low-confidence answers: 63% of them were still correct, so the flag is not selective. It marks 54% of answerable answers, but it contains every answerable error.
+- The one remaining confident error per run (0.025 = 1 of 40) is an `insufficient_evidence` scenario answered with high confidence. Four of the five unanswerable scenarios are low-confidence with the cap (0.8, against 0.27 without it).
+
+**Exploratory, not pre-declared: the cap without the temporal rule** (offline, from the saved runs; pairs run k of the baseline with run k of `decompose`, so it is only an approximation). The temporal rule cannot run in production until real onset timestamps exist, so this checks the cap does not depend on it:
+
+| Mean of 3 | Dev: baseline | Dev: + cap | Holdout: baseline | Holdout: + cap |
+|---|---|---|---|---|
+| Top-1 | 0.619 | 0.619 | 0.610 | 0.610 |
+| Confident errors | 0.317 | 0.100 | 0.317 | 0.083 |
+| Brier | 0.237 | 0.181 | 0.277 | 0.183 |
+
+**Conclusion:** two independent-model-call answers that agree are a usable precision signal; their disagreement is a usable "do not trust this" signal. This is a harness change on the same 7B model, with no new model weights. It does not fix the main weaknesses: abstention is still 0 (and `insufficient_evidence` accuracy is 0), the category is still `application` for about 97% of answers, and the cap gives no help on which change to name.
+
+**Limits:** one fresh seed from the same generator (see the template-overlap note in 06), three runs, one model, a synthetic suite built by me, and the result for the live cap on the dev and holdout suites was not run (only the offline estimate above).
+
 ## Hypotheses to test next (none verified)
 
 - **Harness before model size.** The temporal rule (about +0.19 top-1) and the disagreement cap (about -0.14 confident errors) are both harness changes on the same 7B model. A larger model stays a useful single control run to measure how much the model matters, but it is not required to continue with harness work.
@@ -202,7 +240,7 @@ The two questions disagreed on about 11 of 40 (dev) and 14 of 40 (holdout) scena
 
 ## Next steps
 
-1. Confirm the disagreement cap on a fresh holdout (a new generator seed) with a live run, then try the per-candidate judging variant and log-probability confidence.
+1. Try the per-candidate judging variant (yes, no or unclear per change) and log-probability confidence, aimed at abstention and the `insufficient_evidence` class, which the cap does not touch.
 2. Optionally, one run of the baseline with a larger diagnosis model as a control for how much the model matters.
 3. Build onset detection in the telemetry adapters, so the temporal rule can run on real incidents.
 4. Decide whether to treat low confidence (at most 0.4) as an official abstention signal. It stays a separate, pre-declared metric until then.
