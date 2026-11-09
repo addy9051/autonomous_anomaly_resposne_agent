@@ -278,7 +278,7 @@ This removes the false abstention and keeps the culprit-class gain, but abstenti
 ## Next steps
 
 1. Decide on the second judge aggregation (no UNCLEAR rule): pre-declare it, then run it live on `synthetic_v0_seed3.jsonl`. This is the only unseen suite left; after it, new suites are needed.
-2. Build onset detection in the telemetry adapters, so the temporal rule (and `judge_temporal`) can run on real incidents. Without it, `judge` blames late-landing changes in `traffic_surge`.
+2. ~~Build onset detection~~ Done on synthetic series (doc 08), validated with zero early estimates, so the temporal rule and `judge_temporal` can run on a Prometheus-backed deployment through `collect_symptom_evidence`. Still open: wire it into the diagnosis path, validate on recorded real incident series, and make the Datadog and Splunk adapters return series.
 3. Decide whether to treat low confidence (at most 0.4) as an official abstention signal. It stays a separate, pre-declared metric until then.
 4. Grow the suite, remove the generator structure the rules exploit, and build the live fault-injection suite.
 5. Only then wire the attribution step, the judge and the rules into the production diagnosis graph, re-run, and compare.
