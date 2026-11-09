@@ -54,6 +54,7 @@ async def _warm_up(timeout_s: float) -> bool:
     import httpx
 
     from shared.config import get_settings
+    from shared.egress import EgressViolationError, guarded_async_client
 
     cfg = get_settings().llm
     url = cfg.base_url.rstrip("/") + "/models"
@@ -64,7 +65,7 @@ async def _warm_up(timeout_s: float) -> bool:
     )
 
     async def request() -> int:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=timeout_s), follow_redirects=True) as client:
+        async with guarded_async_client(timeout=httpx.Timeout(60.0, read=timeout_s), follow_redirects=True) as client:
             return (await client.get(url, headers=headers)).status_code
 
     async def heartbeat() -> None:
@@ -80,7 +81,7 @@ async def _warm_up(timeout_s: float) -> bool:
     except TimeoutError:
         print(f"warm-up gave up after {timeout_s:.0f}s. Check the Modal function logs.", file=sys.stderr)
         return False
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, EgressViolationError) as exc:
         print(f"warm-up failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return False
     finally:

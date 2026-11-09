@@ -468,6 +468,19 @@ async def test_prompt_variant_is_applied_during_a_run_and_restored_afterwards(su
         AgentSolver(prompt_variant="nope")
 
 
+async def test_warm_up_refuses_a_non_allowlisted_endpoint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The warm-up request must go through the egress guard like every other HTTP client."""
+    from evals.rca_bench.__main__ import _warm_up
+    from shared.config import get_settings
+
+    monkeypatch.setattr(get_settings().app, "egress_enforce", True)
+    monkeypatch.setattr(get_settings().llm, "base_url", "http://93.184.216.34/v1")  # public IP literal, no DNS
+    assert await _warm_up(5.0) is False
+    assert "EgressViolationError" in capsys.readouterr().err
+
+
 def test_unknown_category_counts_as_abstention(suite: list[Scenario]) -> None:
     scenario = suite[0]
     diagnosis = _diagnosis(scenario, "cannot tell", RootCauseCategory.UNKNOWN, "not-in-scenario")
