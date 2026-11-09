@@ -231,18 +231,54 @@ Decision rule from [06](./06-RCA_BENCHMARK.md), written before the runs. 3 live 
 
 **Limits:** one fresh seed from the same generator (see the template-overlap note in 06), three runs, one model, a synthetic suite built by me, and the result for the live cap on the dev and holdout suites was not run (only the offline estimate above).
 
+## Per-candidate judging (`judge`, `judge_temporal`): rejected by the pre-declared rule
+
+Live runs, 3 per suite and mode, same 7B model. The rule and thresholds are in [06](./06-RCA_BENCHMARK.md), written before the runs. "Culprit classes" are the mean of `bad_deploy`, `bad_deploy_decoy_later`, `config_change` and `resource_limit_change`. Calibration numbers (ECE, Brier) are computed on answered predictions only, so for the judge modes they cover 61-68% of scenarios and are not comparable to the full-coverage columns.
+
+| Mean of 3 | seed 2: judge | seed 2: judge_temporal | seed 2: temporal | holdout: judge | holdout: judge_temporal | holdout: temporal |
+|---|---|---|---|---|---|---|
+| Abstains when unanswerable | **1.00** | **1.00** | 0 | 0.93 | 0.93 | 0 |
+| Abstains when answerable | **0.22** | **0.31** | 0 | **0.26** | **0.30** | 0 |
+| Culprit classes | 0.983 | 0.967 | 0.817 | 0.950 | 0.950 | 0.733 |
+| `dependency_outage` | 0.00 | 0.00 | 0.867 | 0.00 | 0.00 | 0.867 |
+| `traffic_surge` | 0.00 | 0.00 | 0.933 | 0.00 | 0.13 | 0.933 |
+| `same_service_later_noop` | 1.00 | 1.00 | 0.933 | 1.00 | 1.00 | 0.867 |
+| Confident (0.7 or higher) errors | 0.042 | 0.000 | 0.117 | 0.025 | 0.000 | 0.167 |
+| Coverage | 0.68 | 0.61 | 1.00 | 0.66 | 0.63 | 1.00 |
+
+**Against the rule: rejected.** Rule 1 (abstains when unanswerable at least 0.6) passes, rule 3 (culprit classes within 0.06 of `temporal`) passes by a wide margin, rule 4 (confident errors at most 0.05, Brier no worse) passes, and rule 5 (no `[no-logprobs]` verdicts) passes: no warning was printed. **Rule 2 fails on every configuration** (false abstention 0.22 to 0.31 against the 0.10 limit), and the rule says that rejects per-candidate judging for this model.
+
+**What the data show anyway:**
+- **The per-candidate YES signal is clean.** In `dependency_outage` and `traffic_surge` (where no listed change is responsible) P(yes) is 0.00 for every candidate in every inspected scenario: the judge never blames a change falsely, where the full diagnosis did. On scenarios with a culprit it reaches 0.95-0.98 against 0.73-0.82 for `temporal`, and `same_service_later_noop` is 1.00 on every run. Log-probabilities were returned (no `[no-logprobs]` verdict).
+- **All of the false abstention comes from one aggregation rule.** The rule "no supported change, and some candidate has P(unclear) of at least 0.5, means cannot tell" fires on decoy changes the model calls UNCLEAR (for example `E2 y0.00/n0.00/u1.00`). It produced every abstention in `dependency_outage` (15 of 15 runs on both suites) and most in `traffic_surge`.
+- **The abstention on unanswerable scenarios is not a model-driven success.** Of the 15 unanswerable cases per configuration, 9 were abstained by the deterministic no-symptom-evidence rule (telemetry down). The other 5 or 6 were abstained by the same UNCLEAR rule; the intended "two changes equally plausible" rule fired zero times. So the model's UNCLEAR cannot be separated from the false abstentions on `dependency_outage` and `traffic_surge`: it says UNCLEAR about irrelevant decoys and about two changes that landed together alike.
+
+**Exploratory, not a result (post-hoc, tuned on these suites): re-aggregating the saved votes without the UNCLEAR rule** (exact for the judge modes, from the votes in each rationale):
+
+| | seed 2 judge | seed 2 judge_temporal | holdout judge | holdout judge_temporal |
+|---|---|---|---|---|
+| Abstains when answerable | 0.00 | 0.00 | 0.00 | 0.00 |
+| Abstains when unanswerable | 0.60 | 0.60 | 0.60 | 0.60 |
+| `dependency_outage` | 1.00 | 1.00 | 1.00 | 1.00 |
+| `traffic_surge` | 0.47 | 1.00 | 0.60 | 1.00 |
+| Culprit classes | 0.983 | 0.967 | 0.950 | 0.950 |
+
+This removes the false abstention and keeps the culprit-class gain, but abstention on unanswerable scenarios drops to the 0.60 that the deterministic no-symptom rule gives by itself: the "two changes landed together" scenarios are then answered "no change". Without the temporal rule (`judge`), `traffic_surge` is 0.47-0.60 because late-landing decoys are judged YES; that is the same limit as before, and needs real onset timestamps. Because this variant was designed after seeing these suites, it counts as a hypothesis; confirming it needs the reserved, unrun `synthetic_v0_seed3.jsonl`.
+
+**Conclusion so far:** per-candidate judging is a better attribution than the full diagnosis's (fewer false blames, higher accuracy where a culprit exists), but a 7B model's UNCLEAR is not an abstention signal. The only reliable abstention is still the deterministic one (no symptom evidence). Calibration in the judge modes is excellent on what it answers (0 to 0.04 confident errors) because it answers only 61-68% of scenarios.
+
 ## Hypotheses to test next (none verified)
 
-- **Harness before model size.** The temporal rule (about +0.19 top-1) and the disagreement cap (about -0.14 confident errors) are both harness changes on the same 7B model. A larger model stays a useful single control run to measure how much the model matters, but it is not required to continue with harness work.
-- **Judge each candidate change separately** (yes, no or unclear per change, with the harness aggregating: exactly one yes names it, none means no change, several means rank by deterministic signals). This addresses the observed `cannot_tell` over-use, where one three-way answer over the whole list was used as the default for any uncertainty.
-- **Use token log-probabilities from the serving layer as the confidence signal** instead of the model's stated number, which is where the confident errors come from.
+- **A second version of the judge aggregation without the UNCLEAR rule,** pre-declared and run live on `synthetic_v0_seed3.jsonl`, to see whether the offline estimate above holds on an unseen suite.
+- **A deterministic rule for co-landed changes** (two candidates on the alerting service landing close together with no judged difference). It targets the one unanswerable pattern the judge missed, but it is shaped like the generator's pattern and would need to be justified as a general SRE rule before being trusted.
+- **A deterministic rule for co-landed changes** (two candidates on the alerting service landing close together with no judged difference). It targets the one unanswerable pattern the judge missed, but it is shaped like the generator's pattern and would need to be justified as a general SRE rule before being trusted.
 - **Fix the suite's blind spots:** add scenarios where the alerting service's latest change is not the culprit and where decoys land before the symptom onset, so the rule cannot do all the work.
+- **A larger diagnosis model as a control,** to measure how much the model matters now that the harness has moved results by 0.2 or more on a 7B model.
 
 ## Next steps
 
-1. Try the per-candidate judging variant (yes, no or unclear per change) and log-probability confidence, aimed at abstention and the `insufficient_evidence` class, which the cap does not touch.
-2. Optionally, one run of the baseline with a larger diagnosis model as a control for how much the model matters.
-3. Build onset detection in the telemetry adapters, so the temporal rule can run on real incidents.
-4. Decide whether to treat low confidence (at most 0.4) as an official abstention signal. It stays a separate, pre-declared metric until then.
-5. Grow the suite, remove the generator structure the rule exploits, and build the live fault-injection suite.
-6. Only then wire the attribution step and rule into the production diagnosis graph, re-run, and compare.
+1. Decide on the second judge aggregation (no UNCLEAR rule): pre-declare it, then run it live on `synthetic_v0_seed3.jsonl`. This is the only unseen suite left; after it, new suites are needed.
+2. Build onset detection in the telemetry adapters, so the temporal rule (and `judge_temporal`) can run on real incidents. Without it, `judge` blames late-landing changes in `traffic_surge`.
+3. Decide whether to treat low confidence (at most 0.4) as an official abstention signal. It stays a separate, pre-declared metric until then.
+4. Grow the suite, remove the generator structure the rules exploit, and build the live fault-injection suite.
+5. Only then wire the attribution step, the judge and the rules into the production diagnosis graph, re-run, and compare.
