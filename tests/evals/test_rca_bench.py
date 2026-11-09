@@ -611,9 +611,108 @@ async def test_decompose_temporal_turns_a_late_chosen_change_into_none(suite: li
 def test_attribution_modes_are_validated() -> None:
     from evals.rca_bench.prompt_variants import ATTRIBUTION_MODES
 
-    assert set(ATTRIBUTION_MODES) == {"baseline", "temporal", "decompose", "decompose_temporal", "temporal_cap"}
+    assert set(ATTRIBUTION_MODES) == {
+        "baseline",
+        "temporal",
+        "decompose",
+        "decompose_temporal",
+        "temporal_cap",
+        "judge",
+        "judge_temporal",
+    }
     with pytest.raises(ValueError, match="unknown attribution mode"):
         AgentSolver(attribution="decompos")
+
+
+def _verdicts(scenario: Scenario, evidence_for: dict[str, tuple[float, float, float]]) -> Any:  # noqa: ANN401
+    """A stand-in for judge_candidates: change id -> (p_yes, p_no, p_unclear), keyed to the visible evidence ids."""
+    from agents.diagnosis.candidate_judge import Verdict
+
+    calls: list[frozenset[str]] = []
+
+    async def judge(_summary: str, evidence: list[dict[str, Any]], exclude: frozenset[str] = frozenset()) -> list[Any]:
+        calls.append(exclude)
+        change_by_ref = {c.evidence_id: c.change_id for c in scenario.changes}
+        out = []
+        for position, record in enumerate(evidence):
+            change_id = change_by_ref.get(record["query_or_ref"])
+            eid = f"E{position + 1}"
+            if change_id in evidence_for and eid not in exclude:
+                yes, no, unclear = evidence_for[change_id]
+                out.append(Verdict(eid, yes, no, unclear))
+        return out
+
+    judge.calls = calls  # type: ignore[attr-defined]
+    return judge
+
+
+async def test_judge_mode_names_the_supported_change_with_logprob_confidence(suite: list[Scenario]) -> None:
+    scenario = _first(suite, "bad_deploy")
+    culprit = scenario.ground_truth.culprit_change_id
+    assert culprit is not None
+    verdicts = {c.change_id: (0.1, 0.9, 0.0) for c in scenario.changes}
+    verdicts[culprit] = (0.85, 0.15, 0.0)
+    solver = AgentSolver(attribution="judge")
+    solver._agent = _ScriptedAgent(_blaming([scenario.changes[0].change_id], confidence=0.99), scenario)
+    with patch("evals.rca_bench.agent_solver.judge_candidates", _verdicts(scenario, verdicts)):
+        prediction = await solver.solve(scenario)
+    assert [s.change_id for s in prediction.suspects] == [culprit]
+    assert prediction.confidence == 0.85  # from the probabilities, not the diagnosis's stated 0.99
+    assert top_k_correct(Pair(scenario, prediction), 1)
+    assert "[judge:change]" in prediction.rationale
+
+
+async def test_judge_mode_abstains_when_there_are_no_symptoms_to_attribute(suite: list[Scenario]) -> None:
+    scenario = next(s for s in suite if "telemetry" in s.unavailable_sources)
+    verdicts = {c.change_id: (0.95, 0.05, 0.0) for c in scenario.changes}  # the model would happily blame a change
+    solver = AgentSolver(attribution="judge")
+    solver._agent = _ScriptedAgent(_blaming([scenario.changes[0].change_id]), scenario)
+    with patch("evals.rca_bench.agent_solver.judge_candidates", _verdicts(scenario, verdicts)):
+        prediction = await solver.solve(scenario)
+    assert (prediction.abstained, prediction.category, prediction.suspects, prediction.confidence) == (
+        True,
+        "unknown",
+        [],
+        0.0,
+    )
+    assert is_correct(Pair(scenario, prediction))
+
+
+async def test_judge_mode_abstains_when_two_changes_are_equally_plausible(suite: list[Scenario]) -> None:
+    scenario = next(
+        s
+        for s in suite
+        if s.ground_truth.fault_class == "insufficient_evidence" and "telemetry" not in s.unavailable_sources
+    )
+    verdicts = {c.change_id: (0.9, 0.1, 0.0) for c in scenario.changes}
+    solver = AgentSolver(attribution="judge")
+    solver._agent = _ScriptedAgent(_blaming([scenario.changes[0].change_id]), scenario)
+    with patch("evals.rca_bench.agent_solver.judge_candidates", _verdicts(scenario, verdicts)):
+        prediction = await solver.solve(scenario)
+    assert prediction.abstained
+    assert is_correct(Pair(scenario, prediction))
+
+
+async def test_judge_temporal_does_not_ask_about_changes_the_rule_ruled_out(suite: list[Scenario]) -> None:
+    scenario = _first(suite, "dependency_outage")
+    latest = max(scenario.changes, key=lambda c: c.offset_s)
+    verdicts = {c.change_id: (0.05, 0.95, 0.0) for c in scenario.changes}
+    judge = _verdicts(scenario, verdicts)
+    solver = AgentSolver(attribution="judge_temporal")
+    solver._agent = _ScriptedAgent(_blaming([latest.change_id]), scenario)
+    with patch("evals.rca_bench.agent_solver.judge_candidates", judge):
+        prediction = await solver.solve(scenario)
+    (excluded,) = judge.calls
+    assert excluded  # the late change was excluded from judging
+    assert (prediction.abstained, prediction.suspects) == (False, [])
+    assert top_k_correct(Pair(scenario, prediction), 1)
+
+    plain = AgentSolver(attribution="judge")
+    plain._agent = _ScriptedAgent(_blaming([latest.change_id]), scenario)
+    judge_all = _verdicts(scenario, verdicts)
+    with patch("evals.rca_bench.agent_solver.judge_candidates", judge_all):
+        await plain.solve(scenario)
+    assert judge_all.calls == [frozenset()]  # plain "judge" excludes nothing
 
 
 async def test_temporal_cap_keeps_the_answer_and_caps_confidence_only_on_disagreement(suite: list[Scenario]) -> None:
@@ -657,17 +756,18 @@ async def test_temporal_cap_applies_the_temporal_rule_to_both_answers(suite: lis
     assert "capped" not in prediction.rationale
 
 
-def test_the_fresh_seed_suite_is_frozen_and_distinct_from_the_others(suite: list[Scenario]) -> None:
-    path = DEFAULT_SUITE.with_name("synthetic_v0_seed2.jsonl")
-    fresh = load_suite(path)
-    regenerated = generate_suite(seed=2, per_class=5)
-    assert [s.model_dump() for s in regenerated] == [s.model_dump() for s in fresh]
-    for other in ("synthetic_v0.jsonl", "synthetic_v0_seed1.jsonl"):
-        assert [s.model_dump() for s in load_suite(DEFAULT_SUITE.with_name(other))] != [s.model_dump() for s in fresh]
-    assert suite_sha256(path) not in {
-        suite_sha256(DEFAULT_SUITE),
-        suite_sha256(DEFAULT_SUITE.with_name("synthetic_v0_seed1.jsonl")),
-    }
+def test_the_fresh_seed_suites_are_frozen_and_distinct_from_the_others(suite: list[Scenario]) -> None:
+    names = ("synthetic_v0.jsonl", "synthetic_v0_seed1.jsonl", "synthetic_v0_seed2.jsonl", "synthetic_v0_seed3.jsonl")
+    for seed, name in ((2, "synthetic_v0_seed2.jsonl"), (3, "synthetic_v0_seed3.jsonl")):
+        path = DEFAULT_SUITE.with_name(name)
+        fresh = load_suite(path)
+        assert [s.model_dump() for s in generate_suite(seed=seed, per_class=5)] == [s.model_dump() for s in fresh]
+        for other in names:
+            if other != name:
+                assert [s.model_dump() for s in load_suite(DEFAULT_SUITE.with_name(other))] != [
+                    s.model_dump() for s in fresh
+                ]
+        assert suite_sha256(path) not in {suite_sha256(DEFAULT_SUITE.with_name(o)) for o in names if o != name}
 
 
 def test_the_temporal_rule_never_rules_out_a_true_culprit_in_any_suite(suite: list[Scenario]) -> None:
@@ -675,7 +775,7 @@ def test_the_temporal_rule_never_rules_out_a_true_culprit_in_any_suite(suite: li
 
     others = [
         s
-        for name in ("synthetic_v0_seed1.jsonl", "synthetic_v0_seed2.jsonl")
+        for name in ("synthetic_v0_seed1.jsonl", "synthetic_v0_seed2.jsonl", "synthetic_v0_seed3.jsonl")
         for s in load_suite(DEFAULT_SUITE.with_name(name))
     ]
     for scenario in [*suite, *others]:

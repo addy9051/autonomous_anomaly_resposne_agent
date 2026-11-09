@@ -38,7 +38,18 @@ VARIANTS: dict[str, str] = {
 # "baseline" reads it from the full diagnosis. "temporal" removes changes that code rules out as landing after the
 # symptoms began. "decompose" asks a separate narrow question and uses its answer. "decompose_temporal" does both.
 # "temporal_cap" keeps the "temporal" answer and only caps confidence when the narrow question names a different change.
-ATTRIBUTION_MODES = ("baseline", "temporal", "decompose", "decompose_temporal", "temporal_cap")
+# "judge" asks about each candidate change separately (YES/NO/UNCLEAR), takes the confidence from token
+# log-probabilities, and lets code choose between candidates and decide when to abstain. "judge_temporal" does not
+# ask about changes the temporal rule has ruled out.
+ATTRIBUTION_MODES = (
+    "baseline",
+    "temporal",
+    "decompose",
+    "decompose_temporal",
+    "temporal_cap",
+    "judge",
+    "judge_temporal",
+)
 
 
 def synthesis_prompt_for(variant: str, base_prompt: str) -> str:

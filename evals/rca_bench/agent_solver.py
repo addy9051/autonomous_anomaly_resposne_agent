@@ -42,7 +42,9 @@ from agents.diagnosis.attribution import (
     decide_attribution,
     index_evidence,
     rule_out_acausal_changes,
+    symptom_onset,
 )
+from agents.diagnosis.candidate_judge import Judgement, aggregate, judge_candidates
 from agents.diagnosis.evidence import record_to_evidence
 from evals.rca_bench.prompt_variants import ATTRIBUTION_MODES, synthesis_prompt_for
 from evals.rca_bench.schema import Prediction, Scenario, Suspect
@@ -201,11 +203,8 @@ def _visible_evidence(replay: _Replay) -> list[dict[str, Any]]:
     return sorted(visible, key=lambda e: e["observed_at"])
 
 
-def ruled_out_changes(scenario: Scenario) -> frozenset[str]:
-    """Scenario change ids that the temporal rule rules out, computed from the evidence the agent would see.
-
-    The rule depends only on the scenario, not on any model output, so it can be applied to saved predictions.
-    """
+def scenario_evidence(scenario: Scenario) -> list[dict[str, Any]]:
+    """The evidence the agent would see for this scenario, in collector order."""
     now = datetime.now(UTC)
     replay = _Replay(
         signals=_signal_evidence(scenario, now),
@@ -213,7 +212,15 @@ def ruled_out_changes(scenario: Scenario) -> frozenset[str]:
         telemetry_down="telemetry" in scenario.unavailable_sources,
         deploys_down="deploys" in scenario.unavailable_sources,
     )
-    evidence = _visible_evidence(replay)
+    return _visible_evidence(replay)
+
+
+def ruled_out_changes(scenario: Scenario) -> frozenset[str]:
+    """Scenario change ids that the temporal rule rules out, computed from the evidence the agent would see.
+
+    The rule depends only on the scenario, not on any model output, so it can be applied to saved predictions.
+    """
+    evidence = scenario_evidence(scenario)
     return frozenset(_change_ids_for(rule_out_acausal_changes(evidence), evidence, scenario))
 
 
@@ -293,6 +300,40 @@ def cap_on_disagreement(
             "confidence": min(base.confidence, DISAGREEMENT_CONFIDENCE_CAP),
             "rationale": f"[narrow question said {attribution.decision}; confidence capped] {base.rationale}"[:600],
         }
+    )
+
+
+def prediction_from_judgement(
+    judgement: Judgement, base: Prediction, scenario: Scenario, evidence: list[dict[str, Any]]
+) -> Prediction:
+    """Use the per-candidate judgement as the attribution, abstention and confidence.
+
+    The full diagnosis supplies only the category, the citations and the explanation. If the diagnosis itself said
+    the cause is unknown, the category stays ``unknown`` and the metrics count that as an abstention.
+    """
+    chosen = _change_ids_for([judgement.change_id], evidence, scenario) if judgement.change_id else set()
+    abstained = judgement.decision == "cannot_tell"
+    confidence = 0.0 if abstained else judgement.confidence
+    index = index_evidence(evidence)
+    cited: list[str] = list(base.cited_evidence_ids)
+    record = index.get(judgement.change_id) if judgement.change_id else None
+    ref = record.get("query_or_ref") if record else None
+    if ref in scenario.evidence_ids and ref not in cited:
+        cited.insert(0, cast("str", ref))
+    votes = "; ".join(
+        f"{v.evidence_id} y{v.p_yes:.2f}/n{v.p_no:.2f}/u{v.p_unclear:.2f}"
+        + ("" if v.from_logprobs else " [no-logprobs]")
+        for v in judgement.verdicts
+    )
+    note = f"[judge:{judgement.decision}] {judgement.reason} ({votes})"
+    return Prediction(
+        scenario_id=scenario.scenario_id,
+        suspects=[Suspect(change_id=c, score=confidence) for c in sorted(chosen)],
+        category="unknown" if abstained else base.category,
+        abstained=abstained,
+        confidence=confidence,
+        cited_evidence_ids=cited,
+        rationale=f"{note} | diagnosis: {base.rationale}"[:600],
     )
 
 
@@ -431,6 +472,18 @@ class AgentSolver:
                 scenario,
                 evidence,
             )
+        elif self._attribution in ("judge", "judge_temporal"):
+            ruled_out_ids = rule_out_acausal_changes(evidence) if self._attribution == "judge_temporal" else {}
+            ruled_out = _change_ids_for(ruled_out_ids, evidence, scenario)
+            base = prediction_from_diagnosis(diagnosis, scenario, excluded_changes=frozenset(ruled_out))
+            verdicts = await judge_candidates(scenario.alert.summary, evidence, exclude=frozenset(ruled_out_ids))
+            judgement = aggregate(
+                verdicts,
+                has_symptoms=symptom_onset(evidence) is not None,
+                missing_sources=diagnosis.missing_sources,
+                fallback_confidence=base.confidence,
+            )
+            prediction = prediction_from_judgement(judgement, base, scenario, evidence)
         else:
             attribution = await decide_attribution(scenario.alert.summary, evidence)
             if self._attribution == "decompose_temporal":

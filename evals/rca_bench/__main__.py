@@ -49,6 +49,32 @@ def _cmd_summarize(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _probe_judge(args: argparse.Namespace) -> int:
+    """One small live check before a judge run: does the server return log-probabilities, and are they sensible?"""
+    from agents.diagnosis.candidate_judge import judge_candidates
+    from evals.rca_bench.agent_solver import scenario_evidence
+
+    if args.warmup and not await _warm_up(args.warmup_timeout):
+        return 3
+    scenarios = load_suite(Path(args.suite))
+    scenario = next(s for s in scenarios if len(s.changes) >= 2 and "telemetry" not in s.unavailable_sources)
+    evidence = scenario_evidence(scenario)
+    verdicts = await judge_candidates(scenario.alert.summary, evidence)
+    print(f"scenario {scenario.scenario_id}: {scenario.alert.summary}")
+    for v in verdicts:
+        print(
+            f"  {v.evidence_id}: yes={v.p_yes:.3f} no={v.p_no:.3f} unclear={v.p_unclear:.3f} "
+            f"from_logprobs={v.from_logprobs} {v.note}"
+        )
+    if not verdicts or not all(v.from_logprobs and not v.note for v in verdicts):
+        print(
+            "FAILED: the server did not return usable log-probabilities. Do not run the judge modes.", file=sys.stderr
+        )
+        return 1
+    print("ok: log-probabilities are available")
+    return 0
+
+
 def _cmd_rescore(args: argparse.Namespace) -> int:
     """Apply the temporal rule to saved reports and write new reports, with no model calls."""
     from evals.rca_bench.metrics import Pair, compute_metrics
@@ -132,6 +158,14 @@ def _run_options(args: argparse.Namespace, solver_name: str) -> dict[str, object
             diagnosis_model=llm.diagnosis_agent_model,
             llm_host=urlparse(llm.base_url).netloc,
         )
+        if args.attribution.startswith("judge"):
+            from agents.diagnosis import candidate_judge as cj
+
+            options["judge_thresholds"] = {
+                "yes": cj.YES_THRESHOLD,
+                "unclear": cj.UNCLEAR_THRESHOLD,
+                "ambiguity_margin": cj.AMBIGUITY_MARGIN,
+            }
     return options
 
 
@@ -240,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=ATTRIBUTION_MODES,
         help=(
             "agent solver: how the change attribution is produced "
-            "(baseline, temporal, decompose, decompose_temporal, temporal_cap)"
+            "(baseline, temporal, decompose, decompose_temporal, temporal_cap, judge, judge_temporal)"
         ),
     )
     run.set_defaults(func=lambda a: asyncio.run(_run(a)))
@@ -248,6 +282,12 @@ def main(argv: list[str] | None = None) -> int:
     summary = sub.add_parser("summarize", help="summarise one or more JSON reports (several runs show mean and range)")
     summary.add_argument("reports", nargs="+")
     summary.set_defaults(func=_cmd_summarize)
+
+    probe = sub.add_parser("probe-judge", help="one live call: check the server returns log-probabilities")
+    probe.add_argument("--suite", default=str(DEFAULT_SUITE))
+    probe.add_argument("--warmup", action="store_true", help="wake the LLM endpoint first")
+    probe.add_argument("--warmup-timeout", type=float, default=1200.0)
+    probe.set_defaults(func=lambda a: asyncio.run(_probe_judge(a)))
 
     rescore = sub.add_parser(
         "rescore",

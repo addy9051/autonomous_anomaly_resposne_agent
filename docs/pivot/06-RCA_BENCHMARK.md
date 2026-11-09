@@ -72,6 +72,8 @@ Reports record the suite's SHA-256 so a number can always be tied to the exact s
 | `decompose` | Asks a separate, narrow, constrained question (a listed change, none, or cannot tell), validates the answer against the evidence, and uses it as the attribution. `cannot_tell` becomes an abstention. If it disagrees with the full diagnosis, confidence is capped at 0.4 | one short call per scenario |
 | `decompose_temporal` | `decompose`, then the temporal rule on the chosen change (a ruled-out change becomes "none") | one short call per scenario |
 | `temporal_cap` | The `temporal` answer, unchanged. The narrow question is asked only to cap confidence at 0.4 when it names a different change (or "none" or "cannot tell" when the diagnosis names one). It never changes the named change, the category or the citations, and never abstains | one short call per scenario |
+| `judge` | Asks about **each** listed change separately ("could this change have caused the alert: YES, NO or UNCLEAR"), reads the probabilities of those three tokens from the server's log-probabilities, and lets code do the rest (see below). The full diagnosis supplies only the category, citations and explanation | one 1-token call per listed change, in parallel |
+| `judge_temporal` | `judge`, but changes the temporal rule has ruled out are not asked about | as `judge`, fewer |
 
 Because the temporal rule is a pure function of the scenario, it can be applied to saved reports with no model calls:
 
@@ -86,6 +88,42 @@ powershell -ExecutionPolicy Bypass -File evals\rca_bench\run_attribution_experim
 ```
 
 Same decision rule as before: adopt only if the holdout shows an improvement on the no-culprit and unanswerable cases, no loss on cases with a culprit, larger than the baseline's run-to-run spread. The temporal rule depends on real symptom-onset timestamps, which the current adapters do not provide (see 07), so a pass here is a result on this synthetic suite, not yet on real incidents.
+
+### How `judge` decides (fixed before any measurement; code in `agents/diagnosis/candidate_judge.py`)
+
+The model only answers the per-candidate question. These rules, not the model, choose between candidates and decide when to abstain. Probabilities are over the three answers, normalised.
+
+| Situation | Answer | Confidence |
+|---|---|---|
+| No symptom evidence at all (nothing to attribute) | cannot tell (abstain) | 0 |
+| Two changes with P(yes) of at least 0.5 within 0.2 of each other | cannot tell (abstain) | 0 |
+| One change with P(yes) of at least 0.5, clearly ahead | name it | its P(yes) times (1 minus the runner-up's P(yes)) |
+| No such change, and an evidence source was unavailable | cannot tell (an unseen change cannot be ruled out) | 0 |
+| No such change, and some candidate has P(unclear) of at least 0.5 | cannot tell | 0 |
+| No such change, every candidate judged NO | no change caused it | the weakest P(no) |
+| No candidates at all | no change caused it | the diagnosis's own confidence |
+
+If the server returns no log-probabilities the verdict falls back to the written word and is tagged `[no-logprobs]` in the rationale; such runs do not count. `probe-judge` (run by the experiment script first) checks this before any scoring run.
+
+Note the rules were written with the benchmark's two unanswerable patterns in view (telemetry down; two changes landing together with no distinguishing signal), as generic SRE principles. A new seed from the same generator does not test whether they generalise beyond those patterns.
+
+## Judge experiment: can per-candidate judging fix abstention?
+
+Hypothesis: asking one narrow question per candidate, and letting code combine the answers, gives an abstention signal that the three-way `decompose` question could not (it used "cannot tell" almost at random: 0.25 on answerable scenarios, 0.2 to 0.6 on unanswerable ones, not stable across suites).
+
+Decision rule, written before the runs. Suites: `synthetic_v0_seed2.jsonl` and `synthetic_v0_seed1.jsonl` (holdout), 3 live runs each. Compare with `temporal_cap` (seed 2, live) and with `temporal` (offline, both suites). Judge as an **abstention mechanism** passes only if **on both suites**:
+
+1. **Abstains when unanswerable** is at least 0.6 (the baseline is 0).
+2. **Abstains when answerable** is at most 0.10 (`decompose` was 0.25).
+3. **Top-1 on scenarios with a culprit** (mean of `bad_deploy`, `bad_deploy_decoy_later`, `config_change`, `resource_limit_change`) is no more than 0.06 below `temporal` on the same suite.
+4. **Confident (0.7 or higher) errors** are at most 0.05 and **Brier** is no worse than `temporal`.
+5. **No run contains a `[no-logprobs]` verdict.**
+
+If 1 and 2 pass but 3 or 4 fail, it is an abstention signal only and not a replacement for the attribution; the answer would stay with `temporal_cap` and the judge would add only the abstain decision. If 1 or 2 fail, per-candidate judging is rejected for this model. `judge` (no onset timestamps needed) is the production-relevant mode; `judge_temporal` is reported alongside it. Thresholds must not be changed after seeing results without moving to the reserved, unrun `synthetic_v0_seed3.jsonl`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File evals\rca_bench\run_judge_experiment.ps1 -Runs 3 -Concurrency 12
+```
 
 ## Confirming the confidence cap on a fresh seed
 
