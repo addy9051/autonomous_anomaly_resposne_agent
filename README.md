@@ -2,7 +2,7 @@
 
 > An **AI SRE SaaS prototype** built with **LangChain + LangGraph**, a **FastAPI** backend and a **Next.js** dashboard. It ingests observability data and assists with incident diagnosis and response. The current demo runs the API and dashboard locally, stores incident and episodic state in local Docker Postgres, and calls open-weight vLLM models hosted on Modal. Critical events get a root-cause analysis only. Non-critical events are handled by a deterministic policy gate; the demo executors are mocked, so it does not perform live remediation.
 
-> **Deployment status:** this is a controlled local demo, not a production service. Hosted multi-customer operations and tenant isolation are not implemented; do not use it to handle customer or production data. Modal serves the chat, judge and embedding models over public HTTPS endpoints protected by vLLM API keys; it does not host the API or dashboard. Use synthetic alerts and non-sensitive data only. The AWS Terraform is a future private-cloud migration design: it has not been applied, still needs real inputs and quota, and requires reconciliation with the latest Postgres incident-store implementation. See [Demo now, migrate to AWS later](#demo-now-migrate-to-aws-later) and [docs/decisions.md](docs/decisions.md).
+> **Deployment status:** this is a controlled local demo, not a production service. This README describes the enterprise, self-hosted agent at the repository root. The hosted multi-tenant SaaS variant lives in [`saas/`](saas/README.md) with its own tenant isolation and security model; the statement below that tenant isolation is not implemented applies to the root code, not to `saas/`. Do not use the root demo to handle customer or production data. Modal serves the chat, judge and embedding models over public HTTPS endpoints protected by vLLM API keys; it does not host the API or dashboard. Use synthetic alerts and non-sensitive data only. The AWS Terraform is a future private-cloud migration design: it has not been applied, still needs real inputs and quota, and requires reconciliation with the latest Postgres incident-store implementation. See [Demo now, migrate to AWS later](#demo-now-migrate-to-aws-later) and [docs/decisions.md](docs/decisions.md).
 
 ## Table of Contents
 
@@ -54,7 +54,7 @@ Alert webhook ─► dedupe ─► episodic memory (Postgres): seen this before?
 | Piece | Where | Notes |
 |-------|-------|-------|
 | Procedural memory | `skills/<name>/SKILL.md`, `shared/skills.py` | Agent-skills format: `name` and `description` front matter, with routing under `metadata` (`triggers`: anomaly_types, severities, services; `priority`; `version`). `baseline-conduct` always applies; `critical-rca-only` applies to critical. Edit files, no code change. |
-| Per-agent RAG | `knowledge_base/`, `agents/diagnosis/experts.py` | `documents.collection` column. Ingest `<root>/<collection>/*.md` with `ingest_directory` (collections: `database`, `network`, `security`, `application`, `policy`). Hybrid retrieval: pgvector cosine and BM25 (top 50 each; ParadeDB `pg_search` inside Postgres via migration `005_paradedb_bm25.sql`, with an in-process Okapi fallback; `RAG_BM25_BACKEND=auto|paradedb|inprocess`; existing databases must run `ANALYZE documents` and apply migration 005 manually, on the `paradedb/paradedb` image), a local FlashRank cross-encoder rerank of the candidate union, then weighted reciprocal-rank fusion. Falls back to two-way fusion if the reranker is unavailable (its model must be pre-provisioned because of the egress allowlist). Retrieval failure is recorded as a gap. |
+| Per-agent RAG | `knowledge_base/`, `agents/diagnosis/experts.py` | `documents.collection` column. Ingest `<root>/<collection>/*.md` with `ingest_directory` (collections: `database`, `network`, `security`, `application`, `policy`). Hybrid retrieval: pgvector cosine and BM25 (top 50 each; ParadeDB `pg_search` inside Postgres via migration `005_paradedb_bm25.sql`, with an in-process Okapi fallback; `RAG_BM25_BACKEND=auto|paradedb|inprocess`; existing databases must run `ANALYZE documents` and apply migration 005 manually, on the `paradedb/paradedb` image), a local FlashRank cross-encoder rerank of the candidate union, then weighted reciprocal-rank fusion. Falls back to two-way fusion if the reranker is unavailable (its model must be pre-provisioned because of the egress allowlist). Retrieval failure is recorded as a gap. Embeddings come from the in-VPC server by default, or from a local CPU model with `EMBEDDING_PROVIDER=fastembed` (no network at runtime; see [docs/LOCAL_EMBEDDINGS.md](docs/LOCAL_EMBEDDINGS.md)). |
 | Episodic memory | `shared/episodic_memory.py`, `knowledge_base/migrations/003_episodic_memory.sql` | Postgres; falls back to in-process memory with a loud log (`episodic_memory_degraded` in `/api/v1/status`) if unreachable. |
 | Action harness | `agents/action/policy.py`, `agents/action/tiers.py` | Deterministic policy; tiers: 1 reversible, 2 needs approval, 3 always human. The auto allowlist can only narrow the reversible set. |
 | Egress harness | `shared/egress.py`, `infra/aws/terraform` | App-level fail-closed allowlist (private ranges + `EGRESS_ALLOWED_HOSTS` / `EGRESS_ALLOWED_CIDRS`) on the LLM client and every HTTP client, with a startup self-test. The VPC (no internet/NAT gateway, no `0.0.0.0/0` security-group rule) is the network-level backstop. |
@@ -253,13 +253,14 @@ The AWS guide is a design/runbook, not evidence of a successful AWS deployment. 
 ├── shared/                  # config, schemas, llm, egress, skills, episodic_memory, incident_store, pii
 ├── data_pipeline/           # telemetry adapters, Alertmanager intake, deploy events, connector store
 ├── dashboard/               # Next.js SRE UI (incl. /connectors)
-├── evals/                   # LLM-as-judge, agreement gate (local judge model)
+├── evals/                   # LLM-as-judge, agreement gate (local judge model), RCA benchmark (evals/rca_bench)
 ├── tests/                   # unit, integration, evals
-├── infra/                   # aws/terraform (VPC, ECS agent, EC2 GPU server with chat+embedding vLLM, RDS), modal/ (dev vLLM), docker/Dockerfile
+├── infra/                   # aws/terraform (VPC, ECS agent, EC2 GPU server with chat+embedding vLLM, RDS), modal/ (dev vLLM + keep_warm), docker/Dockerfile
 ├── scripts/                 # sample alert sender, chaos experiments, verification and seeding helpers
+├── saas/                    # hosted multi-tenant SaaS variant (Neon + pgvector); own package, own README and red-team scope
 ├── orchestrator.py          # severity-branched pipeline
 ├── api.py                   # FastAPI app
-└── docs/                    # deployment and design documents
+└── docs/                    # deployment and design documents; pivot/ (research and benchmark), saas/ (SaaS design and security)
 ```
 
 ## API reference
