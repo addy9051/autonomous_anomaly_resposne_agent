@@ -611,16 +611,74 @@ async def test_decompose_temporal_turns_a_late_chosen_change_into_none(suite: li
 def test_attribution_modes_are_validated() -> None:
     from evals.rca_bench.prompt_variants import ATTRIBUTION_MODES
 
-    assert set(ATTRIBUTION_MODES) == {"baseline", "temporal", "decompose", "decompose_temporal"}
+    assert set(ATTRIBUTION_MODES) == {"baseline", "temporal", "decompose", "decompose_temporal", "temporal_cap"}
     with pytest.raises(ValueError, match="unknown attribution mode"):
         AgentSolver(attribution="decompos")
 
 
-def test_the_temporal_rule_never_rules_out_a_true_culprit_in_either_suite(suite: list[Scenario]) -> None:
+async def test_temporal_cap_keeps_the_answer_and_caps_confidence_only_on_disagreement(suite: list[Scenario]) -> None:
+    scenario = _first(suite, "bad_deploy_decoy_later")
+    culprit = scenario.ground_truth.culprit_change_id
+    assert culprit is not None
+    wrong = next(c.change_id for c in scenario.changes if c.change_id != culprit)
+
+    solver = AgentSolver(attribution="temporal_cap")
+    solver._agent = _ScriptedAgent(_blaming([culprit]), scenario)
+    with patch("evals.rca_bench.agent_solver.decide_attribution", _decision(scenario, "change", culprit)):
+        agree = await solver.solve(scenario)
+    assert [s.change_id for s in agree.suspects] == [culprit]
+    assert agree.confidence == 0.9
+
+    # The narrow question names a different change: the answer stays, the confidence drops.
+    with patch("evals.rca_bench.agent_solver.decide_attribution", _decision(scenario, "change", wrong)):
+        disagree = await solver.solve(scenario)
+    assert [s.change_id for s in disagree.suspects] == [culprit]
+    assert disagree.confidence <= 0.4
+    assert top_k_correct(Pair(scenario, disagree), 1)
+
+    # "cannot tell" does not abstain in this mode; it only lowers confidence.
+    with patch("evals.rca_bench.agent_solver.decide_attribution", _decision(scenario, "cannot_tell")):
+        unsure = await solver.solve(scenario)
+    assert (unsure.abstained, [s.change_id for s in unsure.suspects]) == (False, [culprit])
+    assert unsure.confidence <= 0.4
+
+
+async def test_temporal_cap_applies_the_temporal_rule_to_both_answers(suite: list[Scenario]) -> None:
+    scenario = _first(suite, "dependency_outage")
+    latest = max(scenario.changes, key=lambda c: c.offset_s)
+    solver = AgentSolver(attribution="temporal_cap")
+    solver._agent = _ScriptedAgent(_blaming([latest.change_id]), scenario)
+    # Both the diagnosis and the narrow question pick the late change; the rule turns both into "no change", so
+    # they agree and the confidence is only the temporal rule's own cap, not a second penalty.
+    with patch("evals.rca_bench.agent_solver.decide_attribution", _decision(scenario, "change", latest.change_id)):
+        prediction = await solver.solve(scenario)
+    assert prediction.suspects == []
+    assert top_k_correct(Pair(scenario, prediction), 1)
+    assert "capped" not in prediction.rationale
+
+
+def test_the_fresh_seed_suite_is_frozen_and_distinct_from_the_others(suite: list[Scenario]) -> None:
+    path = DEFAULT_SUITE.with_name("synthetic_v0_seed2.jsonl")
+    fresh = load_suite(path)
+    regenerated = generate_suite(seed=2, per_class=5)
+    assert [s.model_dump() for s in regenerated] == [s.model_dump() for s in fresh]
+    for other in ("synthetic_v0.jsonl", "synthetic_v0_seed1.jsonl"):
+        assert [s.model_dump() for s in load_suite(DEFAULT_SUITE.with_name(other))] != [s.model_dump() for s in fresh]
+    assert suite_sha256(path) not in {
+        suite_sha256(DEFAULT_SUITE),
+        suite_sha256(DEFAULT_SUITE.with_name("synthetic_v0_seed1.jsonl")),
+    }
+
+
+def test_the_temporal_rule_never_rules_out_a_true_culprit_in_any_suite(suite: list[Scenario]) -> None:
     from evals.rca_bench.agent_solver import ruled_out_changes
 
-    holdout = load_suite(DEFAULT_SUITE.with_name("synthetic_v0_seed1.jsonl"))
-    for scenario in [*suite, *holdout]:
+    others = [
+        s
+        for name in ("synthetic_v0_seed1.jsonl", "synthetic_v0_seed2.jsonl")
+        for s in load_suite(DEFAULT_SUITE.with_name(name))
+    ]
+    for scenario in [*suite, *others]:
         culprit = scenario.ground_truth.culprit_change_id
         assert culprit is None or culprit not in ruled_out_changes(scenario), scenario.scenario_id
     # and it does remove something, so the test above is not vacuous

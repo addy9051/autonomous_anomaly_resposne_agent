@@ -238,7 +238,10 @@ def main(argv: list[str] | None = None) -> int:
         "--attribution",
         default="baseline",
         choices=ATTRIBUTION_MODES,
-        help="agent solver: how the change attribution is produced (baseline, temporal, decompose, decompose_temporal)",
+        help=(
+            "agent solver: how the change attribution is produced "
+            "(baseline, temporal, decompose, decompose_temporal, temporal_cap)"
+        ),
     )
     run.set_defaults(func=lambda a: asyncio.run(_run(a)))
 

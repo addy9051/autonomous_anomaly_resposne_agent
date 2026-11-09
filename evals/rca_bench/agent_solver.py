@@ -271,6 +271,31 @@ def prediction_from_attribution(
     )
 
 
+def cap_on_disagreement(
+    base: Prediction, attribution: Attribution, scenario: Scenario, evidence: list[dict[str, Any]]
+) -> Prediction:
+    """Keep the base prediction's answer; cap its confidence when the narrow decision names a different cause.
+
+    "None" and "cannot tell" both count as naming no change. A failed narrow call comes back as "cannot tell", so
+    it errs towards lower confidence. The answer itself (suspects, category, citations) is never changed.
+    """
+    chosen = (
+        _change_ids_for([attribution.change_id], evidence, scenario)
+        if attribution.decision == "change" and attribution.change_id
+        else set()
+    )
+    top = max((s.score for s in base.suspects), default=None)
+    primary = set() if base.abstained else {s.change_id for s in base.suspects if s.score == top}
+    if primary == chosen:
+        return base
+    return base.model_copy(
+        update={
+            "confidence": min(base.confidence, DISAGREEMENT_CONFIDENCE_CAP),
+            "rationale": f"[narrow question said {attribution.decision}; confidence capped] {base.rationale}"[:600],
+        }
+    )
+
+
 class _NoRunbookSearch:
     """Stands in for HybridSearchService when no knowledge base is available.
 
@@ -397,6 +422,15 @@ class AgentSolver:
         elif self._attribution == "temporal":
             ruled_out = _change_ids_for(rule_out_acausal_changes(evidence), evidence, scenario)
             prediction = prediction_from_diagnosis(diagnosis, scenario, excluded_changes=frozenset(ruled_out))
+        elif self._attribution == "temporal_cap":
+            ruled_out = _change_ids_for(rule_out_acausal_changes(evidence), evidence, scenario)
+            narrow = apply_temporal_rule(await decide_attribution(scenario.alert.summary, evidence), evidence)
+            prediction = cap_on_disagreement(
+                prediction_from_diagnosis(diagnosis, scenario, excluded_changes=frozenset(ruled_out)),
+                narrow,
+                scenario,
+                evidence,
+            )
         else:
             attribution = await decide_attribution(scenario.alert.summary, evidence)
             if self._attribution == "decompose_temporal":

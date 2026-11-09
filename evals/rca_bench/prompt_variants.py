@@ -37,7 +37,8 @@ VARIANTS: dict[str, str] = {
 # How the change attribution is produced (separate from the prompt variant; see evals/rca_bench/agent_solver.py).
 # "baseline" reads it from the full diagnosis. "temporal" removes changes that code rules out as landing after the
 # symptoms began. "decompose" asks a separate narrow question and uses its answer. "decompose_temporal" does both.
-ATTRIBUTION_MODES = ("baseline", "temporal", "decompose", "decompose_temporal")
+# "temporal_cap" keeps the "temporal" answer and only caps confidence when the narrow question names a different change.
+ATTRIBUTION_MODES = ("baseline", "temporal", "decompose", "decompose_temporal", "temporal_cap")
 
 
 def synthesis_prompt_for(variant: str, base_prompt: str) -> str:

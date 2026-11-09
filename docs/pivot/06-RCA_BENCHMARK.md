@@ -71,6 +71,7 @@ Reports record the suite's SHA-256 so a number can always be tied to the exact s
 | `temporal` | Removes changes that code rules out: a change that landed after the earliest symptom cannot be the cause. Confidence is capped at 0.4 when that removes every change the diagnosis implicated | none |
 | `decompose` | Asks a separate, narrow, constrained question (a listed change, none, or cannot tell), validates the answer against the evidence, and uses it as the attribution. `cannot_tell` becomes an abstention. If it disagrees with the full diagnosis, confidence is capped at 0.4 | one short call per scenario |
 | `decompose_temporal` | `decompose`, then the temporal rule on the chosen change (a ruled-out change becomes "none") | one short call per scenario |
+| `temporal_cap` | The `temporal` answer, unchanged. The narrow question is asked only to cap confidence at 0.4 when it names a different change (or "none" or "cannot tell" when the diagnosis names one). It never changes the named change, the category or the citations, and never abstains | one short call per scenario |
 
 Because the temporal rule is a pure function of the scenario, it can be applied to saved reports with no model calls:
 
@@ -85,6 +86,27 @@ powershell -ExecutionPolicy Bypass -File evals\rca_bench\run_attribution_experim
 ```
 
 Same decision rule as before: adopt only if the holdout shows an improvement on the no-culprit and unanswerable cases, no loss on cases with a culprit, larger than the baseline's run-to-run spread. The temporal rule depends on real symptom-onset timestamps, which the current adapters do not provide (see 07), so a pass here is a result on this synthetic suite, not yet on real incidents.
+
+## Confirming the confidence cap on a fresh seed
+
+`decompose` was rejected (see 07). The offline estimate of `temporal_cap` was chosen **after** seeing the dev and holdout results, so it is a hypothesis, not a finding. The suite `suites/synthetic_v0_seed2.jsonl` (seed 2, 40 scenarios, frozen like the others) was generated for this confirmation and has not been used to design the temporal rule or the cap.
+
+Limit of this check: seed 2 comes from the same generator, which has few templates (about 16 of its 21 distinct alert summaries also appear in the dev suite and 12 in the holdout). It protects against tuning to the specific dev and holdout scenarios. It does **not** test whether the result holds for incidents the generator cannot produce.
+
+Decision rule, written before the runs. Compare `temporal_cap` (live, 3 runs) with `temporal` (the baseline runs on the same suite with the temporal rule applied offline, 3 runs):
+
+1. **Confident errors** drop by at least 0.05 (absolute) on average, and the worst `temporal_cap` run is lower than the best `temporal` run (no overlap between the runs). On the earlier suites the `temporal` runs themselves ranged from 0.10 to 0.20, so a smaller or overlapping difference is not distinguishable from noise.
+2. **Top-1** is within 0.06 of `temporal` (the baseline's top-1 run-to-run range). The cap does not change the named change, so any difference is sampling noise; a larger one means something is wrong with the implementation, not that the cap works or fails.
+3. **Brier score** is not worse.
+4. **Report, do not gate:** ECE, coverage (must stay 1.0, since the mode never abstains) and `Correct answers citing real support`.
+
+If 1-3 hold, the cap becomes the recommended harness setting for this model on this benchmark; it is still not evidence about real incidents. If 1 fails, the offline gain was a selection effect and is dropped.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File evals\rca_bench\run_cap_confirmation.ps1 -Runs 3 -Concurrency 12
+# optional: also run temporal_cap live on the dev and holdout suites, to compare with the offline estimate
+powershell -ExecutionPolicy Bypass -File evals\rca_bench\run_cap_confirmation.ps1 -Runs 3 -Concurrency 12 -AlsoKnown
+```
 
 ## A/B experiment: does clearer synthesis guidance fix the "always blames a change" failure?
 
