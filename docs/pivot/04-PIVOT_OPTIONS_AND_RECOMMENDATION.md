@@ -81,7 +81,7 @@ Before investing beyond Phase 3:
 | Readiness overstated | Phase 1 is roughly half-built, not nearly done. |
 | Skills not SRE-reviewed | Outstanding per [../DECISIONS.md](../DECISIONS.md) section 5.1. |
 | Business model | Open source, self-hosted licence, or services? Not yet chosen. |
-| Hosted vs self-hosted | The `fully_deployed_saas/` branch is a separate, multi-tenant design with its own red-team scope. |
+| Hosted vs self-hosted | The hosted multi-tenant SaaS lives in `saas/` as its own package with its own red-team scope. This repository's root code is the self-hosted, enterprise air-gapped agent. |
 
 ## 7. Decisions needed
 

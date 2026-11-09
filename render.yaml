@@ -7,8 +7,8 @@ services:
   - type: web
     name: sre-saas-api
     runtime: docker
-    dockerfilePath: fully_deployed_saas/Dockerfile
-    dockerContext: fully_deployed_saas
+    dockerfilePath: saas/Dockerfile
+    dockerContext: saas
     plan: free # or starter ($7/mo)
     region: oregon
     healthCheckPath: /health

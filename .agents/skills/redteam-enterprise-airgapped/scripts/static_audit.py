@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Paths to exclude from scanning
-SKIP = re.compile(r"(node_modules|__pycache__|\.pyc$|package-lock\.json$|\.png$|\.jpg$|evals/reports)")
+SKIP = re.compile(r"(node_modules|__pycache__|\.pyc$|package-lock\.json$|\.png$|\.jpg$|evals/reports|(^|/)\.venv/|(^|/)\.git/)")
 
 
 @dataclass(frozen=True)
@@ -66,14 +66,14 @@ def iter_files(ref: str | None):
     if ref:
         for path in git("ls-tree", "-r", "--name-only", ref).splitlines():
             # Exclude SaaS and node_modules
-            if path.startswith("fully_deployed_saas/") or SKIP.search(path):
+            if path.startswith("saas/") or SKIP.search(path):
                 continue
             if Path(path).suffix in {".py", ".html", ".sql", ".yml", ".yaml", ".toml", ".ts", ".js", ".md", ".tf", ".example", ""}:
                 yield path, git("show", f"{ref}:{path}")
     else:
         for p in Path(".").rglob("*"):
             rel = p.as_posix()
-            if rel.startswith("fully_deployed_saas/") or SKIP.search(rel):
+            if rel.startswith("saas/") or SKIP.search(rel):
                 continue
             if p.is_file() and p.suffix in {".py", ".html", ".sql", ".yml", ".yaml", ".toml", ".ts", ".js", ".md", ".tf", ".example", ""}:
                 try:

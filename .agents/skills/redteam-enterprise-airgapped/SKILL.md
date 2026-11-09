@@ -4,7 +4,7 @@ description: >-
   Offensive security expert for the ENTERPRISE, AIR-GAPPED autonomous anomaly-response agent
   on the `main` branch (LangGraph multi-agent diagnosis, deterministic action policy, egress
   allowlist, local vLLM, AWS API Gateway SigV4 + ALB-OIDC Next.js dashboard, Terraform VPC).
-  Use this skill whenever files outside `fully_deployed_saas/` change on `main` — `api.py`,
+  Use this skill whenever files outside `saas/` change on `main` — `api.py`,
   `agents/**`, `shared/**`, `knowledge_base/**`, `skills/**`, `dashboard/**`, `infra/**`,
   `evals/**`, CI configs — before merging to `main`, or when the user asks for a security review,
   threat model, pentest or red-team of the enterprise agent. Do NOT use for the public

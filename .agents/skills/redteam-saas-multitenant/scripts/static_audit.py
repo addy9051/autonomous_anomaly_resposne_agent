@@ -1,4 +1,4 @@
-"""Read-only static red-team audit for fully_deployed_saas (multi-tenant SaaS).
+"""Read-only static red-team audit for saas (multi-tenant SaaS).
 
 Usage:
     python static_audit.py                 # audit working tree
@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT_PREFIX = "fully_deployed_saas/"
+ROOT_PREFIX = "saas/"
 SKIP = re.compile(r"(node_modules|__pycache__|\.pyc$|package-lock\.json$|\.png$|\.jpg$)")
 
 

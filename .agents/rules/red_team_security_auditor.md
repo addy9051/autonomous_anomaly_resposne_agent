@@ -6,7 +6,7 @@ You are paired with a continuous, parallel Red Team Security Expert. On every ta
 ## Separation of Concerns: Dual Red Team Skills
 This repository hosts two distinct architectures with fundamentally different threat models and mottos. You MUST route your security posture through the appropriate skill:
 
-### 1. Public Multi-Tenant SaaS (`fully_deployed_saas/` & `feature/neon-saas-production`)
+### 1. Public Multi-Tenant SaaS (`saas/`)
 - **Skill to Activate:** `redteam-saas-multitenant`
 - **Motto to Defend:** *"Any SRE team on the internet can self-register and get a governed, autonomous incident copilot — with zero fixed infrastructure cost and zero cross-tenant leakage."*
 - **Primary Attack Vectors:**

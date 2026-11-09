@@ -2,15 +2,15 @@
 name: redteam-saas-multitenant
 description: >-
   Offensive security expert for the PUBLIC, MULTI-TENANT, $0-idle-cost SRE SaaS in
-  `fully_deployed_saas/` (branch `feature/neon-saas-production`, live on Render + Neon +
+  `saas/` (live on Render + Neon +
   OpenRouter free tier + local FastEmbed). Use this skill whenever code, schema, config,
-  dashboard, Dockerfile, render.yaml or env vars under `fully_deployed_saas/` change, before
-  any deploy/push of that branch, or when the user asks for a security review, threat model,
-  pentest or red-team of the SaaS. Do NOT use for the air-gapped enterprise agent on `main`
-  (use `redteam-enterprise-airgapped` instead).
+  dashboard, Dockerfile, render.yaml or env vars under `saas/` change, before
+  any deploy/push of the SaaS, or when the user asks for a security review, threat model,
+  pentest or red-team of the SaaS. Do NOT use for the air-gapped enterprise agent at the
+  repository root (use `redteam-enterprise-airgapped` instead).
 ---
 
-# Red Team: Multi-Tenant SaaS (`fully_deployed_saas`)
+# Red Team: Multi-Tenant SaaS (`saas`)
 
 ## Product motto (what we are protecting)
 > "Any SRE team on the internet can self-register and get a governed, autonomous incident
@@ -31,7 +31,7 @@ runbook author**. Full model: [threat_model.md](./references/threat_model.md).
 
 ## Workflow (run in this order, every time)
 
-1. **Scope the diff.** `git diff --name-only HEAD~1 -- fully_deployed_saas/` (or the
+1. **Scope the diff.** `git diff --name-only HEAD~1 -- saas/` (or the
    staged diff). Map each changed file to the attack surfaces in
    [threat_model.md](./references/threat_model.md#attack-surface-map).
 2. **Run the static audit** (fast, read-only, no network):
@@ -44,7 +44,7 @@ runbook author**. Full model: [threat_model.md](./references/threat_model.md).
    [findings_ledger.md](./references/findings_ledger.md) that the diff touches. Never mark a
    finding `FIXED` without pointing at the commit + the test/probe that proves it.
 5. **Prove, don't assert.** Prefer a failing-then-passing unit test or a local probe against
-   `uvicorn api.main:app` with `APP_ENV=development`. Live probes against
+   `uvicorn saas.api.main:app` with `APP_ENV=development`. Live probes against
    `https://sre-saas-api.onrender.com` are allowed **only** with the user's own test tenant,
    must be read-only or self-contained, and must never touch another tenant's data.
 6. **Report** with the template below, then append/update the ledger.
