@@ -46,8 +46,20 @@ def get_chat_model(
 
 
 def get_embeddings() -> Embeddings:
-    """Return an embeddings client backed by the in-VPC inference server."""
+    """Return an embeddings client: the in-VPC inference server, or a local CPU model when so configured."""
     settings = get_settings().llm
+    provider = settings.embedding_provider.lower()
+    if provider == "fastembed":
+        from shared.local_embeddings import LocalEmbeddings
+
+        return LocalEmbeddings(
+            model_name=settings.embedding_local_model,
+            cache_dir=settings.embedding_local_cache_dir,
+            expected_dimensions=settings.embedding_dimensions,
+        )
+    if provider != "openai_compatible":
+        raise ValueError(f"EMBEDDING_PROVIDER must be 'openai_compatible' or 'fastembed', got {provider!r}")
+
     from langchain_openai import OpenAIEmbeddings
 
     return OpenAIEmbeddings(

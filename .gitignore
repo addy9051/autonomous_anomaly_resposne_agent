@@ -73,5 +73,6 @@ tfplan*
 .agents/skills/modal/
 
 models/flashrank/
+models/fastembed/
 models/prompt-injection-v2/
 data/raw/

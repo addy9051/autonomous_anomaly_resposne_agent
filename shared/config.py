@@ -34,6 +34,11 @@ class LLMConfig(BaseSettings):
     embedding_base_url: str = Field(default="", validation_alias="EMBEDDING_BASE_URL")
     embedding_model: str = "nomic-embed-text"
     embedding_dimensions: int = 768
+    # "openai_compatible" calls the in-VPC server above. "fastembed" runs the model on CPU from a local cache,
+    # with no network (see shared/local_embeddings.py). Its output size must equal embedding_dimensions.
+    embedding_provider: str = "openai_compatible"
+    embedding_local_model: str = "BAAI/bge-base-en-v1.5"
+    embedding_local_cache_dir: str = "models/fastembed"
 
     # Per-agent model routing (names of models served by the local server)
     default_model: str = "llama-3.1-8b-instruct"
