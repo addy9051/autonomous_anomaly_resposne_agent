@@ -19,10 +19,10 @@ Code: [`evals/rca_bench/`](../../evals/rca_bench). Tests: [`tests/evals/test_rca
 
 Run 1 took about 80 minutes sequentially (about 131 s per scenario on an L4). **Run 2, with L40S, `--concurrency 4` and `--skip-runbook-search`, took about 8 minutes (mean 45 s per scenario under contention), roughly 10x faster.** The run 1 split was about 33 s for the context summary, 48 s for the expert step, 44 s for synthesis, and about 12 s of failed runbook-search attempts, so almost all of it was three sequential LLM generations. Speed-ups that do not change what the agent does:
 
-1. **Faster GPU for the chat model.** `infra/modal/vllm_app.py` now defaults the chat function to `L40S` (override with `CHAT_GPU`). Redeploy once; the URL does not change, so `.env` is unchanged:
+1. **Faster GPU for the chat model.** `infra/modal/vllm_app.py` now defaults the chat function to `A100-80GB` (override with `CHAT_GPU`; run 2 below used `L40S`). Redeploy once; the URL does not change, so `.env` is unchanged:
 
 ```powershell
-$env:CHAT_GPU = "L40S"
+$env:CHAT_GPU = "A100-80GB"
 modal deploy infra/modal/vllm_app.py
 ```
 

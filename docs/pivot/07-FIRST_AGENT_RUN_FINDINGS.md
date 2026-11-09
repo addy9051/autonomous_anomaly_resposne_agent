@@ -148,17 +148,63 @@ So about 0.14 of the heuristic's gain is the rule itself, and the agent still ad
 - **It does not touch the weaknesses that need judgement:** abstention is still 0 of 15, and the category is still `application` for about 97% of answers.
 - Three runs per suite, one 7B model.
 
+## Decomposed attribution (`--attribution decompose`): rejected
+
+Live runs, 3 per suite, `qwen2.5-7b-instruct`, same suites and scoring as above. "Culprit classes" are `bad_deploy`, `bad_deploy_decoy_later`, `config_change`, `resource_limit_change`.
+
+| Holdout (mean of 3) | baseline | temporal (offline) | decompose | decompose + temporal (offline) |
+|---|---|---|---|---|
+| Top-1 | 0.610 | **0.800** | 0.667 | 0.752 |
+| Confident (0.7 or higher) errors | 0.317 | 0.167 | 0.075 | **0.017** |
+| Abstains when unanswerable (n=5) | 0.0 | 0.0 | 0.6 | 0.6 |
+| Abstains when answerable | 0.0 | 0.0 | 0.248 | 0.248 |
+| Coverage | 1.00 | 1.00 | 0.71 | 0.71 |
+| ECE | 0.189 | 0.168 | 0.215 | 0.303 |
+| Brier | 0.277 | 0.235 | 0.205 | 0.186 |
+| `config_change` | 0.867 | 0.867 | **0.400** | 0.400 |
+| `dependency_outage` | 0.400 | 0.867 | 0.267 | 0.267 |
+| `traffic_surge` | 0.067 | 0.933 | **0.000** | 0.600 |
+| `insufficient_evidence` | 0.000 | 0.000 | 0.600 | 0.600 |
+
+The dev suite agrees on direction (top-1 0.619 baseline, 0.819 temporal, 0.676 decompose, 0.733 decompose plus temporal; `config_change` 0.933 to 0.400; `traffic_surge` 0.133 to 0.000).
+
+**Verdict: not adopted.** Applying the pre-declared rule per class, decompose cuts `config_change` (a culprit class) by 0.47 on both suites, consistently across all 3 runs, and does not help the no-culprit classes except `insufficient_evidence`. Against the free deterministic rule it is worse: decompose plus temporal has lower top-1 than temporal alone (0.752 vs 0.800 holdout, 0.733 vs 0.819 dev), at the cost of an extra model call and a 25% false-abstention rate on answerable scenarios. A reading that averages across culprit classes would show decompose ahead (holdout 0.85 vs 0.73), because it gains on `bad_deploy` and `resource_limit_change`; the rule was written as "no loss on culprit scenarios", and a 0.47 loss on one class is a loss.
+
+**Why it fails (inspection of holdout run 1, the `config_change`, `dependency_outage`, `traffic_surge` and `insufficient_evidence` scenarios, 20 in total):** `cannot_tell` is used indiscriminately. It abstained on 3 of 5 `config_change` scenarios, which have a culprit; on 4 of 5 `dependency_outage`; on 2 of 5 `traffic_surge`; on 3 of 5 `insufficient_evidence`. The model chose `none` once in those 20. It treats "cannot tell" as the answer whenever it is unsure, so abstention does not track whether the question is answerable.
+
+**The abstention gain is not reproducible.** Abstention on unanswerable scenarios was 0.6 on the holdout but 0.2 on dev, and abstention on answerable scenarios was about 0.25 on both. With 5 unanswerable scenarios per suite this is noise-sized evidence, not a result.
+
+**What did help, and is worth keeping in mind:** confident errors fall to 0.017 and Brier improves (0.186 vs 0.235 for temporal alone), because disagreement between the narrow decision and the full diagnosis caps confidence. The cost is under-confidence (ECE 0.303) and answering only 71% of scenarios. Two answers that disagree is a usable uncertainty signal; the decomposed answer itself is not a usable attribution at this model size.
+
+**Category accuracy equals top-1 exactly in the plain decompose runs (0.676 and 0.667). Do not read the new category spread (`infrastructure` and `external` now appear) as better categorisation.** It tracks the attribution outcome, so it is not independent evidence.
+
+**Current best configuration on this benchmark: baseline diagnosis plus the deterministic temporal rule.** Its caveats above still apply (generator-built decoys, no real onset timestamps).
+
+## Harness variant: keep the baseline attribution, cap confidence when a second question disagrees
+
+Chosen after seeing the decompose results, so it was **not** pre-declared; treat it as a hypothesis that still needs a fresh holdout. Scored offline with `python -m evals.rca_bench.disagreement` (no model calls). It takes the baseline answer with the temporal rule applied and caps confidence at 0.4 when the narrow question (`decompose`, temporal rule applied) names a different change. It never changes which change is named and never abstains.
+
+| Mean of 3 | Dev: temporal | Dev: + cap | Holdout: temporal | Holdout: + cap |
+|---|---|---|---|---|
+| Top-1 | 0.819 | 0.819 | 0.800 | 0.800 |
+| Confident (0.7 or higher) errors | 0.150 | **0.075** | 0.167 | **0.025** |
+| Brier | 0.207 | 0.196 | 0.235 | 0.189 |
+| ECE | 0.131 | 0.136 | 0.168 | 0.145 |
+
+The two questions disagreed on about 11 of 40 (dev) and 14 of 40 (holdout) scenarios per run. Top-1 is unchanged by construction, so this is purely a confidence result. Caveats: run k of the baseline is paired with run k of `decompose`, which are independent generations, so this approximates the live harness; it costs one extra short model call per scenario if run live; abstention is still 0 and the category is still degenerate.
+
 ## Hypotheses to test next (none verified)
 
-- **Decompose the decision.** A separate, narrow, constrained question before synthesis ("which listed change, if any, plausibly explains the symptom: an id, none, or cannot tell") is implemented as `--attribution decompose` and not yet run against the model. Its main hope is abstention and category, which the rule cannot fix. Run `evals\rca_bench\run_attribution_experiment.ps1`.
-- **Capacity.** Run the same suites with a larger diagnosis model to separate a capacity limit from a prompting problem.
+- **Harness before model size.** The temporal rule (about +0.19 top-1) and the disagreement cap (about -0.14 confident errors) are both harness changes on the same 7B model. A larger model stays a useful single control run to measure how much the model matters, but it is not required to continue with harness work.
+- **Judge each candidate change separately** (yes, no or unclear per change, with the harness aggregating: exactly one yes names it, none means no change, several means rank by deterministic signals). This addresses the observed `cannot_tell` over-use, where one three-way answer over the whole list was used as the default for any uncertainty.
+- **Use token log-probabilities from the serving layer as the confidence signal** instead of the model's stated number, which is where the confident errors come from.
 - **Fix the suite's blind spots:** add scenarios where the alerting service's latest change is not the culprit and where decoys land before the symptom onset, so the rule cannot do all the work.
 
 ## Next steps
 
-1. Run the live decomposed-decision experiment (`run_attribution_experiment.ps1`, 6 runs). The same script prints all four configurations side by side: baseline, temporal (offline), decompose, decompose plus temporal (offline, approximate).
-2. Build onset detection in the telemetry adapters, so the temporal rule can run on real incidents.
-3. Run the baseline with a larger diagnosis model to separate capacity from prompting.
+1. Confirm the disagreement cap on a fresh holdout (a new generator seed) with a live run, then try the per-candidate judging variant and log-probability confidence.
+2. Optionally, one run of the baseline with a larger diagnosis model as a control for how much the model matters.
+3. Build onset detection in the telemetry adapters, so the temporal rule can run on real incidents.
 4. Decide whether to treat low confidence (at most 0.4) as an official abstention signal. It stays a separate, pre-declared metric until then.
 5. Grow the suite, remove the generator structure the rule exploits, and build the live fault-injection suite.
 6. Only then wire the attribution step and rule into the production diagnosis graph, re-run, and compare.

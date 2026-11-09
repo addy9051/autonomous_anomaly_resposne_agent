@@ -17,9 +17,9 @@ VLLM_VERSION = "0.13.0"
 CHAT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 CHAT_NAME = "qwen2.5-7b-instruct"
 # The chat model decodes at memory-bandwidth speed, so the GPU sets the pace of every agent call. L4 (about
-# 300 GB/s) made a benchmark scenario take about 130 s; L40S has roughly three times the bandwidth. Override at
-# deploy time with CHAT_GPU (for example A100-80GB or H100). Changing it needs `modal deploy`.
-CHAT_GPU = os.environ.get("CHAT_GPU", "L40S")
+# 300 GB/s) made a benchmark scenario take about 130 s; A100-80GB has roughly seven times the bandwidth. Override at
+# deploy time with CHAT_GPU (for example L40S or H100). Changing it needs `modal deploy`.
+CHAT_GPU = os.environ.get("CHAT_GPU", "A100-80GB")
 # Idle time before the chat container shuts down. A cold start takes about 8-10 minutes, so keep this longer than
 # the gaps between benchmark runs. Override with CHAT_SCALEDOWN_SECONDS (Modal allows 2-3600).
 CHAT_SCALEDOWN_SECONDS = int(os.environ.get("CHAT_SCALEDOWN_SECONDS", "900"))
