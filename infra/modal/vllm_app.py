@@ -7,6 +7,7 @@ Deploy:
 Then set LLM_BASE_URL / EMBEDDING_BASE_URL to the printed URLs + "/v1".
 """
 
+import os
 import shutil
 import subprocess
 
@@ -15,6 +16,16 @@ import modal
 VLLM_VERSION = "0.13.0"
 CHAT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 CHAT_NAME = "qwen2.5-7b-instruct"
+# The chat model decodes at memory-bandwidth speed, so the GPU sets the pace of every agent call. L4 (about
+# 300 GB/s) made a benchmark scenario take about 130 s; L40S has roughly three times the bandwidth. Override at
+# deploy time with CHAT_GPU (for example A100-80GB or H100). Changing it needs `modal deploy`.
+CHAT_GPU = os.environ.get("CHAT_GPU", "L40S")
+# Idle time before the chat container shuts down. A cold start takes about 8-10 minutes, so keep this longer than
+# the gaps between benchmark runs. Override with CHAT_SCALEDOWN_SECONDS (Modal allows 2-3600).
+CHAT_SCALEDOWN_SECONDS = int(os.environ.get("CHAT_SCALEDOWN_SECONDS", "900"))
+# Containers kept running even when idle (costs GPU time continuously). Leave at 0 and use
+# infra/modal/keep_warm.py to switch it on while iterating, without redeploying.
+CHAT_MIN_CONTAINERS = int(os.environ.get("CHAT_MIN_CONTAINERS", "0"))
 # Ungated mirror of meta-llama/Llama-3.1-8B-Instruct (the official repo needs an HF token).
 JUDGE_MODEL = "NousResearch/Meta-Llama-3.1-8B-Instruct"
 JUDGE_NAME = "llama-3.1-8b-instruct"
@@ -52,14 +63,15 @@ def _serve(args: list[str], port: int) -> None:
 
 
 @app.function(
-    gpu="L4",
+    gpu=CHAT_GPU,
     volumes=CACHE,
     secrets=[api_key],
-    scaledown_window=300,
+    min_containers=CHAT_MIN_CONTAINERS,
+    scaledown_window=CHAT_SCALEDOWN_SECONDS,
     timeout=3600,
 )
 @modal.concurrent(max_inputs=16)
-@modal.web_server(port=8000, startup_timeout=600)
+@modal.web_server(port=8000, startup_timeout=1200)
 def chat() -> None:
     _serve(
         [
