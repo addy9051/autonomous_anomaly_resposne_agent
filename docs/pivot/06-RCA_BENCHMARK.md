@@ -17,7 +17,7 @@ Code: [`evals/rca_bench/`](../../evals/rca_bench). Tests: [`tests/evals/test_rca
 
 ### Full agent run
 
-Run 1 took about 80 minutes sequentially (about 131 s per scenario on an L4). The measured split was about 33 s for the context summary, 48 s for the expert step, 44 s for synthesis, and about 12 s of failed runbook-search attempts, so almost all of it is three sequential LLM generations. Speed-ups that do not change what the agent does:
+Run 1 took about 80 minutes sequentially (about 131 s per scenario on an L4). **Run 2, with L40S, `--concurrency 4` and `--skip-runbook-search`, took about 8 minutes (mean 45 s per scenario under contention), roughly 10x faster.** The run 1 split was about 33 s for the context summary, 48 s for the expert step, 44 s for synthesis, and about 12 s of failed runbook-search attempts, so almost all of it was three sequential LLM generations. Speed-ups that do not change what the agent does:
 
 1. **Faster GPU for the chat model.** `infra/modal/vllm_app.py` now defaults the chat function to `L40S` (override with `CHAT_GPU`). Redeploy once; the URL does not change, so `.env` is unchanged:
 
@@ -60,6 +60,28 @@ LLM output varies between runs. For a measured spread, repeat with `run3` and so
 `summarize` prints each metric (mean and min-max across runs), accuracy per fault class and the scenarios answered incorrectly. Use `--limit N` on `run` for a quick smoke test. Do not mix results from different scoring versions; `summarize` warns when you do.
 
 Reports record the suite's SHA-256 so a number can always be tied to the exact scenarios.
+
+## A/B experiment: does clearer synthesis guidance fix the "always blames a change" failure?
+
+Run 2 showed the agent right on 23 of 25 scenarios with a culprit change but on 0 of 15 where no change is the answer ([07](./07-FIRST_AGENT_RUN_FINDINGS.md)). To test a fix without touching production behaviour, `--prompt-variant` swaps the synthesis prompt for the duration of a run only:
+
+| Variant | What it adds |
+|---|---|
+| `baseline` | Nothing; the production prompt. |
+| `evidence_discipline` | Four rules appended to the synthesis prompt: a change is a suspect only if the evidence ties it to the symptom; if the evidence points to an upstream dependency, load or saturation, name that and do not blame a change; use the category values for what they mean; if causes cannot be told apart, answer `unknown` with low confidence. Text in `evals/rca_bench/prompt_variants.py`. |
+
+Two suites keep the comparison honest:
+
+- **Dev suite** `synthetic_v0.jsonl` (seed 0): the one the failures were observed on. The variant was written after seeing them, so improvement here is **optimistic**.
+- **Holdout suite** `synthetic_v0_seed1.jsonl` (seed 1): 40 different instances from the same generator, not looked at while writing the variant. Baseline heuristics score identically on it, because the structure is the same. It guards against overfitting to specific instances, **not** against overfitting to the scenario types. Live fault-injected scenarios are the real test.
+
+One command runs the whole matrix (3 runs x 2 suites x 2 variants = 12 runs, about 8 minutes each, interleaved) and summarises each configuration. Finished runs are skipped, so rerunning resumes it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File evals\rca_bench\run_experiment.ps1 -Runs 3
+```
+
+Decision rule, set before running: adopt the variant only if, on the **holdout** suite, it improves accuracy on the no-culprit and unanswerable scenarios without reducing top-1 on scenarios that have a culprit, and the improvement is larger than the run-to-run range of the baseline. Check that it does not simply make the agent answer `unknown` for everything: look at false abstention and at accuracy on culprit scenarios.
 
 ## What is measured
 
