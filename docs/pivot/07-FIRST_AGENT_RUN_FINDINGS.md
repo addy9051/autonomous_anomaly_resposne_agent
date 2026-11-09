@@ -75,16 +75,58 @@ Per fault class: `bad_deploy`, `bad_deploy_decoy_later`, `config_change`, `same_
 | H3: ECE at most 0.15 and confident errors at most 10% | ECE met (0.130); confident errors not met (27.5%), all from cases where no change is to blame. |
 | H4: abstains on at least 80% of unanswerable | Not met (0%). Low confidence on 60% is a weak partial signal. |
 
+## A/B experiment results: `evidence_discipline` is rejected
+
+3 runs per configuration, `concurrency=12`, `qwen2.5-7b-instruct`, scoring version 2, run on both suites (the dev suite the variant was written against, and the unseen holdout suite). Values are mean (min-max) across the 3 runs.
+
+| Metric | Dev baseline | Dev variant | Holdout baseline | Holdout variant |
+|---|---|---|---|---|
+| Top-1 change accuracy | 0.619 (0.571-0.686) | **0.352** (0.229-0.429) | 0.610 (0.600-0.629) | **0.333** (0.257-0.371) |
+| Confident (0.7 or higher) errors | 0.317 | 0.050 | 0.317 | 0.083 |
+| Calibration error (ECE) | 0.167 | 0.176 | 0.189 | 0.178 |
+| Abstains when unanswerable | 0.000 | 0.000 | 0.000 | 0.000 |
+| Correct answers citing real support | 0.933 | 0.581 | 0.948 | 0.474 |
+| `dependency_outage` accuracy | 0.200 | 0.600 | 0.400 | 0.667 |
+| `insufficient_evidence` accuracy | 0.000 | 0.000 | 0.000 | 0.000 |
+
+**Decision under the rule set in advance (06): reject.** The rule was to adopt only if the variant improved the no-culprit and unanswerable scenarios on the holdout without reducing top-1 on scenarios that have a culprit, by more than the baseline's own spread. It did improve `dependency_outage`, but top-1 fell from about 0.61 to about 0.33, far beyond the baseline spread of about 0.06, and the unanswerable scenarios did not improve at all.
+
+### Why it failed (measured, by scenario type, dev / holdout)
+
+| | Baseline | Variant |
+|---|---|---|
+| Scenarios WITH a culprit: top-1 | 0.80 / 0.76 | 0.32 / 0.28 |
+| Scenarios WITH a culprit: implicated no change at all | 0.19 / 0.19 | 0.67 / 0.71 |
+| Evidence records cited per prediction | 2.5 / 2.7 | 0.6 / 0.5 |
+| Mean stated confidence (culprit scenarios) | 0.72 / 0.73 | 0.47 / 0.46 |
+| Scenarios with NO culprit: correctly implicated none | 0.17 / 0.23 | 0.43 / 0.47 |
+
+The rules made the 7B model stop blaming changes and stop citing evidence everywhere, not just where it should. It got better at "no change" cases (0.2 to 0.45) at the price of losing the culprit in two thirds of the cases where one exists. It also hedged on confidence across the board (low confidence on 82-93% of predictions), which is why confident errors fell, but that is a side effect of not committing, not better calibration.
+
+### What the 3-run baseline establishes
+
+- **Results are stable.** Top-1 is 0.619 on dev and 0.610 on holdout, with a spread of about 0.06, so the holdout confirms the dev numbers rather than exposing instance-level overfitting. (It cannot expose overfitting to the scenario types, which both suites share.)
+- **The agent is roughly tied with the best simple heuristic overall** (0.571 on both suites), not clearly ahead. The heuristic scores 1.0 on four fault classes by construction of the generator, where the alerting service's latest change is always the culprit. The agent is **worse than the heuristic on those four classes** (0.53-0.93) and **clearly better only on `same_service_later_noop`** (0.80-0.87 vs 0.0), where reading the error frame and changed files is required. This suite favours the heuristic, so real incidents may differ.
+- **Category is degenerate:** `application` for 117 of 120 predictions on dev and 119 of 120 on holdout.
+- **The agent never abstains** (0 of 15 unanswerable, in every run) and never answers `unknown`.
+- **Calibration is not met:** ECE 0.167-0.189 against a target of 0.15 or lower, and confident errors 0.317 against a target of 0.10 or lower.
+
+### Conclusions
+
+1. Prompt text alone is the wrong lever for this model. Four rules in one prompt shifted behaviour everywhere, not selectively.
+2. The weaknesses that matter (no abstention, always blaming a change, degenerate category) are properties of how this 7B model decides, so the fix should come from structure the code controls, not from more instructions.
+
 ## Hypotheses to test next (none verified)
 
-- The synthesis prompt's category example and the skills push a 7B model toward `application`. Check by listing the prompt's category guidance and by trying a stronger model.
-- Citation failures come from the model not emitting evidence ids in its hypotheses. Check with the stored `rationale` and the raw hypothesis output.
-- "Blame the latest change" comes from the model, from the `deploy`-flavoured skills, or from change events being the most legible evidence. Check by removing the decoy change from `dependency_outage` scenarios. At about 8 minutes per run this is now cheap to try.
-- A larger model, or enabling the runbook knowledge base, changes the picture. Run the same suite after changing the diagnosis model setting to isolate this.
+- **Decompose the decision.** A separate, narrow, constrained question before synthesis ("which listed change, if any, plausibly explains the symptom: an id, none, or cannot tell") may work where one large prompt did not. Test it as a variant on the same suites.
+- **Deterministic checks in code, like the existing confidence caps.** For example, a change that landed after the symptoms began cannot be the cause, and an implicated change with no supporting evidence cites should not keep a high confidence. These cannot hedge across the board the way a prompt can.
+- **Capacity.** Run the same suites with a larger diagnosis model to separate a capacity limit from a prompting problem.
+- **Fix the scoring blind spot first for fairness:** the suite favours the recency heuristic. Add scenarios where the alerting service's latest change is not the culprit.
 
 ## Next steps
 
-1. **Run the A/B experiment** ([06](./06-RCA_BENCHMARK.md)): `evals\rca_bench\run_experiment.ps1`. It also gives the repeated baseline runs needed for a measured spread. Apply the pre-declared decision rule in 06 before adopting any prompt change.
-2. Decide whether to treat low confidence (at most 0.4) as an official abstention signal. It stays a separate, pre-declared metric until then, so the abstention definition is not changed after seeing results.
-3. Grow the suite. Five scenarios per class cannot distinguish small differences, and the holdout shares its scenario types with the dev suite.
-4. Only then change prompts or skills in production, re-run, and compare.
+1. Try one decomposed-decision variant and one deterministic temporal-consistency check, each as a benchmark variant, with the same decision rule (holdout, beyond baseline spread, no loss on culprit scenarios).
+2. Run the baseline with a larger diagnosis model to separate capacity from prompting.
+3. Decide whether to treat low confidence (at most 0.4) as an official abstention signal. It stays a separate, pre-declared metric until then. Note it did not track unanswerability in the baseline (0.13 on unanswerable vs 0.21 on answerable).
+4. Grow the suite and add scenarios that do not favour the recency heuristic; build the live fault-injection suite.
+5. Only then change prompts or skills in production, re-run, and compare.
