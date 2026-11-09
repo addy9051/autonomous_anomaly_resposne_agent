@@ -116,17 +116,49 @@ The rules made the 7B model stop blaming changes and stop citing evidence everyw
 1. Prompt text alone is the wrong lever for this model. Four rules in one prompt shifted behaviour everywhere, not selectively.
 2. The weaknesses that matter (no abstention, always blaming a change, degenerate category) are properties of how this 7B model decides, so the fix should come from structure the code controls, not from more instructions.
 
+## Deterministic temporal rule (offline rescoring of the 3 baseline runs)
+
+The rule, in `agents/diagnosis/attribution.py`: **a change that landed after the earliest symptom cannot be the cause.** It only removes candidates; it never proves one. Because it is a pure function of the scenario, it can be applied to saved predictions with no model calls (`python -m evals.rca_bench rescore`), which gives exactly what the `temporal` attribution mode would produce from the same diagnoses. Checked invariant: it removes a true culprit in **0 of 80** scenarios across both suites (and removes something in many, so the check is not vacuous).
+
+| Metric (mean, min-max over 3 runs) | Dev baseline | Dev + rule | Holdout baseline | Holdout + rule |
+|---|---|---|---|---|
+| Top-1 change accuracy | 0.619 (0.571-0.686) | **0.819** (0.743-0.886) | 0.610 (0.600-0.629) | **0.800** (0.771-0.829) |
+| Confident (0.7 or higher) errors | 0.317 | 0.150 | 0.317 | 0.167 |
+| Calibration error (ECE) | 0.167 | 0.131 | 0.189 | 0.168 |
+| `dependency_outage` accuracy | 0.200 | 0.800 | 0.400 | 0.867 |
+| `traffic_surge` accuracy | 0.133 | 0.867 | 0.067 | 0.933 |
+| `insufficient_evidence` accuracy | 0.000 | 0.000 | 0.000 | 0.000 |
+| Classes with a culprit | unchanged | unchanged | unchanged | unchanged |
+
+**By the pre-declared decision rule this passes:** on the holdout it greatly improves the no-culprit cases without reducing top-1 on cases with a culprit, by far more than the baseline spread (about 0.06).
+
+### The fair comparison: give the simple heuristic the same rule
+
+| Top-1 (both suites) | Without the rule | With the rule |
+|---|---|---|
+| `alert_service_recent_change` heuristic | 0.571 | 0.714 |
+| Agent (baseline diagnosis) | 0.619 / 0.610 | 0.819 / 0.800 |
+
+So about 0.14 of the heuristic's gain is the rule itself, and the agent still adds about 0.09-0.10 on top. The agent's value is concentrated where no listed change is responsible: it scores 0.80-0.93 on `dependency_outage` and `traffic_surge` with the rule against 0.0 for the heuristic, because the heuristic always names some older change, while the agent mostly does not.
+
+### Caveats, and they are large
+
+- **The suite is built so the rule works.** My generator puts the recent decoy changes after the symptom onset in the classes where it matters. The rule exploits that structure. Treat the size of the gain as an upper bound for this suite, not a prediction for real incidents.
+- **It needs real onset timestamps.** The rule uses the earliest symptom time. Today's adapters return the latest sample of a metric, not when it first went abnormal, so in production the rule would misfire until onset detection (the time a metric first breached its baseline) exists. That is the next piece of real work, and it is not done.
+- **It does not touch the weaknesses that need judgement:** abstention is still 0 of 15, and the category is still `application` for about 97% of answers.
+- Three runs per suite, one 7B model.
+
 ## Hypotheses to test next (none verified)
 
-- **Decompose the decision.** A separate, narrow, constrained question before synthesis ("which listed change, if any, plausibly explains the symptom: an id, none, or cannot tell") may work where one large prompt did not. Test it as a variant on the same suites.
-- **Deterministic checks in code, like the existing confidence caps.** For example, a change that landed after the symptoms began cannot be the cause, and an implicated change with no supporting evidence cites should not keep a high confidence. These cannot hedge across the board the way a prompt can.
+- **Decompose the decision.** A separate, narrow, constrained question before synthesis ("which listed change, if any, plausibly explains the symptom: an id, none, or cannot tell") is implemented as `--attribution decompose` and not yet run against the model. Its main hope is abstention and category, which the rule cannot fix. Run `evals\rca_bench\run_attribution_experiment.ps1`.
 - **Capacity.** Run the same suites with a larger diagnosis model to separate a capacity limit from a prompting problem.
-- **Fix the scoring blind spot first for fairness:** the suite favours the recency heuristic. Add scenarios where the alerting service's latest change is not the culprit.
+- **Fix the suite's blind spots:** add scenarios where the alerting service's latest change is not the culprit and where decoys land before the symptom onset, so the rule cannot do all the work.
 
 ## Next steps
 
-1. Try one decomposed-decision variant and one deterministic temporal-consistency check, each as a benchmark variant, with the same decision rule (holdout, beyond baseline spread, no loss on culprit scenarios).
-2. Run the baseline with a larger diagnosis model to separate capacity from prompting.
-3. Decide whether to treat low confidence (at most 0.4) as an official abstention signal. It stays a separate, pre-declared metric until then. Note it did not track unanswerability in the baseline (0.13 on unanswerable vs 0.21 on answerable).
-4. Grow the suite and add scenarios that do not favour the recency heuristic; build the live fault-injection suite.
-5. Only then change prompts or skills in production, re-run, and compare.
+1. Run the live decomposed-decision experiment (`run_attribution_experiment.ps1`, 6 runs). The same script prints all four configurations side by side: baseline, temporal (offline), decompose, decompose plus temporal (offline, approximate).
+2. Build onset detection in the telemetry adapters, so the temporal rule can run on real incidents.
+3. Run the baseline with a larger diagnosis model to separate capacity from prompting.
+4. Decide whether to treat low confidence (at most 0.4) as an official abstention signal. It stays a separate, pre-declared metric until then.
+5. Grow the suite, remove the generator structure the rule exploits, and build the live fault-injection suite.
+6. Only then wire the attribution step and rule into the production diagnosis graph, re-run, and compare.

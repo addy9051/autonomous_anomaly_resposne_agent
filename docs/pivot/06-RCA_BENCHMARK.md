@@ -61,6 +61,31 @@ LLM output varies between runs. For a measured spread, repeat with `run3` and so
 
 Reports record the suite's SHA-256 so a number can always be tied to the exact scenarios.
 
+## Attribution modes and the temporal rule
+
+`--attribution` (agent solver) selects how the change attribution is produced. Code: [`agents/diagnosis/attribution.py`](../../agents/diagnosis/attribution.py), integration in `evals/rca_bench/agent_solver.py`. None of this is wired into the production graph yet; it is measured here first.
+
+| Mode | What it does | Extra model calls |
+|---|---|---|
+| `baseline` | Reads the attribution from the full diagnosis (the default) | none |
+| `temporal` | Removes changes that code rules out: a change that landed after the earliest symptom cannot be the cause. Confidence is capped at 0.4 when that removes every change the diagnosis implicated | none |
+| `decompose` | Asks a separate, narrow, constrained question (a listed change, none, or cannot tell), validates the answer against the evidence, and uses it as the attribution. `cannot_tell` becomes an abstention. If it disagrees with the full diagnosis, confidence is capped at 0.4 | one short call per scenario |
+| `decompose_temporal` | `decompose`, then the temporal rule on the chosen change (a ruled-out change becomes "none") | one short call per scenario |
+
+Because the temporal rule is a pure function of the scenario, it can be applied to saved reports with no model calls:
+
+```powershell
+.venv\Scripts\python.exe -m evals.rca_bench rescore evals\reports\exp_dev_baseline_run1.json   # writes exp_dev_baseline_run1_temporal.json
+```
+
+Results of rescoring the three baseline runs per suite are in [07](./07-FIRST_AGENT_RUN_FINDINGS.md). To run the live decomposed-decision experiment (6 runs) and print all four configurations:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File evals\rca_bench\run_attribution_experiment.ps1 -Runs 3 -Concurrency 12
+```
+
+Same decision rule as before: adopt only if the holdout shows an improvement on the no-culprit and unanswerable cases, no loss on cases with a culprit, larger than the baseline's run-to-run spread. The temporal rule depends on real symptom-onset timestamps, which the current adapters do not provide (see 07), so a pass here is a result on this synthetic suite, not yet on real incidents.
+
 ## A/B experiment: does clearer synthesis guidance fix the "always blames a change" failure?
 
 Run 2 showed the agent right on 23 of 25 scenarios with a culprit change but on 0 of 15 where no change is the answer ([07](./07-FIRST_AGENT_RUN_FINDINGS.md)). To test a fix without touching production behaviour, `--prompt-variant` swaps the synthesis prompt for the duration of a run only:

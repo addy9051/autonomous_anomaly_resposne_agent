@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from evals.rca_bench.generator import generate_suite
 from evals.rca_bench.metrics import SCORING_VERSION
-from evals.rca_bench.prompt_variants import VARIANTS
+from evals.rca_bench.prompt_variants import ATTRIBUTION_MODES, VARIANTS
 from evals.rca_bench.runner import (
     DEFAULT_SUITE,
     append_checkpoint,
@@ -46,6 +46,33 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 def _cmd_summarize(args: argparse.Namespace) -> int:
     print(summarize_reports([Path(p) for p in args.reports]))
+    return 0
+
+
+def _cmd_rescore(args: argparse.Namespace) -> int:
+    """Apply the temporal rule to saved reports and write new reports, with no model calls."""
+    from evals.rca_bench.metrics import Pair, compute_metrics
+    from evals.rca_bench.rescore import apply_temporal_rule_to_prediction
+    from evals.rca_bench.schema import Prediction
+
+    for report_path in args.reports:
+        source = Path(report_path)
+        report = json.loads(source.read_text(encoding="utf-8"))
+        suite_path = Path(report["suite"]["path"])
+        scenarios = {s.scenario_id: s for s in load_suite(suite_path)}
+        predictions = [Prediction.model_validate(p) for p in report["predictions"]]
+        rescored = [apply_temporal_rule_to_prediction(p, scenarios[p.scenario_id]) for p in predictions]
+        ordered = [scenarios[p.scenario_id] for p in rescored]
+        metrics = compute_metrics([Pair(s, p) for s, p in zip(ordered, rescored, strict=True)])
+        options = {
+            **report.get("options", {}),
+            "attribution": "temporal (offline rescore)",
+            "rescored_from": source.name,
+        }
+        target = source.with_name(f"{source.stem}_temporal{source.suffix}")
+        out = build_report(report["solver"], ordered, rescored, metrics, suite_path, options)
+        target.write_text(json.dumps(out, indent=2), encoding="utf-8")
+        print(f"wrote {target}")
     return 0
 
 
@@ -101,6 +128,7 @@ def _run_options(args: argparse.Namespace, solver_name: str) -> dict[str, object
         options.update(
             skip_runbook_search=args.skip_runbook_search,
             prompt_variant=args.prompt_variant,
+            attribution=args.attribution,
             diagnosis_model=llm.diagnosis_agent_model,
             llm_host=urlparse(llm.base_url).netloc,
         )
@@ -121,7 +149,7 @@ async def _run(args: argparse.Namespace) -> int:
     if args.warmup and not await _warm_up(args.warmup_timeout):
         return 3
     # Predictions made under another scoring version or prompt variant are not reusable.
-    sha = f"{suite_sha256(suite_path)}:scoring{SCORING_VERSION}:{args.prompt_variant}"
+    sha = f"{suite_sha256(suite_path)}:scoring{SCORING_VERSION}:{args.prompt_variant}:{args.attribution}"
     checkpoint = Path(args.checkpoint) if args.checkpoint else None
 
     def progress(index: int, total: int, scenario: Scenario, prediction: Prediction, seconds: float) -> None:
@@ -138,7 +166,11 @@ async def _run(args: argparse.Namespace) -> int:
         completed = load_checkpoint(checkpoint, sha) if checkpoint else {}
         if completed:
             print(f"resuming: {len(completed)} scenarios already done", flush=True)
-        agent_options = {"skip_runbook_search": args.skip_runbook_search, "prompt_variant": args.prompt_variant}
+        agent_options = {
+            "skip_runbook_search": args.skip_runbook_search,
+            "prompt_variant": args.prompt_variant,
+            "attribution": args.attribution,
+        }
         solver = SOLVERS[name](**agent_options) if name == "agent" else SOLVERS[name]()
         predictions, metrics = await run_solver(
             solver,
@@ -202,11 +234,24 @@ def main(argv: list[str] | None = None) -> int:
         choices=sorted(VARIANTS),
         help="agent solver: synthesis prompt variant for an A/B run (the production prompt is not changed)",
     )
+    run.add_argument(
+        "--attribution",
+        default="baseline",
+        choices=ATTRIBUTION_MODES,
+        help="agent solver: how the change attribution is produced (baseline, temporal, decompose, decompose_temporal)",
+    )
     run.set_defaults(func=lambda a: asyncio.run(_run(a)))
 
     summary = sub.add_parser("summarize", help="summarise one or more JSON reports (several runs show mean and range)")
     summary.add_argument("reports", nargs="+")
     summary.set_defaults(func=_cmd_summarize)
+
+    rescore = sub.add_parser(
+        "rescore",
+        help="apply the deterministic temporal rule to saved reports (no model calls); writes *_temporal.json",
+    )
+    rescore.add_argument("reports", nargs="+")
+    rescore.set_defaults(func=_cmd_rescore)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

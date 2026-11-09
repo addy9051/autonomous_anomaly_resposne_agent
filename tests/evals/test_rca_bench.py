@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -46,6 +46,7 @@ from evals.rca_bench.solvers import (
 from shared.schemas import DiagnosisResult, EvidenceRecord, Hypothesis, RootCauseCategory
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -479,6 +480,208 @@ async def test_warm_up_refuses_a_non_allowlisted_endpoint(
     monkeypatch.setattr(get_settings().llm, "base_url", "http://93.184.216.34/v1")  # public IP literal, no DNS
     assert await _warm_up(5.0) is False
     assert "EgressViolationError" in capsys.readouterr().err
+
+
+class _ScriptedAgent:
+    """Reads evidence like the real graph, then returns a diagnosis built from the scenario."""
+
+    def __init__(self, build: Callable[[Scenario], DiagnosisResult], scenario: Scenario) -> None:
+        self._build = build
+        self._scenario = scenario
+
+    async def diagnose(self, event: object) -> DiagnosisResult:
+        from agents.diagnosis import evidence as evidence_module
+
+        await evidence_module.collect_evidence(object(), ["x"])
+        return self._build(self._scenario)
+
+
+def _blaming(change_ids: list[str], confidence: float = 0.9) -> Callable[[Scenario], DiagnosisResult]:
+    def build(scenario: Scenario) -> DiagnosisResult:
+        by_id = {c.change_id: c for c in scenario.changes}
+        return DiagnosisResult(
+            event_id="e1",
+            root_cause=" and ".join(f"{c} caused it" for c in change_ids),
+            root_cause_category=RootCauseCategory.APPLICATION,
+            hypotheses=[
+                Hypothesis(
+                    hypothesis="top",
+                    supporting_evidence=[
+                        EvidenceRecord(source="custom", query_or_ref=by_id[c].evidence_id) for c in change_ids
+                    ],
+                )
+            ],
+            recommended_actions=[],
+            confidence=confidence,
+        )
+
+    return build
+
+
+def _first(suite: list[Scenario], fault_class: str) -> Scenario:
+    return next(s for s in suite if s.ground_truth.fault_class == fault_class)
+
+
+async def test_temporal_mode_rules_out_a_change_that_landed_after_the_symptoms(suite: list[Scenario]) -> None:
+    scenario = _first(suite, "dependency_outage")
+    latest = max(scenario.changes, key=lambda c: c.offset_s)
+    solver = AgentSolver(attribution="temporal")
+    solver._agent = _ScriptedAgent(_blaming([latest.change_id]), scenario)
+    prediction = await solver.solve(scenario)
+    assert prediction.suspects == []
+    assert latest.evidence_id not in prediction.cited_evidence_ids
+    assert prediction.confidence <= 0.4
+    assert top_k_correct(Pair(scenario, prediction), 1)  # no listed change is responsible here
+
+
+async def test_temporal_mode_keeps_the_older_culprit_and_drops_later_decoys(suite: list[Scenario]) -> None:
+    scenario = _first(suite, "bad_deploy_decoy_later")
+    culprit = scenario.ground_truth.culprit_change_id
+    assert culprit is not None
+    everything = [c.change_id for c in scenario.changes]
+    solver = AgentSolver(attribution="temporal")
+    solver._agent = _ScriptedAgent(_blaming(everything), scenario)
+    prediction = await solver.solve(scenario)
+    assert [s.change_id for s in prediction.suspects] == [culprit]
+    assert top_k_correct(Pair(scenario, prediction), 1)
+
+    hedging = AgentSolver(attribution="baseline")
+    hedging._agent = _ScriptedAgent(_blaming(everything), scenario)
+    assert not top_k_correct(Pair(scenario, await hedging.solve(scenario)), 1)
+
+
+def _decision(scenario: Scenario, kind: str, change_id: str | None = None) -> Any:  # noqa: ANN401
+    from agents.diagnosis.attribution import Attribution
+
+    async def decide(_summary: str, evidence: list[dict[str, Any]]) -> Attribution:
+        if kind != "change":
+            return Attribution(kind, category="external" if kind == "none" else None)
+        target = next(c for c in scenario.changes if c.change_id == change_id)
+        position = next(i for i, e in enumerate(evidence) if e["query_or_ref"] == target.evidence_id)
+        return Attribution("change", f"E{position + 1}", "application")
+
+    return decide
+
+
+async def test_decompose_mode_uses_the_narrow_decision_for_attribution(suite: list[Scenario]) -> None:
+    scenario = _first(suite, "bad_deploy_decoy_later")
+    culprit = scenario.ground_truth.culprit_change_id
+    assert culprit is not None
+    wrong = next(c.change_id for c in scenario.changes if c.change_id != culprit)
+
+    solver = AgentSolver(attribution="decompose")
+    solver._agent = _ScriptedAgent(_blaming([culprit]), scenario)
+    with patch("evals.rca_bench.agent_solver.decide_attribution", _decision(scenario, "change", culprit)):
+        agree = await solver.solve(scenario)
+    assert [s.change_id for s in agree.suspects] == [culprit]
+    assert agree.confidence == 0.9
+
+    solver._agent = _ScriptedAgent(_blaming([wrong]), scenario)
+    with patch("evals.rca_bench.agent_solver.decide_attribution", _decision(scenario, "change", culprit)):
+        disagree = await solver.solve(scenario)
+    assert [s.change_id for s in disagree.suspects] == [culprit]
+    assert disagree.confidence <= 0.4  # the two answers conflict, so confidence is capped
+
+
+async def test_decompose_mode_maps_cannot_tell_to_abstention_and_none_to_no_suspects(suite: list[Scenario]) -> None:
+    scenario = _first(suite, "insufficient_evidence")
+    solver = AgentSolver(attribution="decompose")
+    solver._agent = _ScriptedAgent(_blaming([scenario.changes[0].change_id]), scenario)
+    with patch("evals.rca_bench.agent_solver.decide_attribution", _decision(scenario, "cannot_tell")):
+        unsure = await solver.solve(scenario)
+    assert (unsure.abstained, unsure.category, unsure.confidence, unsure.suspects) == (True, "unknown", 0.0, [])
+    assert is_correct(Pair(scenario, unsure))
+
+    with patch("evals.rca_bench.agent_solver.decide_attribution", _decision(scenario, "none")):
+        none = await solver.solve(scenario)
+    assert (none.abstained, none.category, none.suspects) == (False, "external", [])
+
+
+async def test_decompose_temporal_turns_a_late_chosen_change_into_none(suite: list[Scenario]) -> None:
+    scenario = _first(suite, "dependency_outage")
+    latest = max(scenario.changes, key=lambda c: c.offset_s)
+    solver = AgentSolver(attribution="decompose_temporal")
+    solver._agent = _ScriptedAgent(_blaming([latest.change_id]), scenario)
+    with patch("evals.rca_bench.agent_solver.decide_attribution", _decision(scenario, "change", latest.change_id)):
+        prediction = await solver.solve(scenario)
+    assert prediction.suspects == []
+    assert "ruled out" in prediction.rationale
+
+
+def test_attribution_modes_are_validated() -> None:
+    from evals.rca_bench.prompt_variants import ATTRIBUTION_MODES
+
+    assert set(ATTRIBUTION_MODES) == {"baseline", "temporal", "decompose", "decompose_temporal"}
+    with pytest.raises(ValueError, match="unknown attribution mode"):
+        AgentSolver(attribution="decompos")
+
+
+def test_the_temporal_rule_never_rules_out_a_true_culprit_in_either_suite(suite: list[Scenario]) -> None:
+    from evals.rca_bench.agent_solver import ruled_out_changes
+
+    holdout = load_suite(DEFAULT_SUITE.with_name("synthetic_v0_seed1.jsonl"))
+    for scenario in [*suite, *holdout]:
+        culprit = scenario.ground_truth.culprit_change_id
+        assert culprit is None or culprit not in ruled_out_changes(scenario), scenario.scenario_id
+    # and it does remove something, so the test above is not vacuous
+    assert any(ruled_out_changes(s) for s in suite)
+
+
+def test_rescoring_removes_ruled_out_changes_and_caps_confidence_only_when_none_remain(suite: list[Scenario]) -> None:
+    from evals.rca_bench.agent_solver import ruled_out_changes
+    from evals.rca_bench.rescore import apply_temporal_rule_to_prediction
+
+    scenario = _first(suite, "dependency_outage")
+    late = sorted(ruled_out_changes(scenario))[0]
+    only_late = Prediction(
+        scenario_id=scenario.scenario_id,
+        suspects=[Suspect(change_id=late, score=0.9)],
+        confidence=0.9,
+        cited_evidence_ids=[next(c.evidence_id for c in scenario.changes if c.change_id == late)],
+    )
+    rescored = apply_temporal_rule_to_prediction(only_late, scenario)
+    assert rescored.suspects == []
+    assert rescored.cited_evidence_ids == []
+    assert rescored.confidence == 0.4
+    assert top_k_correct(Pair(scenario, rescored), 1)
+
+    culprit_scenario = _first(suite, "bad_deploy_decoy_later")
+    culprit = culprit_scenario.ground_truth.culprit_change_id
+    assert culprit is not None
+    decoys = sorted(ruled_out_changes(culprit_scenario))
+    hedged = Prediction(
+        scenario_id=culprit_scenario.scenario_id,
+        suspects=[Suspect(change_id=c, score=0.9) for c in [culprit, *decoys]],
+        confidence=0.9,
+    )
+    fixed = apply_temporal_rule_to_prediction(hedged, culprit_scenario)
+    assert [s.change_id for s in fixed.suspects] == [culprit]
+    assert fixed.confidence == 0.9  # a suspect remains, so confidence is untouched
+
+    failed = Prediction(scenario_id=scenario.scenario_id, error="boom")
+    assert apply_temporal_rule_to_prediction(failed, scenario) is failed
+
+
+def test_rescore_command_writes_reports_that_summarize_can_read(suite: list[Scenario], tmp_path: Path) -> None:
+    from evals.rca_bench.__main__ import main
+    from evals.rca_bench.agent_solver import ruled_out_changes
+
+    scenario = _first(suite, "dependency_outage")
+    late = sorted(ruled_out_changes(scenario))[0]
+    predictions = [
+        Prediction(scenario_id=s.scenario_id, suspects=[Suspect(change_id=late, score=0.9)] if s is scenario else [])
+        for s in suite
+    ]
+    metrics = compute_metrics([Pair(s, p) for s, p in zip(suite, predictions, strict=True)])
+    report = tmp_path / "run.json"
+    report.write_text(json.dumps(build_report("agent", suite, predictions, metrics, DEFAULT_SUITE)), encoding="utf-8")
+    assert main(["rescore", str(report)]) == 0
+    rescored = tmp_path / "run_temporal.json"
+    assert rescored.exists()
+    data = json.loads(rescored.read_text(encoding="utf-8"))
+    assert data["options"]["rescored_from"] == "run.json"
+    assert next(p for p in data["predictions"] if p["scenario_id"] == scenario.scenario_id)["suspects"] == []
+    assert "Top-1 change accuracy" in summarize_reports([rescored])
 
 
 def test_unknown_category_counts_as_abstention(suite: list[Scenario]) -> None:

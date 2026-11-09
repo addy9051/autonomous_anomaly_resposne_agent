@@ -121,10 +121,12 @@ class OracleSolver:
         )
 
 
-def _agent_solver(skip_runbook_search: bool = False, prompt_variant: str = "baseline") -> Solver:
+def _agent_solver(
+    skip_runbook_search: bool = False, prompt_variant: str = "baseline", attribution: str = "baseline"
+) -> Solver:
     from evals.rca_bench.agent_solver import AgentSolver
 
-    return AgentSolver(skip_runbook_search=skip_runbook_search, prompt_variant=prompt_variant)
+    return AgentSolver(skip_runbook_search=skip_runbook_search, prompt_variant=prompt_variant, attribution=attribution)
 
 
 SOLVERS: dict[str, Callable[..., Solver]] = {

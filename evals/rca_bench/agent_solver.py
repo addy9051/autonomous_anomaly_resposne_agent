@@ -33,11 +33,18 @@ from contextlib import ExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
+from agents.diagnosis.attribution import (
+    Attribution,
+    apply_temporal_rule,
+    decide_attribution,
+    index_evidence,
+    rule_out_acausal_changes,
+)
 from agents.diagnosis.evidence import record_to_evidence
-from evals.rca_bench.prompt_variants import synthesis_prompt_for
+from evals.rca_bench.prompt_variants import ATTRIBUTION_MODES, synthesis_prompt_for
 from evals.rca_bench.schema import Prediction, Scenario, Suspect
 from shared.schemas import (
     AnomalyEvent,
@@ -50,10 +57,15 @@ from shared.schemas import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from evals.rca_bench.schema import Category
     from shared.schemas import DiagnosisResult, Hypothesis
 
 CHANGE_ID_PATTERN = re.compile(r"chg-\d{3}")
 MAX_SERVICES = 3
+RULED_OUT_CONFIDENCE_CAP = 0.4
+DISAGREEMENT_CONFIDENCE_CAP = 0.4
 
 
 def _services(scenario: Scenario) -> list[str]:
@@ -110,7 +122,9 @@ def _change_evidence(scenario: Scenario, base_time: datetime) -> list[dict[str, 
     return evidence
 
 
-def prediction_from_diagnosis(diagnosis: DiagnosisResult, scenario: Scenario) -> Prediction:
+def prediction_from_diagnosis(
+    diagnosis: DiagnosisResult, scenario: Scenario, excluded_changes: frozenset[str] = frozenset()
+) -> Prediction:
     """Map the agent's output onto the benchmark's prediction contract.
 
     Changes implicated by the root cause or the top hypothesis form the primary group and share one score, so
@@ -147,18 +161,26 @@ def prediction_from_diagnosis(diagnosis: DiagnosisResult, scenario: Scenario) ->
         add_group(mentioned(hypothesis.hypothesis) + cited_changes(hypothesis))
     add_group(mentioned(diagnosis.decision_summary))
 
+    # Changes that code has ruled out (for example, landed after the symptoms began) are not suspects.
+    removed = {change for group in groups for change in group if change in excluded_changes}
+    groups = [kept for group in groups if (kept := [c for c in group if c not in excluded_changes])]
+
     confidence = diagnosis.confidence
+    if removed and not groups:
+        confidence = min(confidence, RULED_OUT_CONFIDENCE_CAP)
     suspects = [
         Suspect(change_id=change_id, score=round(confidence * 0.8**rank, 4))
         for rank, group in enumerate(groups)
         for change_id in group
     ]
 
+    excluded_refs = {c.evidence_id for c in scenario.changes if c.change_id in excluded_changes}
     cited: list[str] = []
     for hypothesis in diagnosis.hypotheses:
         for record in hypothesis.supporting_evidence:
-            if record.query_or_ref in scenario.evidence_ids and record.query_or_ref not in cited:
-                cited.append(record.query_or_ref)
+            ref = record.query_or_ref
+            if ref in scenario.evidence_ids and ref not in excluded_refs and ref not in cited:
+                cited.append(ref)
 
     return Prediction(
         scenario_id=scenario.scenario_id,
@@ -168,6 +190,84 @@ def prediction_from_diagnosis(diagnosis: DiagnosisResult, scenario: Scenario) ->
         confidence=confidence,
         cited_evidence_ids=cited,
         rationale=diagnosis.root_cause[:600],
+    )
+
+
+def _visible_evidence(replay: _Replay) -> list[dict[str, Any]]:
+    """What the agent could see for this scenario, in the order the evidence collector returns it."""
+    visible = ([] if replay.telemetry_down else list(replay.signals)) + (
+        [] if replay.deploys_down else list(replay.changes)
+    )
+    return sorted(visible, key=lambda e: e["observed_at"])
+
+
+def ruled_out_changes(scenario: Scenario) -> frozenset[str]:
+    """Scenario change ids that the temporal rule rules out, computed from the evidence the agent would see.
+
+    The rule depends only on the scenario, not on any model output, so it can be applied to saved predictions.
+    """
+    now = datetime.now(UTC)
+    replay = _Replay(
+        signals=_signal_evidence(scenario, now),
+        changes=_change_evidence(scenario, now),
+        telemetry_down="telemetry" in scenario.unavailable_sources,
+        deploys_down="deploys" in scenario.unavailable_sources,
+    )
+    evidence = _visible_evidence(replay)
+    return frozenset(_change_ids_for(rule_out_acausal_changes(evidence), evidence, scenario))
+
+
+def _change_ids_for(evidence_ids: Iterable[str], evidence: list[dict[str, Any]], scenario: Scenario) -> set[str]:
+    """Scenario change ids for attribution evidence ids such as "E4"."""
+    index = index_evidence(evidence)
+    change_by_ref = {c.evidence_id: c.change_id for c in scenario.changes}
+    return {
+        change_by_ref[ref]
+        for eid in evidence_ids
+        if (record := index.get(eid)) and (ref := record.get("query_or_ref")) in change_by_ref
+    }
+
+
+def prediction_from_attribution(
+    attribution: Attribution, base: Prediction, scenario: Scenario, evidence: list[dict[str, Any]]
+) -> Prediction:
+    """Use the narrow decision as the attribution and keep the diagnosis only for category and explanation.
+
+    If the decision and the full diagnosis disagree about the cause, confidence is capped: two answers to the same
+    question that conflict mean neither deserves to be trusted fully.
+    """
+    index = index_evidence(evidence)
+    chosen = _change_ids_for([attribution.change_id], evidence, scenario) if attribution.change_id else set()
+    top = max((s.score for s in base.suspects), default=None)
+    diagnosis_primary = {s.change_id for s in base.suspects if s.score == top}
+    if attribution.decision == "change":
+        agrees = diagnosis_primary == chosen
+    elif attribution.decision == "none":
+        agrees = not base.suspects and not base.abstained
+    else:
+        agrees = base.abstained
+    confidence = base.confidence if agrees else min(base.confidence, DISAGREEMENT_CONFIDENCE_CAP)
+    abstained = attribution.decision == "cannot_tell"
+    if abstained:
+        confidence = 0.0
+
+    cited: list[str] = []
+    for eid in (attribution.change_id, *attribution.support):
+        record = index.get(eid) if eid else None
+        ref = record.get("query_or_ref") if record else None
+        if ref in scenario.evidence_ids and ref not in cited:
+            cited.append(ref)
+
+    category = "unknown" if abstained else (attribution.category or base.category)
+    note = f"[{attribution.decision}] {attribution.reason}".strip()
+    return Prediction(
+        scenario_id=scenario.scenario_id,
+        suspects=[Suspect(change_id=c, score=confidence) for c in sorted(chosen)],
+        category=cast("Category", category),
+        abstained=abstained,
+        confidence=confidence,
+        cited_evidence_ids=cited,
+        rationale=f"{note} | diagnosis: {base.rationale}"[:600],
     )
 
 
@@ -226,12 +326,17 @@ class AgentSolver:
 
     name = "agent"
 
-    def __init__(self, skip_runbook_search: bool = False, prompt_variant: str = "baseline") -> None:
+    def __init__(
+        self, skip_runbook_search: bool = False, prompt_variant: str = "baseline", attribution: str = "baseline"
+    ) -> None:
         # Validate now so a typo fails before any LLM call is made.
         synthesis_prompt_for(prompt_variant, "")
+        if attribution not in ATTRIBUTION_MODES:
+            raise ValueError(f"unknown attribution mode '{attribution}'. choose from: {', '.join(ATTRIBUTION_MODES)}")
         self._agent: Any = None
         self._skip_runbook_search = skip_runbook_search
         self._prompt_variant = prompt_variant
+        self._attribution = attribution
         self._patches: ExitStack | None = None
 
     def _install_patches(self) -> None:
@@ -286,6 +391,18 @@ class AgentSolver:
                 error="replay evidence was never requested; scenario context did not reach the diagnosis graph",
             )
 
-        prediction = prediction_from_diagnosis(diagnosis, scenario)
+        evidence = _visible_evidence(replay)
+        if self._attribution == "baseline":
+            prediction = prediction_from_diagnosis(diagnosis, scenario)
+        elif self._attribution == "temporal":
+            ruled_out = _change_ids_for(rule_out_acausal_changes(evidence), evidence, scenario)
+            prediction = prediction_from_diagnosis(diagnosis, scenario, excluded_changes=frozenset(ruled_out))
+        else:
+            attribution = await decide_attribution(scenario.alert.summary, evidence)
+            if self._attribution == "decompose_temporal":
+                attribution = apply_temporal_rule(attribution, evidence)
+            prediction = prediction_from_attribution(
+                attribution, prediction_from_diagnosis(diagnosis, scenario), scenario, evidence
+            )
         prediction.latency_s = round(time.perf_counter() - started, 3)
         return prediction
