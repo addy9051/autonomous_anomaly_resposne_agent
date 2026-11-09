@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -426,6 +427,45 @@ async def test_skip_runbook_search_fails_fast_and_patches_are_removed_afterwards
         await stub.search(query="x")
     solver.close()
     assert search_module.HybridSearchService is original
+
+
+def test_holdout_suite_is_frozen_and_distinct_from_the_dev_suite(suite: list[Scenario]) -> None:
+    holdout_path = DEFAULT_SUITE.with_name("synthetic_v0_seed1.jsonl")
+    holdout = load_suite(holdout_path)
+    regenerated = generate_suite(seed=1, per_class=5)
+    assert [s.model_dump() for s in regenerated] == [s.model_dump() for s in holdout]
+    assert [s.model_dump() for s in holdout] != [s.model_dump() for s in suite]
+    assert suite_sha256(holdout_path) != suite_sha256(DEFAULT_SUITE)
+
+
+def test_prompt_variants_format_cleanly_and_reject_unknown_names() -> None:
+    from agents.diagnosis.graph import build_synthesis_prompt
+    from agents.diagnosis.prompts import SYNTHESIS_PROMPT
+    from evals.rca_bench.prompt_variants import VARIANTS, synthesis_prompt_for
+
+    assert synthesis_prompt_for("baseline", SYNTHESIS_PROMPT) == SYNTHESIS_PROMPT
+    assert synthesis_prompt_for("evidence_discipline", SYNTHESIS_PROMPT).startswith(SYNTHESIS_PROMPT.rstrip())
+    with pytest.raises(ValueError, match="unknown prompt variant"):
+        synthesis_prompt_for("evidence_disciplin", SYNTHESIS_PROMPT)
+
+    state = {"anomaly_event": {"event_id": "e1"}, "context": "c", "evidence_timeline": [], "missing_sources": []}
+    for name in VARIANTS:
+        with patch("agents.diagnosis.graph.SYNTHESIS_PROMPT", new=synthesis_prompt_for(name, SYNTHESIS_PROMPT)):
+            assert "Citable Evidence" in build_synthesis_prompt(state)  # type: ignore[arg-type]
+
+
+async def test_prompt_variant_is_applied_during_a_run_and_restored_afterwards(suite: list[Scenario]) -> None:
+    from agents.diagnosis import graph
+
+    original = graph.SYNTHESIS_PROMPT
+    solver = AgentSolver(prompt_variant="evidence_discipline")
+    solver._agent = _FakeAgent()
+    await solver.solve(suite[0])
+    assert "Rules for choosing the cause and the category" in graph.SYNTHESIS_PROMPT
+    solver.close()
+    assert original == graph.SYNTHESIS_PROMPT
+    with pytest.raises(ValueError, match="unknown prompt variant"):
+        AgentSolver(prompt_variant="nope")
 
 
 def test_unknown_category_counts_as_abstention(suite: list[Scenario]) -> None:

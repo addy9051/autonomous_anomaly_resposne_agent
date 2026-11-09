@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from evals.rca_bench.generator import generate_suite
 from evals.rca_bench.metrics import SCORING_VERSION
+from evals.rca_bench.prompt_variants import VARIANTS
 from evals.rca_bench.runner import (
     DEFAULT_SUITE,
     append_checkpoint,
@@ -98,6 +99,7 @@ def _run_options(args: argparse.Namespace, solver_name: str) -> dict[str, object
         llm = get_settings().llm
         options.update(
             skip_runbook_search=args.skip_runbook_search,
+            prompt_variant=args.prompt_variant,
             diagnosis_model=llm.diagnosis_agent_model,
             llm_host=urlparse(llm.base_url).netloc,
         )
@@ -117,8 +119,8 @@ async def _run(args: argparse.Namespace) -> int:
         return 2
     if args.warmup and not await _warm_up(args.warmup_timeout):
         return 3
-    # Predictions made under another scoring version are not reusable, because suspects are built at solve time.
-    sha = f"{suite_sha256(suite_path)}:scoring{SCORING_VERSION}"
+    # Predictions made under another scoring version or prompt variant are not reusable.
+    sha = f"{suite_sha256(suite_path)}:scoring{SCORING_VERSION}:{args.prompt_variant}"
     checkpoint = Path(args.checkpoint) if args.checkpoint else None
 
     def progress(index: int, total: int, scenario: Scenario, prediction: Prediction, seconds: float) -> None:
@@ -135,7 +137,8 @@ async def _run(args: argparse.Namespace) -> int:
         completed = load_checkpoint(checkpoint, sha) if checkpoint else {}
         if completed:
             print(f"resuming: {len(completed)} scenarios already done", flush=True)
-        solver = SOLVERS[name](skip_runbook_search=args.skip_runbook_search) if name == "agent" else SOLVERS[name]()
+        agent_options = {"skip_runbook_search": args.skip_runbook_search, "prompt_variant": args.prompt_variant}
+        solver = SOLVERS[name](**agent_options) if name == "agent" else SOLVERS[name]()
         predictions, metrics = await run_solver(
             solver,
             scenarios,
@@ -191,6 +194,12 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-runbook-search",
         action="store_true",
         help="agent solver: fail runbook search immediately instead of trying an unavailable knowledge base",
+    )
+    run.add_argument(
+        "--prompt-variant",
+        default="baseline",
+        choices=sorted(VARIANTS),
+        help="agent solver: synthesis prompt variant for an A/B run (the production prompt is not changed)",
     )
     run.set_defaults(func=lambda a: asyncio.run(_run(a)))
 

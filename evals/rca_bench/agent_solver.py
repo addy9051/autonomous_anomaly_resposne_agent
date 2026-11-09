@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 from agents.diagnosis.evidence import record_to_evidence
+from evals.rca_bench.prompt_variants import synthesis_prompt_for
 from evals.rca_bench.schema import Prediction, Scenario, Suspect
 from shared.schemas import (
     AnomalyEvent,
@@ -225,9 +226,12 @@ class AgentSolver:
 
     name = "agent"
 
-    def __init__(self, skip_runbook_search: bool = False) -> None:
+    def __init__(self, skip_runbook_search: bool = False, prompt_variant: str = "baseline") -> None:
+        # Validate now so a typo fails before any LLM call is made.
+        synthesis_prompt_for(prompt_variant, "")
         self._agent: Any = None
         self._skip_runbook_search = skip_runbook_search
+        self._prompt_variant = prompt_variant
         self._patches: ExitStack | None = None
 
     def _install_patches(self) -> None:
@@ -239,6 +243,11 @@ class AgentSolver:
         stack.enter_context(patch("data_pipeline.connectors.adapters.get_telemetry_adapter", new=lambda: object()))
         if self._skip_runbook_search:
             stack.enter_context(patch("knowledge_base.retrieval.search.HybridSearchService", new=_NoRunbookSearch))
+        if self._prompt_variant != "baseline":
+            from agents.diagnosis.prompts import SYNTHESIS_PROMPT
+
+            variant_prompt = synthesis_prompt_for(self._prompt_variant, SYNTHESIS_PROMPT)
+            stack.enter_context(patch("agents.diagnosis.graph.SYNTHESIS_PROMPT", new=variant_prompt))
         self._patches = stack
 
     def close(self) -> None:

@@ -11,6 +11,10 @@
 !evals/reports/specialist_quality_*.json
 !evals/reports/specialist_synthesis_comparisons.json
 
+# RCA benchmark run artifacts (per-scenario checkpoints and logs; JSON reports are already ignored above)
+evals/reports/*.jsonl
+evals/reports/*.log
+
 # ─── Python ───────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
